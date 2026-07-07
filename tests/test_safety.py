@@ -43,7 +43,8 @@ def approved_previewed_contact(conn, email: str = "lead@example.com"):
 
 
 def update_campaign_attachment(conn, path: Path):
-    campaign = db.get_default_campaign(conn)
+    campaign_id = db.create_campaign(conn, "Test Campaign")
+    campaign = db.get_campaign(conn, campaign_id)
     db.update_campaign(
         conn,
         int(campaign["id"]),
@@ -52,7 +53,7 @@ def update_campaign_attachment(conn, path: Path):
         str(campaign["fallback_body_template"]),
         str(path),
     )
-    return db.get_default_campaign(conn)
+    return db.get_campaign(conn, campaign_id)
 
 
 def test_do_not_contact_skips_send(tmp_path: Path) -> None:

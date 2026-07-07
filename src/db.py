@@ -47,10 +47,6 @@ def connect(db_path: str | Path | None = None) -> sqlite3.Connection:
 def init_db(db_path: str | Path | None = None) -> sqlite3.Connection:
     conn = connect(db_path)
     create_tables(conn)
-    
-    import sys
-    if "pytest" in sys.modules:
-        seed_default_campaign(conn)
         
     return conn
 
@@ -222,11 +218,7 @@ def seed_default_campaign(conn: sqlite3.Connection) -> None:
 
 
 def get_default_campaign(conn: sqlite3.Connection) -> sqlite3.Row:
-    campaign = conn.execute("SELECT * FROM campaigns ORDER BY id LIMIT 1").fetchone()
-    if campaign is None:
-        seed_default_campaign(conn)
-        campaign = conn.execute("SELECT * FROM campaigns ORDER BY id LIMIT 1").fetchone()
-    return campaign
+    return conn.execute("SELECT * FROM campaigns ORDER BY id LIMIT 1").fetchone()
 
 
 def create_campaign(conn: sqlite3.Connection, name: str = "Untitled campaign") -> int:

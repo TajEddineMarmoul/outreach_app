@@ -93,7 +93,6 @@ def get_db():
 @app.on_event("startup")
 def on_startup():
     conn = db.init_db(get_db_path())
-    db.get_default_campaign(conn)
     conn.close()
 
 # Pydantic schemas
