@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import json
+import re
 import sqlite3
 from typing import Any
 
-import re
 from jinja2 import Environment, meta
 
 from .models import RenderedEmail
@@ -58,6 +59,15 @@ def contact_context(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
     }
     context.update(aliases)
     context["keyword_sentence"] = keyword_sentence(contact)
+
+    # Dynamically load all columns present in the imported sheet/CSV (no hardcoding)
+    custom_str = contact.get("custom_fields") or "{}"
+    try:
+        custom_data = json.loads(custom_str)
+        context.update(custom_data)
+    except Exception:
+        pass
+
     return context
 
 

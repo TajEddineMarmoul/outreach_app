@@ -560,41 +560,57 @@ def get_campaign_validation_summary(campaign_id: int, conn=Depends(get_db)):
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
         
-    total_contacts = conn.execute(
-        "SELECT COUNT(*) AS count FROM campaign_recipients WHERE campaign_id = ?",
-        (campaign_id,),
-    ).fetchone()["count"]
+    contacts = db.campaign_contacts(conn, campaign_id)
+    total_contacts = len(contacts)
     
     if total_contacts == 0:
         return {
             "total_contacts": 0,
             "used_warnings": [],
-            "other_warnings": []
+            "other_warnings": [],
+            "all_columns": []
         }
         
-    empty_row = conn.execute(
-        """
-        SELECT 
-            COUNT(CASE WHEN first_name IS NULL OR trim(first_name) = '' THEN 1 END) as First_Name,
-            COUNT(CASE WHEN last_name IS NULL OR trim(last_name) = '' THEN 1 END) as Last_Name,
-            COUNT(CASE WHEN full_name IS NULL OR trim(full_name) = '' THEN 1 END) as Full_Name,
-            COUNT(CASE WHEN company_name IS NULL OR trim(company_name) = '' THEN 1 END) as Company_Name,
-            COUNT(CASE WHEN company_website IS NULL OR trim(company_website) = '' THEN 1 END) as Company_Website,
-            COUNT(CASE WHEN linkedin IS NULL OR trim(linkedin) = '' THEN 1 END) as LinkedIn,
-            COUNT(CASE WHEN title IS NULL OR trim(title) = '' THEN 1 END) as Title,
-            COUNT(CASE WHEN industry IS NULL OR trim(industry) = '' THEN 1 END) as Industry,
-            COUNT(CASE WHEN keyword_1 IS NULL OR trim(keyword_1) = '' THEN 1 END) as keyword_1,
-            COUNT(CASE WHEN keyword_2 IS NULL OR trim(keyword_2) = '' THEN 1 END) as keyword_2,
-            COUNT(CASE WHEN keyword_3 IS NULL OR trim(keyword_3) = '' THEN 1 END) as keyword_3,
-            COUNT(CASE WHEN country IS NULL OR trim(country) = '' THEN 1 END) as Country
-        FROM contacts
-        WHERE id IN (
-            SELECT contact_id FROM campaign_recipients WHERE campaign_id = ?
-        )
-        """,
-        (campaign_id,),
-    ).fetchone()
+    import json
     
+    # Initialize dictionary to accumulate empty counts for every field we see
+    column_empty_counts = {}
+    
+    # Pre-populate standard columns to ensure they are always present
+    for col in ["First_Name", "Last_Name", "Full_Name", "Email", "Company_Name", "Company_Website", "LinkedIn", "Title", "Industry", "Country"]:
+        column_empty_counts[col] = 0
+        
+    for c in contacts:
+        custom_str = c.get("custom_fields") or "{}"
+        try:
+            custom_data = json.loads(custom_str)
+        except Exception:
+            custom_data = {}
+            
+        # Fallback to standard DB columns if custom_fields is empty
+        if not custom_data:
+            custom_data = {
+                "First_Name": c.get("first_name"),
+                "Last_Name": c.get("last_name"),
+                "Full_Name": c.get("full_name"),
+                "Email": c.get("email"),
+                "Company_Name": c.get("company_name"),
+                "Company_Website": c.get("company_website"),
+                "LinkedIn": c.get("linkedin"),
+                "Title": c.get("title"),
+                "Industry": c.get("industry"),
+                "keyword_1": c.get("keyword_1"),
+                "keyword_2": c.get("keyword_2"),
+                "keyword_3": c.get("keyword_3"),
+                "Country": c.get("country"),
+            }
+            
+        for key, val in custom_data.items():
+            if key not in column_empty_counts:
+                column_empty_counts[key] = 0
+            if val is None or str(val).strip() == "":
+                column_empty_counts[key] += 1
+                
     from src.template_engine import sanitize_template_variables
     from jinja2 import Environment, meta
     
@@ -617,8 +633,7 @@ def get_campaign_validation_summary(campaign_id: int, conn=Depends(get_db)):
     used_warnings = []
     other_warnings = []
     
-    for key in empty_row.keys():
-        empty_count = empty_row[key]
+    for key, empty_count in column_empty_counts.items():
         if empty_count > 0:
             item = {"column": key, "empty_count": empty_count}
             if key in used_vars:
@@ -629,7 +644,8 @@ def get_campaign_validation_summary(campaign_id: int, conn=Depends(get_db)):
     return {
         "total_contacts": total_contacts,
         "used_warnings": used_warnings,
-        "other_warnings": other_warnings
+        "other_warnings": other_warnings,
+        "all_columns": sorted(list(column_empty_counts.keys()))
     }
 
 

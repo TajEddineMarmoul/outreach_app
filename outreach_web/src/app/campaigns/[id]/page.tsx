@@ -85,47 +85,17 @@ export default function CampaignEditorPage() {
 
   const activeVariables = useMemo(() => {
     const defaults = ["First_Name", "Company_Name", "keyword_sentence"];
-    if (!valSummary || valSummary.total_contacts === 0) {
+    if (!valSummary || !valSummary.all_columns || valSummary.all_columns.length === 0) {
       return defaults;
     }
 
-    const columns = [
-      "First_Name",
-      "Last_Name",
-      "Full_Name",
-      "Email",
-      "Company_Name",
-      "Company_Website",
-      "LinkedIn",
-      "Title",
-      "Industry",
-      "keyword_1",
-      "keyword_2",
-      "keyword_3",
-      "Country"
-    ];
-
-    const present = columns.filter((col) => {
-      const usedWarn = valSummary.used_warnings.find((w: any) => w.column === col);
-      const otherWarn = valSummary.other_warnings.find((w: any) => w.column === col);
-      const warn = usedWarn || otherWarn;
-      
-      if (!warn) return true;
-      return warn.empty_count < valSummary.total_contacts;
-    });
-
-    const hasKeywords = present.some(col => col.startsWith("keyword_"));
-    if (hasKeywords && !present.includes("keyword_sentence")) {
-      present.push("keyword_sentence");
+    const columns = [...valSummary.all_columns];
+    const hasKeywords = columns.some(col => col.startsWith("keyword_"));
+    if (hasKeywords && !columns.includes("keyword_sentence")) {
+      columns.push("keyword_sentence");
     }
 
-    defaults.forEach(d => {
-      if (!present.includes(d) && d !== "keyword_sentence") {
-        present.push(d);
-      }
-    });
-
-    return present;
+    return columns.sort();
   }, [valSummary]);
   
   // Sync state once data loads

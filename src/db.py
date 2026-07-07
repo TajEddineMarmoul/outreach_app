@@ -80,6 +80,7 @@ def create_tables(conn: sqlite3.Connection) -> None:
             preview_generated_at TEXT,
             last_preview_subject TEXT,
             last_preview_body TEXT,
+            custom_fields TEXT DEFAULT '{{}}',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
@@ -171,6 +172,7 @@ def migrate_schema(conn: sqlite3.Connection) -> None:
         "sheet_id": "TEXT DEFAULT ''",
         "sheet_name": "TEXT DEFAULT ''",
         "last_synced_at": "TEXT",
+        "custom_fields": "TEXT DEFAULT '{}'",
     }
     for column, definition in additions.items():
         if column not in contact_columns:
@@ -439,6 +441,7 @@ def insert_contact(conn: sqlite3.Connection, contact: dict[str, Any]) -> bool:
         "sheet_name": "",
         "last_synced_at": None,
         "status": ContactStatus.PENDING.value,
+        "custom_fields": "{}",
         **contact,
         "created_at": now,
         "updated_at": now,
@@ -451,14 +454,14 @@ def insert_contact(conn: sqlite3.Connection, contact: dict[str, Any]) -> bool:
                 company_website, linkedin, title, industry, keywords,
                 keyword_1, keyword_2, keyword_3, country, source_type,
                 source_url, sheet_id, sheet_name, last_synced_at, status,
-                created_at, updated_at
+                custom_fields, created_at, updated_at
             )
             VALUES (
                 :first_name, :last_name, :full_name, :email, :company_name,
                 :company_website, :linkedin, :title, :industry, :keywords,
                 :keyword_1, :keyword_2, :keyword_3, :country, :source_type,
                 :source_url, :sheet_id, :sheet_name, :last_synced_at, :status,
-                :created_at, :updated_at
+                :custom_fields, :created_at, :updated_at
             )
             """,
             data,

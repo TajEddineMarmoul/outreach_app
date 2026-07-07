@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, BinaryIO
 
@@ -143,6 +144,13 @@ def import_dataframe(
             status = ContactStatus.DO_NOT_CONTACT.value
             result.do_not_contact += 1
 
+        # Capture the entire row as dynamic variables (normalized keys)
+        row_dict = {}
+        for col in frame.columns:
+            cleaned_key = str(col).strip().replace(" ", "_").replace("-", "_")
+            row_dict[cleaned_key] = clean_cell(row.get(col))
+        custom_fields_json = json.dumps(row_dict)
+
         existing = db.fetch_contact_by_email(conn, email)
         if existing:
             last_name = clean_cell(row.get(detected.get("last_name"), ""))
@@ -169,7 +177,7 @@ def import_dataframe(
                     keywords = ?, keyword_1 = ?, keyword_2 = ?, keyword_3 = ?,
                     country = ?, source_type = ?, source_url = ?, sheet_id = ?,
                     sheet_name = ?, preview_generated_at = ?, last_synced_at = ?,
-                    updated_at = ?
+                    custom_fields = ?, updated_at = ?
                 WHERE id = ?
                 """,
                 (
@@ -179,7 +187,7 @@ def import_dataframe(
                     country, source_type, source_url, sheet_id,
                     sheet_name, preview_gen,
                     db.utcnow_iso() if source_type == "google_sheet" else existing["last_synced_at"],
-                    db.utcnow_iso(), existing["id"]
+                    custom_fields_json, db.utcnow_iso(), existing["id"]
                 )
             )
             result.imported += 1
@@ -207,6 +215,7 @@ def import_dataframe(
                 "sheet_id": sheet_id,
                 "sheet_name": sheet_name,
                 "last_synced_at": db.utcnow_iso() if source_type == "google_sheet" else None,
+                "custom_fields": custom_fields_json,
                 "status": status,
             },
         )
