@@ -6,7 +6,7 @@ echo =========================================
 echo.
 
 echo [1/2] Launching FastAPI Backend on Port 8000...
-start "Outreach Backend (Port 8000)" cmd /k ".\.venv\Scripts\python -m uvicorn api.main:app --port 8000"
+start "Outreach Backend (Port 8000)" cmd /k ".\.venv\Scripts\python -m uvicorn api.main:app --port 8000 --reload"
 
 echo [2/2] Launching Next.js Frontend on Port 3000...
 start "Outreach Frontend (Port 3000)" cmd /k "cd outreach_web && npm run dev"
