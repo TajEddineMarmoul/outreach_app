@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import useSWR, { mutate } from "swr";
@@ -82,6 +82,51 @@ export default function CampaignEditorPage() {
   const [unsubscribeLink, setUnsubscribeLink] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [showAllWarnings, setShowAllWarnings] = useState(false);
+
+  const activeVariables = useMemo(() => {
+    const defaults = ["First_Name", "Company_Name", "keyword_sentence"];
+    if (!valSummary || valSummary.total_contacts === 0) {
+      return defaults;
+    }
+
+    const columns = [
+      "First_Name",
+      "Last_Name",
+      "Full_Name",
+      "Email",
+      "Company_Name",
+      "Company_Website",
+      "LinkedIn",
+      "Title",
+      "Industry",
+      "keyword_1",
+      "keyword_2",
+      "keyword_3",
+      "Country"
+    ];
+
+    const present = columns.filter((col) => {
+      const usedWarn = valSummary.used_warnings.find((w: any) => w.column === col);
+      const otherWarn = valSummary.other_warnings.find((w: any) => w.column === col);
+      const warn = usedWarn || otherWarn;
+      
+      if (!warn) return true;
+      return warn.empty_count < valSummary.total_contacts;
+    });
+
+    const hasKeywords = present.some(col => col.startsWith("keyword_"));
+    if (hasKeywords && !present.includes("keyword_sentence")) {
+      present.push("keyword_sentence");
+    }
+
+    defaults.forEach(d => {
+      if (!present.includes(d) && d !== "keyword_sentence") {
+        present.push(d);
+      }
+    });
+
+    return present;
+  }, [valSummary]);
   
   // Sync state once data loads
   useEffect(() => {
@@ -565,22 +610,7 @@ export default function CampaignEditorPage() {
                     <span className="text-[10px] font-bold uppercase tracking-wider">Variables</span>
                   </PopoverTrigger>
                   <PopoverContent align="end" className="w-48 max-h-64 overflow-y-auto p-1">
-                    {[
-                      "First_Name",
-                      "Last_Name",
-                      "Full_Name",
-                      "Email",
-                      "Company_Name",
-                      "Company_Website",
-                      "LinkedIn",
-                      "Title",
-                      "Industry",
-                      "keyword_1",
-                      "keyword_2",
-                      "keyword_3",
-                      "keyword_sentence",
-                      "Country"
-                    ].map((v) => (
+                    {activeVariables.map((v) => (
                       <button
                         key={v}
                         onClick={() => insertVariable(v)}
