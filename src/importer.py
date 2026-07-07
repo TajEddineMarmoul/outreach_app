@@ -119,7 +119,7 @@ def import_dataframe(
             result.skipped_missing_required += 1
             continue
 
-        if email in seen_in_file or db.fetch_contact_by_email(conn, email):
+        if email in seen_in_file:
             result.duplicates += 1
             continue
         seen_in_file.add(email)
@@ -130,6 +130,48 @@ def import_dataframe(
         if is_do_not_contact(conn, email):
             status = ContactStatus.DO_NOT_CONTACT.value
             result.do_not_contact += 1
+
+        existing = db.fetch_contact_by_email(conn, email)
+        if existing:
+            last_name = clean_cell(row.get(detected.get("last_name"), ""))
+            full_name = clean_cell(row.get(detected.get("full_name"), ""))
+            company_website = clean_cell(row.get(detected.get("company_website"), ""))
+            linkedin = clean_cell(row.get(detected.get("linkedin"), ""))
+            title = clean_cell(row.get(detected.get("title"), ""))
+            industry = clean_cell(row.get(detected.get("industry"), ""))
+            country = clean_cell(row.get(detected.get("country"), ""))
+            
+            preview_gen = existing["preview_generated_at"]
+            if (existing["keyword_1"] != keyword_1 or 
+                existing["keyword_2"] != keyword_2 or 
+                existing["keyword_3"] != keyword_3 or 
+                existing["company_name"] != company_name or 
+                existing["first_name"] != first_name):
+                preview_gen = None
+                
+            conn.execute(
+                """
+                UPDATE contacts
+                SET first_name = ?, last_name = ?, full_name = ?, company_name = ?,
+                    company_website = ?, linkedin = ?, title = ?, industry = ?,
+                    keywords = ?, keyword_1 = ?, keyword_2 = ?, keyword_3 = ?,
+                    country = ?, source_type = ?, source_url = ?, sheet_id = ?,
+                    sheet_name = ?, preview_generated_at = ?, last_synced_at = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    first_name, last_name, full_name, company_name,
+                    company_website, linkedin, title, industry,
+                    keywords, keyword_1, keyword_2, keyword_3,
+                    country, source_type, source_url, sheet_id,
+                    sheet_name, preview_gen,
+                    db.utcnow_iso() if source_type == "google_sheet" else existing["last_synced_at"],
+                    db.utcnow_iso(), existing["id"]
+                )
+            )
+            result.imported += 1
+            continue
 
         inserted = db.insert_contact(
             conn,
