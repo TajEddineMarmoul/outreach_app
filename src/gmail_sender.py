@@ -17,6 +17,8 @@ from googleapiclient.discovery import build
 
 from . import db
 
+os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
+
 
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.send",

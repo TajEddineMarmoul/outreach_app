@@ -18,6 +18,8 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
 from . import db
+
+os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
 from .importer import detect_columns, import_dataframe
 from .models import ImportResult
 
