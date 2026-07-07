@@ -96,6 +96,7 @@ export default function CampaignEditorPage() {
   const [senderModalOpen, setSenderModalOpen] = useState(false);
   const [recipientsModalOpen, setRecipientsModalOpen] = useState(false);
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
+  const [isPreviewLoading, setIsPreviewLoading] = useState(false);
   const [attachmentModalOpen, setAttachmentModalOpen] = useState(false);
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
   
@@ -135,6 +136,42 @@ export default function CampaignEditorPage() {
       alert(err.message || "Failed to save draft");
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleOpenPreview = async () => {
+    setIsPreviewLoading(true);
+    try {
+      // 1. Save draft
+      const saveRes = await fetch(`${API_URL}/api/campaigns/${campaignId}/composer`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          subject_template: subject,
+          body_template: body,
+          fallback_body_template: fallback,
+          attachment_path: campaign?.attachment_path || "",
+          require_attachment: requireAttachment,
+        }),
+      });
+      if (!saveRes.ok) throw new Error("Failed to save draft");
+
+      // 2. Generate previews
+      const genRes = await fetch(`${API_URL}/api/campaigns/${campaignId}/preview/generate`, {
+        method: "POST",
+      });
+      if (!genRes.ok) throw new Error("Failed to compile previews");
+
+      // 3. Mutate SWR cache to update
+      await mutate(`${API_URL}/api/campaigns/${campaignId}`);
+      await mutateSummary();
+
+      // 4. Open preview modal
+      setPreviewModalOpen(true);
+    } catch (err: any) {
+      alert("Failed to load preview: " + err.message);
+    } finally {
+      setIsPreviewLoading(false);
     }
   };
 
@@ -292,11 +329,16 @@ export default function CampaignEditorPage() {
         <div className="flex items-center gap-3">
           <Button
             variant="outline"
-            className="text-slate-600 gap-1.5"
-            onClick={() => setPreviewModalOpen(true)}
+            className="text-slate-600 gap-1.5 cursor-pointer"
+            onClick={handleOpenPreview}
+            disabled={isPreviewLoading}
           >
-            <Eye className="w-4 h-4" />
-            <span>Show preview</span>
+            {isPreviewLoading ? (
+              <Loader2 className="w-4 h-4 animate-spin text-slate-500" />
+            ) : (
+              <Eye className="w-4 h-4" />
+            )}
+            <span>{isPreviewLoading ? "Compiling..." : "Show preview"}</span>
           </Button>
 
           <Button
