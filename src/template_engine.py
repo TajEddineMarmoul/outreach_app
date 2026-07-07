@@ -4,7 +4,7 @@ import sqlite3
 from typing import Any
 
 import re
-from jinja2 import Environment
+from jinja2 import Environment, meta
 
 from .models import RenderedEmail
 
@@ -63,7 +63,19 @@ def contact_context(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
 
 def render_template(template: str, context: dict[str, Any]) -> str:
     sanitized = sanitize_template_variables(template)
-    return ENV.from_string(sanitized).render(**context).strip()
+    try:
+        parsed_content = ENV.parse(sanitized)
+        referenced_vars = meta.find_undeclared_variables(parsed_content)
+    except Exception:
+        referenced_vars = set()
+        
+    render_context = dict(context)
+    for var in referenced_vars:
+        val = context.get(var)
+        if val is None or str(val).strip() == "":
+            render_context[var] = f"[missing {var}]"
+            
+    return ENV.from_string(sanitized).render(**render_context).strip()
 
 
 def render_email(contact: sqlite3.Row | dict[str, Any], campaign: sqlite3.Row | dict[str, Any]) -> RenderedEmail:

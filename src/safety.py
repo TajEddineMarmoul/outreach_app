@@ -197,6 +197,8 @@ def pre_send_checks(
         return SafetyResult(False, f"Contact status is {contact['status']}")
     if not contact["preview_generated_at"] or not contact["last_preview_subject"] or not contact["last_preview_body"]:
         return SafetyResult(False, "Preview has not been generated")
+    if "[missing " in str(contact["last_preview_subject"]) or "[missing " in str(contact["last_preview_body"]):
+        return SafetyResult(False, "Recipient has missing template variables")
     duplicate_count = conn.execute(
         "SELECT COUNT(*) AS count FROM contacts WHERE email = ?",
         (email,),

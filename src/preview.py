@@ -56,6 +56,10 @@ def approve_contacts(conn, contact_ids: list[int]) -> int:
         if not contact:
             continue
         if contact["preview_generated_at"] and contact["status"] == ContactStatus.PENDING.value:
+            sub = str(contact["last_preview_subject"] or "")
+            body = str(contact["last_preview_body"] or "")
+            if "[missing " in sub or "[missing " in body:
+                continue
             db.set_contact_status(conn, contact_id, ContactStatus.APPROVED.value)
             approved += 1
     return approved
