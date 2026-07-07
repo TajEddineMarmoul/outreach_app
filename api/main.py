@@ -162,7 +162,16 @@ class SaveCredentialsRequest(BaseModel):
 @app.get("/api/campaigns")
 def list_campaigns(conn=Depends(get_db)):
     campaigns = db.list_campaigns(conn)
-    return [dict(row) for row in campaigns]
+    result = []
+    for row in campaigns:
+        d = dict(row)
+        cnt = conn.execute(
+            "SELECT COUNT(*) AS count FROM campaign_recipients WHERE campaign_id = ?",
+            (d["id"],)
+        ).fetchone()["count"]
+        d["recipient_count"] = cnt
+        result.append(d)
+    return result
 
 @app.post("/api/campaigns")
 def create_campaign(req: CampaignCreate, conn=Depends(get_db)):
