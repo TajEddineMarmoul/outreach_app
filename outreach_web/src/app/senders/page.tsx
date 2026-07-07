@@ -19,7 +19,6 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -148,9 +147,9 @@ function SenderRow({
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-semibold text-slate-800 truncate">{sender.email}</span>
           {sender.is_default === 1 && (
-            <Badge className="text-[10px] px-1.5 py-0 bg-amber-50 text-amber-700 border border-amber-200">
+            <span className="text-[10px] px-1.5 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-full font-medium">
               Default
-            </Badge>
+            </span>
           )}
           <span
             className={cn(
