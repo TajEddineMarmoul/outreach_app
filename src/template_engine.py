@@ -70,15 +70,9 @@ def render_email(contact: sqlite3.Row | dict[str, Any], campaign: sqlite3.Row | 
     contact_dict = row_to_dict(contact)
     campaign_dict = row_to_dict(campaign)
     context = contact_context(contact_dict)
-    use_fallback = not bool(str(contact_dict.get("keyword_1") or "").strip())
-    body_template = (
-        campaign_dict["fallback_body_template"]
-        if use_fallback
-        else campaign_dict["body_template"]
-    )
     return RenderedEmail(
         recipient_email=str(contact_dict["email"]),
         subject=render_template(str(campaign_dict["subject_template"]), context),
-        body=render_template(str(body_template), context),
-        used_fallback=use_fallback,
+        body=render_template(str(campaign_dict["body_template"]), context),
+        used_fallback=False,
     )

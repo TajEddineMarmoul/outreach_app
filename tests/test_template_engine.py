@@ -46,5 +46,5 @@ def test_fallback_template_is_used_when_keywords_are_missing(tmp_path: Path) -> 
     contact = insert_contact(conn, "fallback@example.com")
     rendered = render_email(contact, db.get_default_campaign(conn))
 
-    assert rendered.used_fallback is True
-    assert "thought my profile could be relevant to your team" in rendered.body
+    assert rendered.used_fallback is False
+    assert "I found your LinkedIn profile while looking at Acme" in rendered.body

@@ -552,16 +552,7 @@ export default function CampaignEditorPage() {
                   <span className="transition-transform group-open:rotate-90">▸</span>
                   <span>Advanced email options</span>
                 </summary>
-                <div className="pt-3 space-y-4 pl-4">
-                  <div className="space-y-1">
-                    <label className="text-xs font-medium text-slate-600">Fallback body template</label>
-                    <Textarea
-                      placeholder="Content if variables are missing..."
-                      value={fallback}
-                      onChange={(e) => setFallback(e.target.value)}
-                      className="text-xs min-h-[100px]"
-                    />
-                  </div>
+                <div className="pt-3 pl-4">
                   <div className="flex items-center gap-2">
                     <input
                       type="checkbox"
