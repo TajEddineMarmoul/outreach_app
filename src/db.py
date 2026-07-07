@@ -343,12 +343,14 @@ def set_campaign_sender(conn: sqlite3.Connection, campaign_id: int, sender_id: i
 
 
 def get_campaign_sender(conn: sqlite3.Connection, campaign_id: int | None) -> sqlite3.Row | None:
-    campaign = get_campaign(conn, campaign_id) if campaign_id else None
+    if not campaign_id:
+        return None
+    campaign = get_campaign(conn, campaign_id)
     if campaign and campaign["selected_sender_id"]:
         sender = get_sender(conn, int(campaign["selected_sender_id"]))
         if sender and sender["status"] != "removed":
             return sender
-    return get_default_sender(conn)
+    return None
 
 
 def update_sender_daily_cap(conn: sqlite3.Connection, sender_id: int, daily_cap: int) -> None:
