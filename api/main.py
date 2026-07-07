@@ -6,7 +6,6 @@ os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
 import sys
 import json
 import sqlite3
-import re
 from pathlib import Path
 from typing import Any, Optional, List, Dict
 import pandas as pd
@@ -254,6 +253,12 @@ def get_campaign_summary(campaign_id: int, conn=Depends(get_db)):
     tracking_enabled = db.get_setting(conn, f"campaign_{campaign_id}_tracking_enabled", "true") == "true"
     unsubscribe_link = db.get_setting(conn, f"campaign_{campaign_id}_unsubscribe_link", "true") == "true"
 
+    sheet_contacts = conn.execute(
+        "SELECT COUNT(*) AS cnt FROM contacts c INNER JOIN campaign_recipients cr ON cr.contact_id = c.id WHERE cr.campaign_id = ? AND c.source_type = 'google_sheet'",
+        (campaign_id,),
+    ).fetchone()
+    sheet_synced = (sheet_contacts["cnt"] or 0) > 0
+
     return {
         "sender": sender_email,
         "recipients": recipient_count,
@@ -263,7 +268,8 @@ def get_campaign_summary(campaign_id: int, conn=Depends(get_db)):
         "schedule": schedule_label,
         "require_attachment": require_attachment,
         "tracking_enabled": tracking_enabled,
-        "unsubscribe_link": unsubscribe_link
+        "unsubscribe_link": unsubscribe_link,
+        "sheet_synced": sheet_synced,
     }
 
 @app.patch("/api/campaigns/{campaign_id}/composer")
@@ -439,6 +445,66 @@ def set_default_sender(sender_id: int, conn=Depends(get_db)):
 
 
 # ----------------------------------------------------
+# 3b. Group Endpoints
+# ----------------------------------------------------
+
+class GroupCreate(BaseModel):
+    name: str
+
+@app.get("/api/groups")
+def get_groups(conn=Depends(get_db)):
+    saved = db.get_setting(conn, "sender_groups", [])
+    db_groups = [
+        row["group_name"]
+        for row in conn.execute("SELECT DISTINCT group_name FROM senders WHERE group_name != ''").fetchall()
+    ]
+    all_groups = sorted(set(saved + db_groups))
+    return all_groups
+
+@app.post("/api/groups")
+def create_group(req: GroupCreate, conn=Depends(get_db)):
+    groups = db.get_setting(conn, "sender_groups", [])
+    if req.name in groups:
+        raise HTTPException(status_code=400, detail="Group already exists")
+    groups.append(req.name)
+    db.set_setting(conn, "sender_groups", sorted(groups))
+    return {"status": "success"}
+
+@app.delete("/api/groups/{group_name}")
+def delete_group(group_name: str, conn=Depends(get_db)):
+    groups = db.get_setting(conn, "sender_groups", [])
+    if group_name not in groups:
+        raise HTTPException(status_code=404, detail="Group not found")
+    groups.remove(group_name)
+    db.set_setting(conn, "sender_groups", groups)
+    return {"status": "success"}
+
+
+# ----------------------------------------------------
+# 3c. Template Endpoints
+# ----------------------------------------------------
+
+class TemplateCreate(BaseModel):
+    title: str
+    subject: str
+    body: str
+
+@app.get("/api/templates")
+def get_templates(conn=Depends(get_db)):
+    return db.get_templates(conn)
+
+@app.post("/api/templates")
+def create_template(req: TemplateCreate, conn=Depends(get_db)):
+    db.create_template(conn, req.title, req.subject, req.body)
+    return {"status": "success"}
+
+@app.delete("/api/templates/{template_id}")
+def delete_template(template_id: int, conn=Depends(get_db)):
+    db.delete_template(conn, template_id)
+    return {"status": "success"}
+
+
+# ----------------------------------------------------
 # 4. Recipients Endpoints
 # ----------------------------------------------------
 
@@ -487,30 +553,8 @@ def post_recipients_paste(campaign_id: int, req: RecipientsPaste, conn=Depends(g
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
         
-    # Parse copy paste
-    rows = []
-    email_pattern = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.IGNORECASE)
-    for line in req.raw.splitlines():
-        email_match = email_pattern.search(line)
-        if not email_match:
-            continue
-        email = normalize_email(email_match.group(0))
-        parts = [part.strip() for part in re.split(r"[,;\t]", line) if part.strip()]
-        first_name = ""
-        company = "Unknown"
-        if parts and "@" not in parts[0]:
-            first_name = parts[0].split()[0]
-        else:
-            first_name = email.split("@")[0].split(".")[0].title()
-        if len(parts) >= 3:
-            company = parts[2]
-        rows.append({"email": email, "first_name": first_name, "company_name": company})
-        
-    if not rows:
-        return {"imported": 0, "attached": 0}
-        
-    df = pd.DataFrame(rows)
-    mapping = {"email": "email", "first_name": "first_name", "company_name": "company_name"}
+    df = pd.read_csv(StringIO(req.raw))
+    mapping = detect_columns(list(df.columns))
     res = import_and_attach_df(conn, campaign_id, df, mapping, "paste")
     return res
 
@@ -616,36 +660,15 @@ def get_campaign_validation_summary(campaign_id: int, conn=Depends(get_db)):
     
     # Initialize dictionary to accumulate empty counts for every field we see
     column_empty_counts = {}
-    
-    # Pre-populate standard columns to ensure they are always present
-    for col in ["First_Name", "Last_Name", "Full_Name", "Email", "Company_Name", "Company_Website", "LinkedIn", "Title", "Industry", "Country"]:
-        column_empty_counts[col] = 0
-        
+
     for c in contacts:
+        c = dict(c)
         custom_str = c.get("custom_fields") or "{}"
         try:
             custom_data = json.loads(custom_str)
         except Exception:
             custom_data = {}
-            
-        # Fallback to standard DB columns if custom_fields is empty
-        if not custom_data:
-            custom_data = {
-                "First_Name": c.get("first_name"),
-                "Last_Name": c.get("last_name"),
-                "Full_Name": c.get("full_name"),
-                "Email": c.get("email"),
-                "Company_Name": c.get("company_name"),
-                "Company_Website": c.get("company_website"),
-                "LinkedIn": c.get("linkedin"),
-                "Title": c.get("title"),
-                "Industry": c.get("industry"),
-                "keyword_1": c.get("keyword_1"),
-                "keyword_2": c.get("keyword_2"),
-                "keyword_3": c.get("keyword_3"),
-                "Country": c.get("country"),
-            }
-            
+
         for key, val in custom_data.items():
             if key not in column_empty_counts:
                 column_empty_counts[key] = 0

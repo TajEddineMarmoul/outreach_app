@@ -108,7 +108,7 @@ def import_dataframe(
     result = ImportResult()
     seen_in_file: set[str] = set()
 
-    required_fields = ["email", "first_name", "company_name"]
+    required_fields = ["email"]
     missing_columns = [field for field in required_fields if field not in detected]
     if missing_columns:
         result.errors.append(f"Missing required CSV columns: {', '.join(missing_columns)}")
@@ -120,11 +120,8 @@ def import_dataframe(
             result.skipped_missing_email += 1
             continue
 
-        first_name = clean_cell(row.get(detected["first_name"]))
-        company_name = clean_cell(row.get(detected["company_name"]))
-        if not first_name or not company_name:
-            result.skipped_missing_required += 1
-            continue
+        first_name = clean_cell(row.get(detected.get("first_name"), ""))
+        company_name = clean_cell(row.get(detected.get("company_name"), ""))
 
         if email in seen_in_file:
             result.duplicates += 1

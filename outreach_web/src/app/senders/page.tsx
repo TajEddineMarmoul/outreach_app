@@ -6,12 +6,9 @@ import {
   AtSign,
   Plus,
   Trash2,
-  Star,
   Pencil,
   Check,
   X,
-  Wifi,
-  WifiOff,
   ChevronDown,
   ChevronRight,
   FolderPlus,
@@ -77,10 +74,10 @@ function InlineEdit({
           }}
           className={cn("h-7 text-xs px-2 w-36", inputClassName)}
         />
-        <button onClick={commit} className="text-green-600 hover:text-green-700">
+        <button onClick={(e) => { e.stopPropagation(); commit(); }} className="text-green-600 hover:text-green-700">
           <Check className="w-3.5 h-3.5" />
         </button>
-        <button onClick={cancel} className="text-slate-400 hover:text-slate-600">
+        <button onClick={(e) => { e.stopPropagation(); cancel(); }} className="text-slate-400 hover:text-slate-600">
           <X className="w-3.5 h-3.5" />
         </button>
       </span>
@@ -89,7 +86,7 @@ function InlineEdit({
 
   return (
     <button
-      onClick={() => { setDraft(String(value)); setEditing(true); }}
+      onClick={(e) => { e.stopPropagation(); setDraft(String(value)); setEditing(true); }}
       className={cn("group flex items-center gap-1 hover:text-blue-600 transition-colors", className)}
     >
       <span>{value || <span className="italic text-slate-400">{placeholder}</span>}</span>
@@ -105,12 +102,10 @@ function SenderRow({
   sender,
   onPatch,
   onDelete,
-  onSetDefault,
 }: {
   sender: Sender;
   onPatch: (id: number, patch: Partial<Sender>) => Promise<void>;
   onDelete: (id: number) => void;
-  onSetDefault: (id: number) => void;
 }) {
   const initials = sender.email.slice(0, 2).toUpperCase();
 
@@ -125,18 +120,6 @@ function SenderRow({
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-semibold text-slate-800 truncate">{sender.email}</span>
-          {sender.is_default === 1 && (
-            <span className="text-[10px] px-1.5 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-full font-semibold">
-              Default
-            </span>
-          )}
-          <span className={cn(
-            "flex items-center gap-1 text-[10px] font-medium",
-            sender.status === "connected" ? "text-emerald-600" : "text-slate-400"
-          )}>
-            {sender.status === "connected" ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
-            {sender.status}
-          </span>
         </div>
         <div className="mt-0.5 text-xs text-slate-400">
           <InlineEdit
@@ -160,15 +143,6 @@ function SenderRow({
 
       {/* Actions */}
       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-        {sender.is_default !== 1 && (
-          <button
-            title="Set as default"
-            onClick={() => onSetDefault(sender.id)}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-amber-500 hover:bg-amber-50 transition-colors"
-          >
-            <Star className="w-4 h-4" />
-          </button>
-        )}
         <button
           title="Remove sender"
           onClick={() => onDelete(sender.id)}
@@ -189,7 +163,6 @@ function GroupCard({
   senders,
   onPatch,
   onDelete,
-  onSetDefault,
   onRename,
   onConnectToGroup,
   connectingGroup,
@@ -198,7 +171,6 @@ function GroupCard({
   senders: Sender[];
   onPatch: (id: number, patch: Partial<Sender>) => Promise<void>;
   onDelete: (id: number) => void;
-  onSetDefault: (id: number) => void;
   onRename: (oldName: string, newName: string) => void;
   onConnectToGroup: (groupName: string) => void;
   connectingGroup: string | null;
@@ -210,9 +182,12 @@ function GroupCard({
     <div className="border border-slate-200 rounded-2xl bg-slate-50/60 overflow-hidden">
       {/* Group header */}
       <div className="flex items-center justify-between px-5 py-3 bg-white border-b border-slate-100">
-        <button
+        <div
+          role="button"
+          tabIndex={0}
           onClick={() => setOpen(!open)}
-          className="flex items-center gap-2 text-sm font-bold text-slate-700 hover:text-slate-900 transition-colors"
+          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpen(!open); } }}
+          className="flex items-center gap-2 text-sm font-bold text-slate-700 hover:text-slate-900 transition-colors cursor-pointer"
         >
           {open ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
           <InlineEdit
@@ -223,7 +198,7 @@ function GroupCard({
           <span className="text-xs font-normal text-slate-400 ml-1">
             {senders.length} sender{senders.length !== 1 ? "s" : ""}
           </span>
-        </button>
+        </div>
 
         <Button
           size="sm"
@@ -257,7 +232,6 @@ function GroupCard({
                 sender={s}
                 onPatch={onPatch}
                 onDelete={onDelete}
-                onSetDefault={onSetDefault}
               />
             ))
           )}
@@ -274,18 +248,14 @@ export default function SendersPage() {
   const { data, mutate } = useSWR<Sender[]>(`${API_URL}/api/senders`, fetcher);
   const senders: Sender[] = data ?? [];
 
-  // local group order (groups the user explicitly created, even if empty)
-  const [localGroups, setLocalGroups] = useState<string[]>([]);
+  const { data: groupsData, mutate: mutateGroups } = useSWR<string[]>(`${API_URL}/api/groups`, fetcher);
+
   const [newGroupName, setNewGroupName] = useState("");
   const [addingGroup, setAddingGroup] = useState(false);
   const [connectingGroup, setConnectingGroup] = useState<string | null>(null);
   const [connectError, setConnectError] = useState("");
 
-  // Merge DB groups + locally created groups
-  const dbGroups = Array.from(
-    new Set(senders.map((s) => s.group_name?.trim()).filter(Boolean))
-  ) as string[];
-  const allGroups = Array.from(new Set([...localGroups, ...dbGroups])).sort();
+  const allGroups = groupsData ?? [];
 
   // Bucket senders into groups
   const buckets: Record<string, Sender[]> = {};
@@ -320,12 +290,6 @@ export default function SendersPage() {
     mutate(senders.filter((s) => s.id !== id), false);
   };
 
-  // ── set default ──
-  const handleSetDefault = async (id: number) => {
-    await fetch(`${API_URL}/api/senders/${id}/set-default`, { method: "POST" });
-    mutate(senders.map((s) => ({ ...s, is_default: s.id === id ? 1 : 0 })), false);
-  };
-
   // ── rename group (update all senders in it) ──
   const handleRenameGroup = async (oldName: string, newName: string) => {
     if (!newName.trim() || newName === oldName) return;
@@ -339,13 +303,13 @@ export default function SendersPage() {
         })
       )
     );
-    setLocalGroups((prev) => prev.map((g) => (g === oldName ? newName.trim() : g)));
     mutate(
       senders.map((s) =>
         s.group_name?.trim() === oldName ? { ...s, group_name: newName.trim() } : s
       ),
       false
     );
+    mutateGroups();
   };
 
   // ── connect sender to a specific group ──
@@ -371,6 +335,7 @@ export default function SendersPage() {
         });
       }
       await mutate();
+      mutateGroups();
     } catch {
       setConnectError("Could not reach backend");
     } finally {
@@ -378,11 +343,16 @@ export default function SendersPage() {
     }
   };
 
-  // ── create a new local group ──
-  const handleCreateGroup = () => {
+  // ── create a new group ──
+  const handleCreateGroup = async () => {
     const name = newGroupName.trim();
     if (!name || allGroups.includes(name)) return;
-    setLocalGroups((prev) => [...prev, name]);
+    await fetch(`${API_URL}/api/groups`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    mutateGroups();
     setNewGroupName("");
     setAddingGroup(false);
   };
@@ -470,7 +440,6 @@ export default function SendersPage() {
               senders={buckets[g] ?? []}
               onPatch={handlePatch}
               onDelete={handleDelete}
-              onSetDefault={handleSetDefault}
               onRename={handleRenameGroup}
               onConnectToGroup={handleConnectToGroup}
               connectingGroup={connectingGroup}

@@ -111,6 +111,13 @@ def create_tables(conn: sqlite3.Connection) -> None:
             group_name TEXT NOT NULL DEFAULT ''
         );
 
+        CREATE TABLE IF NOT EXISTS templates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            subject TEXT NOT NULL,
+            body TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS campaign_recipients (
             campaign_id INTEGER NOT NULL,
             contact_id INTEGER NOT NULL,
@@ -873,5 +880,23 @@ def contact_rows_with_last_log(
 
 def delete_campaign(conn: sqlite3.Connection, campaign_id: int) -> None:
     conn.execute("DELETE FROM campaigns WHERE id = ?", (campaign_id,))
+    conn.commit()
+
+
+# ── Templates ──
+
+def get_templates(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    return list(conn.execute("SELECT * FROM templates ORDER BY id").fetchall())
+
+def create_template(conn: sqlite3.Connection, title: str, subject: str, body: str) -> int:
+    conn.execute(
+        "INSERT INTO templates (title, subject, body) VALUES (?, ?, ?)",
+        (title, subject, body),
+    )
+    conn.commit()
+    return conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+def delete_template(conn: sqlite3.Connection, template_id: int) -> None:
+    conn.execute("DELETE FROM templates WHERE id = ?", (template_id,))
     conn.commit()
 

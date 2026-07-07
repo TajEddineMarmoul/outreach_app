@@ -10,8 +10,6 @@ import {
   Mail,
   Send,
   MoreVertical,
-  Calendar,
-  Sliders,
   Trash2,
   Paperclip,
   CheckCircle,
@@ -26,6 +24,7 @@ import {
   Info,
   ExternalLink,
   Braces,
+  Save,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
@@ -84,18 +83,20 @@ export default function CampaignEditorPage() {
   const [showAllWarnings, setShowAllWarnings] = useState(false);
 
   const activeVariables = useMemo(() => {
-    const defaults = ["First_Name", "Company_Name", "keyword_sentence"];
-    if (!valSummary || !valSummary.all_columns || valSummary.all_columns.length === 0) {
-      return defaults;
-    }
-
+    if (!valSummary?.all_columns?.length) return [];
     const columns = [...valSummary.all_columns];
     const hasKeywords = columns.some(col => col.startsWith("keyword_"));
     if (hasKeywords && !columns.includes("keyword_sentence")) {
       columns.push("keyword_sentence");
     }
-
     return columns.sort();
+  }, [valSummary]);
+
+  useEffect(() => {
+    if (valSummary) {
+      console.log("[valSummary] all_columns:", valSummary.all_columns);
+      console.log("[valSummary] total_contacts:", valSummary.total_contacts);
+    }
   }, [valSummary]);
   
   // Sync state once data loads
@@ -345,8 +346,14 @@ export default function CampaignEditorPage() {
           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border bg-slate-100 text-slate-700 border-slate-200 uppercase tracking-wider scale-90">
             {campaign.status}
           </span>
-          <span className="text-sm text-slate-500">
+          <span className="text-sm text-slate-500 flex items-center gap-1.5">
             {summary?.recipients || 0} recipients
+            {summary?.sheet_synced && (
+              <span title="Synced from Google Sheets" className="inline-flex items-center gap-0.5 text-blue-600 text-[10px] font-medium cursor-default">
+                <Upload className="w-3 h-3" />
+                sync
+              </span>
+            )}
           </span>
         </div>
 
@@ -373,7 +380,7 @@ export default function CampaignEditorPage() {
             }}
           >
             <Send className="w-3.5 h-3.5" />
-            <span>Send emails</span>
+            <span>Send options</span>
           </Button>
 
           <Popover>
@@ -399,7 +406,7 @@ export default function CampaignEditorPage() {
                 </button>
               ) : null}
 
-              {campaign.status !== "stopped" && campaign.status !== "ended" ? (
+              {["sending", "scheduled", "autopilot", "paused"].includes(campaign.status) ? (
                 <button
                   onClick={() => handleCampaignAction("stop")}
                   className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 rounded-md flex items-center gap-2"
@@ -497,7 +504,7 @@ export default function CampaignEditorPage() {
               {/* From Row */}
               <div className="flex items-start gap-4">
                 <label className="w-16 text-sm font-semibold text-slate-500 mt-1.5">From</label>
-                <div className="flex-1">
+                <div className="flex-1 flex items-center justify-between">
                   {summary?.sender ? (
                     <Button
                       variant="ghost"
@@ -516,6 +523,15 @@ export default function CampaignEditorPage() {
                       No sender connected. Click to Connect ▾
                     </Button>
                   )}
+                  <button
+                    type="button"
+                    onClick={handleSave}
+                    disabled={isSaving}
+                    className="p-1.5 hover:bg-slate-200/60 rounded text-slate-400 hover:text-slate-600 transition-colors cursor-pointer shrink-0"
+                    title="Save draft"
+                  >
+                    <Save className="w-4 h-4" />
+                  </button>
                 </div>
               </div>
 
@@ -580,15 +596,19 @@ export default function CampaignEditorPage() {
                     <span className="text-[10px] font-bold uppercase tracking-wider">Variables</span>
                   </PopoverTrigger>
                   <PopoverContent align="end" className="w-48 max-h-64 overflow-y-auto p-1">
-                    {activeVariables.map((v) => (
-                      <button
-                        key={v}
-                        onClick={() => insertVariable(v)}
-                        className="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 rounded transition-colors text-slate-700 cursor-pointer"
-                      >
-                        {v}
-                      </button>
-                    ))}
+                    {activeVariables.length === 0 ? (
+                      <p className="px-3 py-2 text-xs text-slate-400">Import contacts first</p>
+                    ) : (
+                      activeVariables.map((v) => (
+                        <button
+                          key={v}
+                          onClick={() => insertVariable(v)}
+                          className="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 rounded transition-colors text-slate-700 cursor-pointer"
+                        >
+                          {v}
+                        </button>
+                      ))
+                    )}
                   </PopoverContent>
                 </Popover>
               </div>
@@ -600,6 +620,25 @@ export default function CampaignEditorPage() {
                 placeholder="Compose your email or select a template..."
                 onEditorReady={(editor) => { tiptapEditorRef.current = editor; }}
               />
+
+              {/* Unknown variable warnings */}
+              {(() => {
+                const used = [...body.matchAll(/\{\{\s*(\w+)\s*\}\}/g)].map(m => m[1]);
+                const valid = new Set(activeVariables);
+                const unknown = [...new Set(used.filter(v => !valid.has(v)))];
+                if (unknown.length === 0) return null;
+                return (
+                  <div className="mx-4 mb-3 space-y-1">
+                    {unknown.map(v => (
+                      <div key={v} className="flex items-center gap-1.5 text-xs text-red-600 font-medium">
+                        <span className="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" />
+                        <code className="bg-red-50 px-1 rounded">&#123;&#123; {v} &#125;&#125;</code>
+                        <span className="text-red-400">not in your imported data</span>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
 
               {/* Bottom attachment display chip */}
               {summary?.attachment && summary.attachment !== "none" && (
@@ -620,86 +659,12 @@ export default function CampaignEditorPage() {
                   </button>
                 </div>
               )}
+
             </div>
 
-            {/* 3. Advanced Settings & Save Card */}
-            <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4 shadow-sm">
-
-
-              <div className="flex justify-end border-t border-slate-100 pt-4">
-                <Button
-                  type="button"
-                  className="bg-blue-600 hover:bg-blue-700 text-white font-medium shadow-sm"
-                  onClick={handleSave}
-                  disabled={isSaving}
-                >
-                  {isSaving ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                      <span>Saving...</span>
-                    </>
-                  ) : (
-                    <span>Save draft</span>
-                  )}
-                </Button>
-              </div>
-            </div>
           </div>
         </div>
 
-        {/* Right Side: Sidebar Settings */}
-        <aside className="w-80 flex flex-col gap-6 shrink-0">
-          <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6 space-y-6">
-            <h2 className="text-lg font-bold text-slate-900 border-b border-slate-100 pb-2">Settings</h2>
-
-            {/* Schedule send card */}
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 text-slate-800 font-semibold text-sm">
-                <Calendar className="w-4 h-4 text-blue-600" />
-                <span>Schedule send</span>
-              </div>
-              <p className="text-xs text-slate-400 leading-normal">
-                Configure allowed time window and days for sending campaigns.
-              </p>
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full text-xs font-semibold"
-                onClick={() => {
-                  setSendTab("schedule");
-                  setSendModalOpen(true);
-                }}
-              >
-                Configure Schedule
-              </Button>
-            </div>
-
-            <hr className="border-slate-100" />
-
-            {/* Autopilot card */}
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 text-slate-800 font-semibold text-sm">
-                <Sliders className="w-4 h-4 text-blue-600" />
-                <span>Autopilot</span>
-              </div>
-              <p className="text-xs text-slate-400 leading-normal">
-                Let the background worker manage limits, delay intervals, and safety caps.
-              </p>
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full text-xs font-semibold"
-                onClick={() => {
-                  setSendTab("autopilot");
-                  setSendModalOpen(true);
-                }}
-              >
-                Configure Autopilot
-              </Button>
-            </div>
-
-          </div>
-        </aside>
       </div>
 
       {/* ----------------------------------------------------
@@ -739,6 +704,7 @@ export default function CampaignEditorPage() {
         onClose={() => setRecipientsModalOpen(false)}
         campaignId={campaignId as string}
         mutateSummary={mutateSummary}
+        mutateValSummary={mutateValSummary}
       />
 
       {/* D. Preview Modal */}
@@ -871,159 +837,105 @@ function SendCampaignDialog({
     }
   };
 
-  const isBlocked = !checklist["Gmail connected"] || !checklist["Recipients selected"];
-
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Send campaign</DialogTitle>
+          <DialogTitle>Send options</DialogTitle>
         </DialogHeader>
         
-        {/* Preflight Checks Section */}
-        <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 space-y-3">
-          <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-            Preflight Readiness Check
-          </div>
-          {checking ? (
-            <div className="flex items-center gap-2 text-xs text-slate-500">
-              <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-600" />
-              <span>Verifying campaign status...</span>
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full pt-2">
+          <TabsList className="grid w-full grid-cols-3">
+            <TabsTrigger value="send-now">Send now</TabsTrigger>
+            <TabsTrigger value="schedule">Schedule</TabsTrigger>
+            <TabsTrigger value="autopilot">Autopilot</TabsTrigger>
+          </TabsList>
+
+          {/* 1. Send Now */}
+          <TabsContent value="send-now" className="py-4">
+            <DialogFooter className="pt-2">
+              <Button variant="outline" onClick={onClose}>Cancel</Button>
+              <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={() => handleStartSending("send-now")} disabled={sendingAction}>
+                {sendingAction ? "Sending..." : "Send now"}
+              </Button>
+            </DialogFooter>
+          </TabsContent>
+
+          {/* 2. Schedule */}
+          <TabsContent value="schedule" className="py-4 space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-700">Start Time</label>
+                <Input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-700">End Time</label>
+                <Input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
+              </div>
             </div>
-          ) : (
-            <div className="grid grid-cols-2 gap-2">
-              {Object.entries(checklist).map(([label, ok]) => (
-                <div key={label} className="flex items-center gap-2 text-xs">
-                  {ok ? (
-                    <CheckCircle className="w-4 h-4 text-green-600" />
-                  ) : (
-                    <AlertTriangle className="w-4 h-4 text-amber-500" />
-                  )}
-                  <span className={ok ? "text-slate-700" : "text-slate-500"}>{label}</span>
-                  {!ok && label === "Gmail connected" && (
-                    <span className="text-blue-600 font-medium hover:underline cursor-pointer" onClick={() => alert("Please connect sender in composer.")}>
-                      (Fix)
-                    </span>
-                  )}
-                  {!ok && label === "Recipients selected" && (
-                    <span className="text-blue-600 font-medium hover:underline cursor-pointer" onClick={() => { onClose(); openRecipients(); }}>
-                      (Fix)
-                    </span>
-                  )}
-                </div>
-              ))}
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-slate-700">Allowed sending days</label>
+              <div className="flex flex-wrap gap-2">
+                {["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"].map((d) => {
+                  const active = days.includes(d);
+                  return (
+                    <button
+                      type="button"
+                      key={d}
+                      onClick={() => {
+                        if (active) setDays(days.filter((day) => day !== d));
+                        else setDays([...days, d]);
+                      }}
+                      className={`px-2 py-1 text-xs rounded border transition-colors ${
+                        active
+                          ? "bg-blue-50 border-blue-300 text-blue-700 font-medium"
+                          : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+                      }`}
+                    >
+                      {d.substring(0, 3).toUpperCase()}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          )}
-        </div>
-
-        {isBlocked && !checking ? (
-          <div className="text-sm text-red-600 font-medium py-2">
-            Please resolve the warnings above before starting your campaign outreach.
-          </div>
-        ) : (
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full pt-2">
-            <TabsList className="grid w-full grid-cols-3">
-              <TabsTrigger value="send-now">Send now</TabsTrigger>
-              <TabsTrigger value="schedule">Schedule</TabsTrigger>
-              <TabsTrigger value="autopilot">Autopilot</TabsTrigger>
-            </TabsList>
-            
-            {/* 1. Send Now */}
-            <TabsContent value="send-now" className="py-4 space-y-3">
-              <p className="text-xs text-slate-500 leading-relaxed">
-                Approved recipients will begin receiving outreach emails immediately. All set safety caps, warmup steps, and daily throttles will still be strictly respected.
-              </p>
-              <DialogFooter className="pt-2">
-                <Button variant="outline" onClick={onClose}>Cancel</Button>
-                <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={() => handleStartSending("send-now")} disabled={sendingAction}>
-                  {sendingAction ? "Sending..." : "Send now"}
-                </Button>
-              </DialogFooter>
-            </TabsContent>
-
-            {/* 2. Schedule */}
-            <TabsContent value="schedule" className="py-4 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label className="text-xs font-semibold text-slate-700">Start Time</label>
-                  <Input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs font-semibold text-slate-700">End Time</label>
-                  <Input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
-                </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-700">Campaign daily cap</label>
+                <Input type="number" min={1} value={dailyCap} onChange={(e) => setDailyCap(Number(e.target.value))} />
               </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-700">Allowed sending days</label>
-                <div className="flex flex-wrap gap-2">
-                  {["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"].map((d) => {
-                    const active = days.includes(d);
-                    return (
-                      <button
-                        type="button"
-                        key={d}
-                        onClick={() => {
-                          if (active) setDays(days.filter((day) => day !== d));
-                          else setDays([...days, d]);
-                        }}
-                        className={`px-2 py-1 text-xs rounded border transition-colors ${
-                          active
-                            ? "bg-blue-50 border-blue-300 text-blue-700 font-medium"
-                            : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
-                        }`}
-                      >
-                        {d.substring(0, 3).toUpperCase()}
-                      </button>
-                    );
-                  })}
-                </div>
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-700">Sender daily cap</label>
+                <Input type="number" min={1} value={senderDailyCap} onChange={(e) => setSenderDailyCap(Number(e.target.value))} />
               </div>
+            </div>
+            <DialogFooter className="pt-2">
+              <Button variant="outline" onClick={onClose}>Cancel</Button>
+              <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={() => handleStartSending("schedule")} disabled={sendingAction}>
+                {sendingAction ? "Scheduling..." : "Save & Schedule"}
+              </Button>
+            </DialogFooter>
+          </TabsContent>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label className="text-xs font-semibold text-slate-700">Campaign daily cap</label>
-                  <Input type="number" min={1} value={dailyCap} onChange={(e) => setDailyCap(Number(e.target.value))} />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs font-semibold text-slate-700">Sender daily cap</label>
-                  <Input type="number" min={1} value={senderDailyCap} onChange={(e) => setSenderDailyCap(Number(e.target.value))} />
-                </div>
+          {/* 3. Autopilot */}
+          <TabsContent value="autopilot" className="py-4 space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-700">Warmup daily cap</label>
+                <Input type="number" min={1} value={dailyCap} onChange={(e) => setDailyCap(Number(e.target.value))} />
               </div>
-
-              <DialogFooter className="pt-2">
-                <Button variant="outline" onClick={onClose}>Cancel</Button>
-                <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={() => handleStartSending("schedule")} disabled={sendingAction}>
-                  {sendingAction ? "Scheduling..." : "Save & Schedule"}
-                </Button>
-              </DialogFooter>
-            </TabsContent>
-
-            {/* 3. Autopilot */}
-            <TabsContent value="autopilot" className="py-4 space-y-4">
-              <p className="text-xs text-slate-500 leading-relaxed">
-                Autopilot mode automatically optimizes sending parameters, gradually warming up sender limits and throttling outputs based on bounce rates.
-              </p>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label className="text-xs font-semibold text-slate-700">Warmup daily cap</label>
-                  <Input type="number" min={1} value={dailyCap} onChange={(e) => setDailyCap(Number(e.target.value))} />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs font-semibold text-slate-700">Delay between emails (min)</label>
-                  <Input type="number" min={1} value={delay} onChange={(e) => setDelay(Number(e.target.value))} />
-                </div>
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-700">Delay between emails (min)</label>
+                <Input type="number" min={1} value={delay} onChange={(e) => setDelay(Number(e.target.value))} />
               </div>
-
-              <DialogFooter className="pt-2">
-                <Button variant="outline" onClick={onClose}>Cancel</Button>
-                <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={() => handleStartSending("autopilot")} disabled={sendingAction}>
-                  {sendingAction ? "Activating..." : "Start Autopilot"}
-                </Button>
-              </DialogFooter>
-            </TabsContent>
-          </Tabs>
-        )}
+            </div>
+            <DialogFooter className="pt-2">
+              <Button variant="outline" onClick={onClose}>Cancel</Button>
+              <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={() => handleStartSending("autopilot")} disabled={sendingAction}>
+                {sendingAction ? "Activating..." : "Start Autopilot"}
+              </Button>
+            </DialogFooter>
+          </TabsContent>
+        </Tabs>
       </DialogContent>
     </Dialog>
   );
@@ -1153,12 +1065,14 @@ function RecipientsDialog({
   isOpen,
   onClose,
   campaignId,
-  mutateSummary
+  mutateSummary,
+  mutateValSummary
 }: {
   isOpen: boolean;
   onClose: () => void;
   campaignId: string;
   mutateSummary: () => void;
+  mutateValSummary: () => void;
 }) {
   const [rawPaste, setRawPaste] = useState("");
   const [sheetUrl, setSheetUrl] = useState("");
@@ -1206,6 +1120,7 @@ function RecipientsDialog({
 
   const handlePasteSubmit = async () => {
     if (!rawPaste.trim()) return;
+    console.log("[paste] raw text:", rawPaste.slice(0, 200));
     setIsSubmitting(true);
     try {
       const res = await fetch(`${API_URL}/api/campaigns/${campaignId}/recipients/paste`, {
@@ -1213,8 +1128,12 @@ function RecipientsDialog({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ raw: rawPaste }),
       });
+      const data = await res.json();
+      console.log("[paste] response:", data);
       if (!res.ok) throw new Error("Import failed");
-      mutateSummary();
+      await mutateSummary();
+      await mutateValSummary();
+      console.log("[paste] valSummary refreshed");
       onClose();
     } catch (err: any) {
       alert(err.message);
@@ -1225,18 +1144,23 @@ function RecipientsDialog({
 
   const handleCSVSubmit = async () => {
     if (!csvFile) return;
+    console.log("[csv] file:", csvFile.name, csvFile.size, "bytes");
     setIsSubmitting(true);
     try {
       const formData = new FormData();
       formData.append("file", csvFile);
-      formData.append("mapping_json", JSON.stringify({ email: "Email", first_name: "First Name", company_name: "Company Name" }));
+      formData.append("mapping_json", JSON.stringify({}));
       
       const res = await fetch(`${API_URL}/api/campaigns/${campaignId}/recipients/csv`, {
         method: "POST",
         body: formData,
       });
+      const data = await res.json();
+      console.log("[csv] response:", data);
       if (!res.ok) throw new Error("CSV Upload failed");
-      mutateSummary();
+      await mutateSummary();
+      await mutateValSummary();
+      console.log("[csv] valSummary refreshed");
       onClose();
     } catch (err: any) {
       alert(err.message);
@@ -1247,6 +1171,7 @@ function RecipientsDialog({
 
   const handleSheetSubmit = async () => {
     if (!sheetUrl.trim()) return;
+    console.log("[sheet] url:", sheetUrl, "tab:", tabName);
     setIsSubmitting(true);
     try {
       const res = await fetch(`${API_URL}/api/campaigns/${campaignId}/recipients/google-sheet`, {
@@ -1256,11 +1181,14 @@ function RecipientsDialog({
           url: sheetUrl,
           tab_name: tabName,
           header_row: 1,
-          mapping: { email: "Email", first_name: "First Name", company_name: "Company Name" }
+          mapping: {}
         }),
       });
+      const data = await res.json();
+      console.log("[sheet] response:", data);
       if (!res.ok) throw new Error("Google sheet fetch failed");
-      mutateSummary();
+      await mutateSummary();
+      await mutateValSummary();
       onClose();
     } catch (err: any) {
       alert(err.message);
@@ -1407,7 +1335,7 @@ function PreviewDialog({
   const [previewIndex, setPreviewIndex] = useState(0);
   const previewRows = Array.isArray(previews) ? previews : [];
   const currentPreview = previewRows[previewIndex] || null;
-  const hasPreviews = previewRows.length > 0 && previewRows[0]?.subject;
+  const hasPreviews = previewRows.length > 0 && previewRows[0]?.subject !== null && previewRows[0]?.subject !== undefined;
 
   useEffect(() => {
     setPreviewIndex(0);
@@ -1490,7 +1418,6 @@ function PreviewDialog({
               <div className="px-4 py-3 border-b border-slate-100 text-xs flex items-center justify-between gap-3">
                 <span className="text-slate-500 truncate">
                   To: <strong className="text-slate-800">{currentPreview.recipient_email}</strong>
-                  {currentPreview.first_name ? ` (${currentPreview.first_name})` : ""}
                 </span>
                 <span className="text-slate-400 shrink-0">Row {previewIndex + 1}</span>
               </div>
@@ -1619,18 +1546,11 @@ function TemplateDialog({
   onClose: () => void;
   onSelect: (subject: string, body: string) => void;
 }) {
-  const templates = [
-    {
-      title: "Job Application outreach",
-      subject: "Junior Technical Profile - {{ Company_Name }}",
-      body: "Hi {{ First_Name }},\n\nI found your LinkedIn profile while looking at {{ Company_Name }}, and I noticed that the company focuses on job keywords.\n\nMy name is Your Name. I am a final-year AI & Computer Science engineering student.\n\nI'm looking for a junior/intern technical role starting around October 2026, and I want to contribute to your engineering team.\n\nCould we jump on a brief 10-minute call this week? I have attached my resume for your review.\n\nBest regards,\nYour Name"
-    },
-    {
-      title: "Sales / Product Pitch",
-      subject: "Quick question about {{ Company_Name }}'s engineering stack",
-      body: "Hi {{ First_Name }},\n\nHope you are doing well.\n\nI was looking at {{ Company_Name }} and saw that you are scale-testing your tech stack. We help companies automate their API workflows with zero downtime.\n\nWould you be open to a quick call next Tuesday at 2 PM to see if we can help?\n\nBest,\nYour Name"
-    }
-  ];
+  const { data: templates } = useSWR(
+    isOpen ? `${API_URL}/api/templates` : null,
+    fetcher
+  );
+  const list = Array.isArray(templates) ? templates : [];
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -1639,18 +1559,22 @@ function TemplateDialog({
           <DialogTitle>Select email template</DialogTitle>
         </DialogHeader>
         <div className="py-4 space-y-4">
-          {templates.map((t) => (
-            <div
-              key={t.title}
-              className="border border-slate-200 hover:border-blue-400 rounded-lg p-4 cursor-pointer hover:bg-blue-50/10 transition-all space-y-2"
-              onClick={() => onSelect(t.subject, t.body)}
-            >
-              <h3 className="font-bold text-slate-800 text-sm">{t.title}</h3>
-              <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">
-                {t.body}
-              </p>
-            </div>
-          ))}
+          {list.length === 0 ? (
+            <p className="text-center text-sm text-slate-400 py-8">No templates yet. Create one from the Templates page.</p>
+          ) : (
+            list.map((t: any) => (
+              <div
+                key={t.id}
+                className="border border-slate-200 hover:border-blue-400 rounded-lg p-4 cursor-pointer hover:bg-blue-50/10 transition-all space-y-2"
+                onClick={() => onSelect(t.subject, t.body)}
+              >
+                <h3 className="font-bold text-slate-800 text-sm">{t.title}</h3>
+                <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">
+                  {t.body}
+                </p>
+              </div>
+            ))
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancel</Button>
