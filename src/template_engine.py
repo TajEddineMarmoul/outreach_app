@@ -3,12 +3,21 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
+import re
 from jinja2 import Environment
 
 from .models import RenderedEmail
 
 
 ENV = Environment(autoescape=False, trim_blocks=False, lstrip_blocks=False)
+
+
+def sanitize_template_variables(template: str) -> str:
+    def replace_spaces(match):
+        content = match.group(1)
+        sanitized = content.strip().replace(" ", "_")
+        return f"{{{{ {sanitized} }}}}"
+    return re.sub(r"\{\{\s*(.*?)\s*\}\}", replace_spaces, template)
 
 
 def row_to_dict(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
@@ -53,7 +62,8 @@ def contact_context(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
 
 
 def render_template(template: str, context: dict[str, Any]) -> str:
-    return ENV.from_string(template).render(**context).strip()
+    sanitized = sanitize_template_variables(template)
+    return ENV.from_string(sanitized).render(**context).strip()
 
 
 def render_email(contact: sqlite3.Row | dict[str, Any], campaign: sqlite3.Row | dict[str, Any]) -> RenderedEmail:
