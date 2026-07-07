@@ -414,15 +414,36 @@ export default function SendersPage() {
       {groupKeys.length > 0 && (
         <div className="space-y-6">
           {groupKeys.map((key) => (
-            <GroupSection
-              key={key}
-              name={key}
-              senders={groups[key]}
-              onUpdate={handleUpdate}
-              onDelete={handleDelete}
-              onSetDefault={handleSetDefault}
-              onRename={handleRenameGroup}
-            />
+            <div key={key} className="space-y-2">
+              {/* Only show header for named groups */}
+              {key !== "__ungrouped__" && (
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                    <ChevronDown className="w-3.5 h-3.5" />
+                    <InlineEdit
+                      value={key}
+                      placeholder="Group name"
+                      onSave={(newName) => handleRenameGroup(key, newName)}
+                      className="text-xs font-semibold text-slate-500 uppercase tracking-wider"
+                    />
+                    <span className="ml-1 text-slate-400 normal-case font-normal tracking-normal">
+                      ({groups[key].length})
+                    </span>
+                  </div>
+                </div>
+              )}
+              <div className={key !== "__ungrouped__" ? "pl-4 space-y-2" : "space-y-2"}>
+                {groups[key].map((s) => (
+                  <SenderRow
+                    key={s.id}
+                    sender={s}
+                    onUpdate={handleUpdate}
+                    onDelete={handleDelete}
+                    onSetDefault={handleSetDefault}
+                  />
+                ))}
+              </div>
+            </div>
           ))}
         </div>
       )}

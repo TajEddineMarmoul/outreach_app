@@ -1077,10 +1077,12 @@ function SenderDialog({
           ) : (
             groupKeys.map((key) => (
               <div key={key} className="space-y-2">
-                {/* Group label */}
-                <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest px-1">
-                  {key === "__ungrouped__" ? "Ungrouped" : key}
-                </div>
+                {/* Only show header for named groups */}
+                {key !== "__ungrouped__" && (
+                  <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest px-1">
+                    {key}
+                  </div>
+                )}
                 {groups[key].map((sender) => {
                   const selected = sender.email === selectedEmail;
                   return (
