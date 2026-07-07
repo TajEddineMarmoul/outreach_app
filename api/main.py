@@ -550,7 +550,7 @@ def add_dnc_email(req: DNCAddRequest, conn=Depends(get_db)):
 # ----------------------------------------------------
 
 @app.get("/api/campaigns/{campaign_id}/preview")
-def get_campaign_preview(campaign_id: int, limit: int = 10, conn=Depends(get_db)):
+def get_campaign_preview(campaign_id: int, limit: int = 1000, conn=Depends(get_db)):
     contacts = db.campaign_contacts(conn, campaign_id, limit=limit)
     res = []
     for c in contacts:
@@ -565,14 +565,50 @@ def get_campaign_preview(campaign_id: int, limit: int = 10, conn=Depends(get_db)
     return res
 
 @app.post("/api/campaigns/{campaign_id}/preview/generate")
-def post_generate_previews(campaign_id: int, conn=Depends(get_db)):
+def post_generate_previews(campaign_id: int, limit: Optional[int] = None, conn=Depends(get_db)):
     from src.preview import generate_preview
-    contacts = db.campaign_contacts(conn, campaign_id)
+    contacts = db.campaign_contacts(conn, campaign_id, limit=limit)
     count = 0
+    now = db.utcnow_iso()
     for c in contacts:
-        generate_preview(conn, int(c["id"]), campaign_id=campaign_id, mark=True)
+        preview = generate_preview(conn, int(c["id"]), campaign_id=campaign_id, mark=False)
+        conn.execute(
+            """
+            UPDATE contacts
+            SET preview_generated_at = ?, last_preview_subject = ?, last_preview_body = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (now, preview.subject, preview.body, now, int(c["id"])),
+        )
         count += 1
+    conn.commit()
     return {"generated": count}
+
+class ApproveRecipientsRequest(BaseModel):
+    contact_ids: Optional[list[int]] = None
+
+@app.post("/api/campaigns/{campaign_id}/recipients/approve")
+def post_approve_recipients(campaign_id: int, req: ApproveRecipientsRequest, conn=Depends(get_db)):
+    from src.preview import approve_contacts
+    if req.contact_ids is not None:
+        approved = approve_contacts(conn, req.contact_ids)
+    else:
+        pending = [
+            row["id"] for row in db.campaign_contacts(conn, campaign_id, statuses=("pending",))
+            if row["preview_generated_at"] is not None
+        ]
+        approved = approve_contacts(conn, pending)
+    return {"approved": approved}
+
+class RejectRecipientsRequest(BaseModel):
+    contact_ids: list[int]
+
+@app.post("/api/campaigns/{campaign_id}/recipients/reject")
+def post_reject_recipients(campaign_id: int, req: RejectRecipientsRequest, conn=Depends(get_db)):
+    from src.preview import reject_contacts
+    rejected = reject_contacts(conn, req.contact_ids)
+    return {"rejected": rejected}
 
 @app.post("/api/campaigns/{campaign_id}/test-send")
 def post_test_send(campaign_id: int, req: TestSendRequest, conn=Depends(get_db)):

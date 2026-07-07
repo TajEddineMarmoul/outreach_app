@@ -15,6 +15,6 @@ sending:
   bounce_rate_pause_threshold: 5.0
 campaign:
   attachment_enabled: true
-  attachment_path: ''
+  attachment_path: data\uploads\Taj_Eddine_Marmoul_CV_fullstack_ai_Global.pdf
   tracking_enabled: false
   followups_enabled: false

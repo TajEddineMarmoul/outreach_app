@@ -165,6 +165,7 @@ export default function CampaignEditorPage() {
       // 3. Mutate SWR cache to update
       await mutate(`${API_URL}/api/campaigns/${campaignId}`);
       await mutateSummary();
+      await mutate(`${API_URL}/api/campaigns/${campaignId}/preview`);
 
       // 4. Open preview modal
       setPreviewModalOpen(true);
