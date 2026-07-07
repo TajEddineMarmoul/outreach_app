@@ -18,37 +18,11 @@ class ContactStatus(str, Enum):
     DO_NOT_CONTACT = "do_not_contact"
 
 
-DEFAULT_SUBJECT_TEMPLATE = "Junior technical profile - {{ Company_Name }}"
+DEFAULT_SUBJECT_TEMPLATE = ""
 
-DEFAULT_BODY_TEMPLATE = """Hi {{ First_Name }},
+DEFAULT_BODY_TEMPLATE = ""
 
-I found your LinkedIn profile while looking at {{ Company_Name }}, and I noticed that the company focuses on {{ keyword_sentence }}.
-
-My name is Your Name. I am a final-year AI & Computer Science engineering student.
-
-I am looking for a junior technical role starting around October 2026, where I can contribute and keep learning.
-
-My background is mainly in software engineering, web/backend development, and AI/data systems.
-
-Best regards,
-Your Name
-linkedin.com/in/your-profile
-github.com/your-handle"""
-
-DEFAULT_FALLBACK_BODY_TEMPLATE = """Hi {{ First_Name }},
-
-I found your LinkedIn profile while looking at {{ Company_Name }}, and I thought my profile could be relevant to your team.
-
-My name is Your Name. I am a final-year AI & Computer Science engineering student.
-
-I am looking for a junior technical role starting around October 2026, where I can contribute and keep learning.
-
-My background is mainly in software engineering, web/backend development, and AI/data systems.
-
-Best regards,
-Your Name
-linkedin.com/in/your-profile
-github.com/your-handle"""
+DEFAULT_FALLBACK_BODY_TEMPLATE = ""
 
 CSV_REQUIRED_COLUMNS = ["Email", "First Name", "Company Name"]
 

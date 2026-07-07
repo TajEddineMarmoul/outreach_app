@@ -209,7 +209,7 @@ def seed_default_campaign(conn: sqlite3.Connection) -> None:
         VALUES (?, ?, ?, ?, ?, 'draft', ?, ?)
         """,
         (
-            "Job search outreach",
+            "Test Campaign",
             DEFAULT_SUBJECT_TEMPLATE,
             DEFAULT_BODY_TEMPLATE,
             DEFAULT_FALLBACK_BODY_TEMPLATE,

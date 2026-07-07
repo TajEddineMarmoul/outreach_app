@@ -106,7 +106,7 @@ export default function CampaignsPage() {
               <div className="py-4 space-y-3">
                 <label className="text-sm font-medium text-slate-700">Campaign name</label>
                 <Input
-                  placeholder="e.g. Job Search Outreach"
+                  placeholder="e.g. My Campaign"
                   value={campaignName}
                   onChange={(e) => setCampaignName(e.target.value)}
                   disabled={isSubmitting}
