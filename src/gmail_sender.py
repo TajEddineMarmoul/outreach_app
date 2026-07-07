@@ -77,6 +77,17 @@ def clear_gmail_token() -> None:
         token_path.unlink()
 
 
+def verify_required_scopes(creds: Credentials, required_scopes: list[str]) -> None:
+    granted_scopes = set(creds.scopes or [])
+    missing = [s for s in required_scopes if s not in granted_scopes]
+    if missing:
+        raise ValueError(
+            "Required permissions were not granted: "
+            f"'{', '.join(missing)}'. "
+            "Please log in again and make sure to check the permission box for Gmail Send."
+        )
+
+
 def get_google_credentials(
     force_reauth: bool = False,
     token_path: str | Path | None = None,
@@ -84,15 +95,34 @@ def get_google_credentials(
 ):
     credentials_path = credentials_file_path()
     final_token_path = resolve_token_path(token_path)
+    required = [
+        "https://www.googleapis.com/auth/gmail.send",
+        "https://www.googleapis.com/auth/userinfo.email",
+    ]
+    
     if force_reauth and final_token_path.exists():
         final_token_path.unlink()
     creds = None
     if final_token_path.exists():
-        creds = Credentials.from_authorized_user_file(str(final_token_path), SCOPES)
+        try:
+            creds = Credentials.from_authorized_user_file(str(final_token_path), SCOPES)
+            verify_required_scopes(creds, required)
+        except Exception:
+            if final_token_path.exists():
+                final_token_path.unlink()
+            creds = None
+            
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
+            try:
+                creds.refresh(Request())
+                verify_required_scopes(creds, required)
+            except Exception:
+                if final_token_path.exists():
+                    final_token_path.unlink()
+                creds = None
+                
+        if not creds:
             if not credentials_path.exists():
                 raise FileNotFoundError(
                     f"Gmail OAuth credentials not found at {credentials_path}. "
@@ -101,6 +131,8 @@ def get_google_credentials(
             flow = InstalledAppFlow.from_client_secrets_file(str(credentials_path), SCOPES)
             kwargs = {"prompt": prompt} if prompt else {}
             creds = flow.run_local_server(port=0, **kwargs)
+            verify_required_scopes(creds, required)
+            
         final_token_path.parent.mkdir(parents=True, exist_ok=True)
         final_token_path.write_text(creds.to_json(), encoding="utf-8")
     return creds

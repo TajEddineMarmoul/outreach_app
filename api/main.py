@@ -363,6 +363,8 @@ def connect_sender(conn=Depends(get_db)):
         )
         db.set_setting(conn, "sender_email", connected.email)
         return {"id": sender_id, "email": connected.email}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
@@ -378,6 +380,8 @@ def reconnect_sender(sender_id: int, conn=Depends(get_db)):
             prompt="select_account consent",
         )
         return {"status": "success", "email": connected.email}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
