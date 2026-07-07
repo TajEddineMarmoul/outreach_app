@@ -232,14 +232,10 @@ def create_campaign(conn: sqlite3.Connection, name: str = "Untitled campaign") -
         INSERT INTO campaigns
             (name, subject_template, body_template, fallback_body_template,
              attachment_path, selected_sender_id, status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?)
+        VALUES (?, '', '', '', '', ?, 'draft', ?, ?)
         """,
         (
             name,
-            DEFAULT_SUBJECT_TEMPLATE,
-            DEFAULT_BODY_TEMPLATE,
-            DEFAULT_FALLBACK_BODY_TEMPLATE,
-            "data/uploads/resume.pdf",
             default_sender_id(conn),
             now,
             now,
