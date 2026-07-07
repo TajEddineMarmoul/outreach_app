@@ -547,26 +547,7 @@ export default function CampaignEditorPage() {
 
             {/* 3. Advanced Settings & Save Card */}
             <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4 shadow-sm">
-              <details className="group">
-                <summary className="text-xs font-semibold text-slate-500 hover:text-slate-700 cursor-pointer list-none flex items-center gap-1 select-none">
-                  <span className="transition-transform group-open:rotate-90">▸</span>
-                  <span>Advanced email options</span>
-                </summary>
-                <div className="pt-3 pl-4">
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      id="req_att"
-                      checked={requireAttachment}
-                      onChange={(e) => setRequireAttachment(e.target.checked)}
-                      className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                    />
-                    <label htmlFor="req_att" className="text-xs text-slate-600 select-none cursor-pointer">
-                      Require attachment for this campaign
-                    </label>
-                  </div>
-                </div>
-              </details>
+
 
               <div className="flex justify-end border-t border-slate-100 pt-4">
                 <Button
