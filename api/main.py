@@ -586,8 +586,14 @@ def post_generate_previews(campaign_id: int, limit: Optional[int] = None, conn=D
     contacts = db.campaign_contacts(conn, campaign_id, limit=limit)
     count = 0
     now = db.utcnow_iso()
+    first_body = None
+    first_subject = None
     for c in contacts:
         preview = generate_preview(conn, int(c["id"]), campaign_id=campaign_id, mark=False)
+        if count == 0:
+            first_body = preview.body
+            first_subject = preview.subject
+            print(f"DEBUG GENERATE ID 1: subject={preview.subject!r}, body_len={len(preview.body or '')}, body={preview.body!r}")
         conn.execute(
             """
             UPDATE contacts
@@ -599,7 +605,11 @@ def post_generate_previews(campaign_id: int, limit: Optional[int] = None, conn=D
         )
         count += 1
     conn.commit()
-    return {"generated": count}
+    return {
+        "generated": count,
+        "debug_first_subject": first_subject,
+        "debug_first_body": first_body,
+    }
 
 class ApproveRecipientsRequest(BaseModel):
     contact_ids: Optional[list[int]] = None
