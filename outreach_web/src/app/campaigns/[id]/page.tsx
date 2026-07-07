@@ -1047,6 +1047,17 @@ function SenderDialog({
   onConnect: () => void;
   onSelect: (senderId: number) => void;
 }) {
+  // Group senders by group_name
+  const groups: Record<string, any[]> = {};
+  for (const s of senders) {
+    const key = s.group_name?.trim() || "__ungrouped__";
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(s);
+  }
+  const groupKeys = Object.keys(groups).sort((a, b) =>
+    a === "__ungrouped__" ? 1 : b === "__ungrouped__" ? -1 : a.localeCompare(b)
+  );
+
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="sm:max-w-md">
@@ -1054,7 +1065,7 @@ function SenderDialog({
           <DialogTitle>Choose campaign sender</DialogTitle>
         </DialogHeader>
 
-        <div className="py-4 space-y-3">
+        <div className="py-4 space-y-4 max-h-[60vh] overflow-y-auto">
           {senders.length === 0 ? (
             <div className="border border-dashed border-slate-200 rounded-lg p-6 text-center space-y-2">
               <Mail className="w-7 h-7 text-slate-400 mx-auto" />
@@ -1064,51 +1075,76 @@ function SenderDialog({
               </p>
             </div>
           ) : (
-            <div className="space-y-2">
-              {senders.map((sender) => {
-                const selected = sender.email === selectedEmail;
-                return (
-                  <button
-                    key={sender.id}
-                    type="button"
-                    onClick={() => onSelect(Number(sender.id))}
-                    className={`w-full border rounded-lg p-3 text-left flex items-center justify-between transition-colors ${
-                      selected
-                        ? "border-blue-300 bg-blue-50"
-                        : "border-slate-200 bg-white hover:bg-slate-50"
-                    }`}
-                  >
-                    <div className="min-w-0">
-                      <div className="text-sm font-semibold text-slate-800 truncate">{sender.email}</div>
-                      <div className="text-xs text-slate-500">
-                        Daily cap: {sender.daily_cap || 10}
+            groupKeys.map((key) => (
+              <div key={key} className="space-y-2">
+                {/* Group label */}
+                <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest px-1">
+                  {key === "__ungrouped__" ? "Ungrouped" : key}
+                </div>
+                {groups[key].map((sender) => {
+                  const selected = sender.email === selectedEmail;
+                  return (
+                    <button
+                      key={sender.id}
+                      type="button"
+                      onClick={() => onSelect(Number(sender.id))}
+                      className={`w-full border rounded-xl p-3 text-left flex items-center justify-between transition-colors ${
+                        selected
+                          ? "border-blue-300 bg-blue-50"
+                          : "border-slate-200 bg-white hover:bg-slate-50"
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-xs font-bold shrink-0">
+                          {sender.email.slice(0, 2).toUpperCase()}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold text-slate-800 truncate">{sender.email}</div>
+                          {sender.display_name && (
+                            <div className="text-xs text-slate-400 truncate">{sender.display_name}</div>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                    {selected && <CheckCircle className="w-4 h-4 text-blue-600 shrink-0" />}
-                  </button>
-                );
-              })}
-            </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-[10px] bg-slate-100 text-slate-600 rounded-full px-2 py-0.5 font-medium">
+                          {sender.daily_cap || 10}/day
+                        </span>
+                        {selected && <CheckCircle className="w-4 h-4 text-blue-600" />}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            ))
           )}
         </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={connecting}>Cancel</Button>
-          <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={onConnect} disabled={connecting}>
-            {connecting ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                <span>Connecting...</span>
-              </>
-            ) : (
-              <span>Connect another Gmail sender</span>
-            )}
-          </Button>
+        <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-between">
+          <a
+            href="/senders"
+            className="text-xs text-slate-500 hover:text-blue-600 underline underline-offset-2 transition-colors self-center"
+          >
+            Manage senders →
+          </a>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={onClose} disabled={connecting}>Cancel</Button>
+            <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={onConnect} disabled={connecting}>
+              {connecting ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  <span>Connecting...</span>
+                </>
+              ) : (
+                <span>Connect Gmail</span>
+              )}
+            </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 }
+
 
 // 3. Select Recipients Dialog
 function RecipientsDialog({

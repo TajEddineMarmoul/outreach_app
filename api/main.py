@@ -405,6 +405,39 @@ def patch_campaign_sender(campaign_id: int, req: SenderSelect, conn=Depends(get_
     return {"status": "success"}
 
 
+class SenderUpdate(BaseModel):
+    display_name: str = ""
+    daily_cap: int = 10
+    group_name: str = ""
+
+
+@app.patch("/api/senders/{sender_id}")
+def update_sender(sender_id: int, req: SenderUpdate, conn=Depends(get_db)):
+    sender = db.get_sender(conn, sender_id)
+    if not sender:
+        raise HTTPException(status_code=404, detail="Sender not found")
+    db.update_sender(conn, sender_id, req.display_name, req.daily_cap, req.group_name)
+    return {"status": "success"}
+
+
+@app.delete("/api/senders/{sender_id}")
+def delete_sender(sender_id: int, conn=Depends(get_db)):
+    sender = db.get_sender(conn, sender_id)
+    if not sender:
+        raise HTTPException(status_code=404, detail="Sender not found")
+    db.remove_sender(conn, sender_id)
+    return {"status": "success"}
+
+
+@app.post("/api/senders/{sender_id}/set-default")
+def set_default_sender(sender_id: int, conn=Depends(get_db)):
+    sender = db.get_sender(conn, sender_id)
+    if not sender:
+        raise HTTPException(status_code=404, detail="Sender not found")
+    db.set_default_sender(conn, sender_id)
+    return {"status": "success"}
+
+
 # ----------------------------------------------------
 # 4. Recipients Endpoints
 # ----------------------------------------------------

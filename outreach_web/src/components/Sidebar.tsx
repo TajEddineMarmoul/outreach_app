@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Mail, FileText, Users, BarChart2, Settings, Send } from "lucide-react";
+import { Mail, FileText, Users, BarChart2, Settings, Send, AtSign } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const menuItems = [
   { name: "Campaigns", href: "/campaigns", icon: Mail },
   { name: "Templates", href: "/templates", icon: FileText },
   { name: "Contacts", href: "/contacts", icon: Users },
+  { name: "Senders", href: "/senders", icon: AtSign },
   { name: "Analytics", href: "/analytics", icon: BarChart2 },
   { name: "Settings", href: "/settings", icon: Settings },
 ];

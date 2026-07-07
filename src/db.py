@@ -107,7 +107,8 @@ def create_tables(conn: sqlite3.Connection) -> None:
             connected_at TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'connected',
             daily_cap INTEGER NOT NULL DEFAULT 10,
-            is_default INTEGER NOT NULL DEFAULT 0
+            is_default INTEGER NOT NULL DEFAULT 0,
+            group_name TEXT NOT NULL DEFAULT ''
         );
 
         CREATE TABLE IF NOT EXISTS campaign_recipients (
@@ -190,6 +191,10 @@ def migrate_schema(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_send_log_sender_status ON send_log(sender_id, status)"
     )
+
+    sender_columns = {row["name"] for row in conn.execute("PRAGMA table_info(senders)").fetchall()}
+    if "group_name" not in sender_columns:
+        conn.execute("ALTER TABLE senders ADD COLUMN group_name TEXT NOT NULL DEFAULT ''")
 
 
 def seed_default_campaign(conn: sqlite3.Connection) -> None:
@@ -331,6 +336,20 @@ def set_default_sender(conn: sqlite3.Connection, sender_id: int) -> None:
 def remove_sender(conn: sqlite3.Connection, sender_id: int) -> None:
     conn.execute("UPDATE senders SET status = 'removed', is_default = 0 WHERE id = ?", (sender_id,))
     conn.execute("UPDATE campaigns SET selected_sender_id = NULL WHERE selected_sender_id = ?", (sender_id,))
+    conn.commit()
+
+
+def update_sender(
+    conn: sqlite3.Connection,
+    sender_id: int,
+    display_name: str,
+    daily_cap: int,
+    group_name: str,
+) -> None:
+    conn.execute(
+        "UPDATE senders SET display_name = ?, daily_cap = ?, group_name = ? WHERE id = ?",
+        (display_name, daily_cap, group_name, sender_id),
+    )
     conn.commit()
 
 
