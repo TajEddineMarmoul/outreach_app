@@ -20,6 +20,9 @@ COLUMN_ALIASES = {
     "title": {"title", "job title", "position"},
     "industry": {"industry"},
     "keywords": {"keywords", "keyword"},
+    "keyword_1": {"keyword_1", "keyword 1", "keyword1"},
+    "keyword_2": {"keyword_2", "keyword 2", "keyword2"},
+    "keyword_3": {"keyword_3", "keyword 3", "keyword3"},
     "country": {"country", "location country"},
 }
 
@@ -97,7 +100,10 @@ def import_dataframe(
     sheet_id: str = "",
     sheet_name: str = "",
 ) -> ImportResult:
-    detected = column_mapping or detect_columns(list(frame.columns))
+    detected = detect_columns(list(frame.columns))
+    if column_mapping:
+        detected.update(column_mapping)
+        
     result = ImportResult()
     seen_in_file: set[str] = set()
 
@@ -125,7 +131,13 @@ def import_dataframe(
         seen_in_file.add(email)
 
         keywords = clean_cell(row.get(detected.get("keywords"), ""))
-        keyword_1, keyword_2, keyword_3 = extract_keywords(keywords)
+        keyword_1 = clean_cell(row.get(detected.get("keyword_1"), ""))
+        keyword_2 = clean_cell(row.get(detected.get("keyword_2"), ""))
+        keyword_3 = clean_cell(row.get(detected.get("keyword_3"), ""))
+        
+        if not keyword_1 and not keyword_2 and not keyword_3:
+            keyword_1, keyword_2, keyword_3 = extract_keywords(keywords)
+            
         status = ContactStatus.PENDING.value
         if is_do_not_contact(conn, email):
             status = ContactStatus.DO_NOT_CONTACT.value
