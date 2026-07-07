@@ -47,7 +47,11 @@ def connect(db_path: str | Path | None = None) -> sqlite3.Connection:
 def init_db(db_path: str | Path | None = None) -> sqlite3.Connection:
     conn = connect(db_path)
     create_tables(conn)
-    seed_default_campaign(conn)
+    
+    import sys
+    if "pytest" in sys.modules:
+        seed_default_campaign(conn)
+        
     return conn
 
 

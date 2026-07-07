@@ -29,12 +29,19 @@ def insert_contact(conn, email: str, keywords: str = "", **extra):
 
 def test_template_rendering_uses_keyword_body(tmp_path: Path) -> None:
     conn = db.init_db(tmp_path / "outreach.db")
+    campaign_id = db.create_campaign(conn, "Test Campaign")
+    conn.execute(
+        "UPDATE campaigns SET subject_template = ?, body_template = ? WHERE id = ?",
+        ("Junior technical profile - {{ Company_Name }}", "Hi {{ First_Name }},\n\nI found your LinkedIn profile while looking at {{ Company_Name }}, and I liked that the company focuses on {{ keyword_sentence }}.", campaign_id)
+    )
+    campaign = conn.execute("SELECT * FROM campaigns WHERE id = ?", (campaign_id,)).fetchone()
+    
     contact = insert_contact(
         conn,
         "taj@example.com",
         "plant-based drinks, farm transition, dairy alternatives",
     )
-    rendered = render_email(contact, db.get_default_campaign(conn))
+    rendered = render_email(contact, campaign)
 
     assert rendered.used_fallback is False
     assert rendered.subject == "Junior technical profile - Acme"
@@ -43,8 +50,15 @@ def test_template_rendering_uses_keyword_body(tmp_path: Path) -> None:
 
 def test_fallback_template_is_used_when_keywords_are_missing(tmp_path: Path) -> None:
     conn = db.init_db(tmp_path / "outreach.db")
+    campaign_id = db.create_campaign(conn, "Test Campaign")
+    conn.execute(
+        "UPDATE campaigns SET subject_template = ?, body_template = ? WHERE id = ?",
+        ("Junior technical profile - {{ Company_Name }}", "Hi {{ First_Name }},\n\nI found your LinkedIn profile while looking at {{ Company_Name }}, and I liked that the company focuses on {{ keyword_sentence }}.", campaign_id)
+    )
+    campaign = conn.execute("SELECT * FROM campaigns WHERE id = ?", (campaign_id,)).fetchone()
+    
     contact = insert_contact(conn, "fallback@example.com")
-    rendered = render_email(contact, db.get_default_campaign(conn))
+    rendered = render_email(contact, campaign)
 
     assert rendered.used_fallback is False
     assert "I found your LinkedIn profile while looking at Acme" in rendered.body
