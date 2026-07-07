@@ -1410,7 +1410,7 @@ function PreviewDialog({
               <div className="px-4 py-3 border-b border-slate-100 text-sm font-semibold text-slate-800">
                 Subject: {currentPreview.subject || "(empty subject)"}
               </div>
-            <div className="px-4 py-4 text-slate-700 leading-relaxed font-sans text-sm">
+            <div className="px-4 py-4 text-slate-700 leading-relaxed font-sans text-sm border-b border-slate-100">
               {currentPreview.body ? (
                 /<[a-z][\s\S]*>/i.test(currentPreview.body) ? (
                   <div dangerouslySetInnerHTML={{ __html: currentPreview.body }} />
@@ -1421,6 +1421,12 @@ function PreviewDialog({
                 "(empty body)"
               )}
             </div>
+            {currentPreview.attachment_name && currentPreview.attachment_name !== "none" && (
+              <div className="px-4 py-3 bg-slate-50 flex items-center gap-2 text-xs font-semibold text-slate-600">
+                <Paperclip className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                <span>{currentPreview.attachment_name}</span>
+              </div>
+            )}
             </div>
           )}
         </div>

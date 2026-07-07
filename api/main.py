@@ -551,6 +551,12 @@ def add_dnc_email(req: DNCAddRequest, conn=Depends(get_db)):
 
 @app.get("/api/campaigns/{campaign_id}/preview")
 def get_campaign_preview(campaign_id: int, limit: int = 1000, conn=Depends(get_db)):
+    campaign = db.get_campaign(conn, campaign_id)
+    att_name = ""
+    if campaign and campaign["attachment_path"]:
+        from pathlib import Path
+        att_name = Path(str(campaign["attachment_path"])).name
+
     contacts = db.campaign_contacts(conn, campaign_id, limit=limit)
     res = []
     for c in contacts:
@@ -560,7 +566,8 @@ def get_campaign_preview(campaign_id: int, limit: int = 1000, conn=Depends(get_d
             "first_name": c["first_name"],
             "subject": c["last_preview_subject"],
             "body": c["last_preview_body"],
-            "generated_at": c["preview_generated_at"]
+            "generated_at": c["preview_generated_at"],
+            "attachment_name": att_name
         })
     return res
 
