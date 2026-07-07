@@ -11,3 +11,7 @@ google-auth>=2.32
 google-auth-oauthlib>=1.2
 google-auth-httplib2>=0.2
 pytest>=8.2
+fastapi>=0.110
+uvicorn>=0.30
+python-multipart>=0.0.9
+

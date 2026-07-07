@@ -38,7 +38,7 @@ def get_db_path(path: str | Path | None = None) -> Path:
 def connect(db_path: str | Path | None = None) -> sqlite3.Connection:
     final_path = get_db_path(db_path)
     final_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(final_path)
+    conn = sqlite3.connect(final_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
@@ -854,3 +854,9 @@ def contact_rows_with_last_log(
             params,
         ).fetchall()
     )
+
+
+def delete_campaign(conn: sqlite3.Connection, campaign_id: int) -> None:
+    conn.execute("DELETE FROM campaigns WHERE id = ?", (campaign_id,))
+    conn.commit()
+

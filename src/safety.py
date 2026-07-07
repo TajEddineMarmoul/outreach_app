@@ -205,9 +205,11 @@ def pre_send_checks(
         return SafetyResult(False, "Duplicate recipient email exists")
     if db.has_send_attempt(conn, int(contact["id"])):
         return SafetyResult(False, "Recipient already has a send attempt or sent log")
-    attachment = attachment_check(config, campaign)
-    if not attachment.allowed:
-        return attachment
+    require_att = db.get_setting(conn, f"campaign_{campaign['id']}_require_attachment", "false") == "true" or getattr(config.campaign, "attachment_enabled", False)
+    if require_att:
+        attachment = attachment_check(config, campaign)
+        if not attachment.allowed:
+            return attachment
     if enforce_time_window and not is_allowed_send_time(config, now=now):
         return SafetyResult(False, "Outside allowed sending window")
     if enforce_daily_cap and not has_remaining_daily_capacity(conn, config, now=now):
@@ -278,3 +280,29 @@ def attachment_name(config: AppConfig, campaign) -> str:
         return ""
     attachment_path = str(campaign["attachment_path"] or config.campaign.attachment_path)
     return Path(attachment_path).name
+
+
+def campaign_checklist(conn, config: AppConfig, campaign, gmail_status) -> dict[str, bool]:
+    campaign_id = int(campaign["id"])
+    recipient_count = db.campaign_contact_count(conn, campaign_id)
+    preview_count = conn.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM contacts c
+        INNER JOIN campaign_recipients cr ON cr.contact_id = c.id
+        WHERE cr.campaign_id = ? AND c.preview_generated_at IS NOT NULL
+        """,
+        (campaign_id,),
+    ).fetchone()["count"]
+    approved_count = len(db.campaign_contacts(conn, campaign_id, statuses=(ContactStatus.APPROVED.value,)))
+    attachment = attachment_check(config, campaign)
+    test_sent = bool(db.get_setting(conn, f"campaign_{campaign_id}_test_sent", False))
+    return {
+        "Gmail connected": gmail_status.connected,
+        "Recipients selected": recipient_count > 0,
+        "Attachment added": attachment.allowed,
+        "Preview generated": int(preview_count) > 0,
+        "Test sent": test_sent,
+        "Approved recipients": approved_count > 0,
+    }
+

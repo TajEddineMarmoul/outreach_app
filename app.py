@@ -59,6 +59,7 @@ from src.safety import (
     next_send_time,
     sent_today_for_sender,
     sent_today_local,
+    campaign_checklist,
 )
 
 
@@ -90,6 +91,11 @@ VARIABLES = [
     "{{ keyword_2 }}",
     "{{ keyword_3 }}",
 ]
+
+_WARN = "\u26a0\ufe0f"
+_CHECK = "\u2705"
+_DASH = "\u2013"
+_DOT = "\u00b7"
 
 
 def config_path() -> Path:
@@ -286,35 +292,140 @@ def inject_styles(st) -> None:
         """
         <style>
         .small-note {
-            color: #667085;
-            font-size: 0.9rem;
-            margin-top: -0.4rem;
-        }
-        .composer-shell {
-            border: 1px solid #d7dde5;
-            border-radius: 8px;
-            padding: 14px;
-            background: #ffffff;
-        }
-        .right-panel {
-            border: 1px solid #d7dde5;
-            border-radius: 8px;
-            padding: 12px;
-            background: #f8fafc;
-        }
-        .checklist {
-            line-height: 1.7;
-            font-size: 0.92rem;
+            color: #64748b;
+            font-size: 0.85rem;
+            margin-top: -0.3rem;
         }
         .muted-badge {
-            display: inline-block;
-            border: 1px solid #d0d5dd;
-            border-radius: 6px;
-            padding: 2px 7px;
-            margin: 2px;
-            font-size: 0.82rem;
-            color: #344054;
-            background: #ffffff;
+            display: inline-flex;
+            align-items: center;
+            background-color: #f1f5f9;
+            color: #475569;
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 2px 10px;
+            border-radius: 9999px;
+            border: 1px solid #e2e8f0;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        
+        /* Premium title styling */
+        input[id^="header_name_field"] {
+            font-size: 1.8rem !important;
+            font-weight: 700 !important;
+            border: none !important;
+            background: transparent !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            color: #0f172a !important;
+            box-shadow: none !important;
+        }
+        input[id^="header_name_field"]:focus {
+            outline: none !important;
+            border-bottom: 2px solid #2563eb !important;
+            border-radius: 0 !important;
+        }
+        
+        /* Blue pill for recipients selection */
+        .to-pill-btn button {
+            background-color: #eff6ff !important;
+            color: #2563eb !important;
+            border: 1px solid #bfdbfe !important;
+            border-radius: 9999px !important;
+            padding: 2px 12px !important;
+            font-weight: 500 !important;
+            font-size: 0.85rem !important;
+            min-height: 28px !important;
+            height: 28px !important;
+            line-height: 1 !important;
+        }
+        .to-pill-btn button:hover {
+            background-color: #dbeafe !important;
+            border-color: #3b82f6 !important;
+        }
+        
+        /* Borderless clean subject input */
+        .subject-input input {
+            border: none !important;
+            border-bottom: 1px solid #f1f5f9 !important;
+            border-radius: 0 !important;
+            padding: 6px 0 !important;
+            background: transparent !important;
+            font-size: 1rem !important;
+            box-shadow: none !important;
+        }
+        .subject-input input:focus {
+            border-bottom: 1px solid #2563eb !important;
+        }
+        
+        /* Clean body textarea writing sheet */
+        .body-textarea textarea {
+            border: none !important;
+            border-top: 1px solid #e2e8f0 !important;
+            border-radius: 0 0 6px 6px !important;
+            padding: 12px !important;
+            font-size: 0.95rem !important;
+            box-shadow: none !important;
+            background-color: #ffffff !important;
+        }
+        
+        /* Dropdown button styling for From and File */
+        .from-dropdown-btn button {
+            background-color: transparent !important;
+            border: none !important;
+            color: #0f172a !important;
+            font-size: 0.95rem !important;
+            font-weight: 400 !important;
+            padding: 4px 0 !important;
+            text-align: left !important;
+            box-shadow: none !important;
+            min-height: auto !important;
+            height: auto !important;
+        }
+        .from-dropdown-btn button:hover {
+            color: #2563eb !important;
+            background-color: transparent !important;
+        }
+        
+        /* Toolbar buttons styling */
+        .toolbar-btn button {
+            background-color: #f8fafc !important;
+            border: 1px solid #e2e8f0 !important;
+            color: #475569 !important;
+            font-size: 0.85rem !important;
+            padding: 4px 10px !important;
+            border-radius: 6px !important;
+        }
+        .toolbar-btn button:hover {
+            background-color: #f1f5f9 !important;
+            color: #0f172a !important;
+            border-color: #cbd5e1 !important;
+        }
+        
+        /* Standard buttons styling */
+        .stButton > button {
+            padding: 0.25rem 0.75rem;
+            font-size: 0.85rem !important;
+            border-radius: 6px !important;
+            font-weight: 500 !important;
+            transition: all 0.2s ease !important;
+        }
+        
+        div[data-testid="stVerticalBlock"] > div {
+            padding-top: 0.2rem;
+            padding-bottom: 0.2rem;
+        }
+        div[data-testid="stExpander"] {
+            margin-top: 0.25rem;
+            margin-bottom: 0.25rem;
+        }
+        .stMetric {
+            padding: 0;
+        }
+        h3 {
+            margin-top: 0.5rem;
+            margin-bottom: 0.3rem;
         }
         </style>
         """,
@@ -531,7 +642,7 @@ def campaigns_page(st, conn, config: AppConfig) -> None:
 
 
 def display_campaign_status(status: str) -> str:
-    return {"running": "active", "stopped": "ended"}.get(status, status)
+    return {"running": "autopilot", "stopped": "ended", "active": "autopilot"}.get(status, status)
 
 
 def campaign_editor(st, conn, config: AppConfig, campaign_id: int) -> None:
@@ -546,11 +657,6 @@ def campaign_editor(st, conn, config: AppConfig, campaign_id: int) -> None:
 
     render_campaign_header(st, conn, config, campaign)
 
-    name = st.text_input("Campaign name", value=str(campaign["name"]), label_visibility="collapsed")
-    if name != campaign["name"]:
-        db.update_campaign_name(conn, campaign_id, name)
-        campaign = db.get_campaign(conn, campaign_id)
-
     main, right = st.columns([2.2, 1])
     with main:
         composer_section(st, conn, config, campaign)
@@ -564,100 +670,138 @@ def campaign_editor(st, conn, config: AppConfig, campaign_id: int) -> None:
         preview_dialog(st, conn, config, campaign_id)
     if st.session_state.get("show_sender_modal"):
         sender_change_dialog(st, conn, campaign_id)
-    if st.session_state.get("show_cv_modal"):
-        cv_upload_dialog(st, conn, config, campaign_id)
+    if st.session_state.get("show_attachment_modal"):
+        attachment_upload_dialog(st, conn, config, campaign_id)
     if st.session_state.get("show_variable_modal"):
         variable_dialog(st, campaign_id)
     if st.session_state.get("show_send_settings_modal"):
         send_settings_dialog(st, conn, config, campaign_id)
+    if st.session_state.get("show_send_modal"):
+        send_dialog(st, conn, config, campaign)
+    if st.session_state.get("show_template_modal"):
+        template_dialog(st, campaign_id)
+    if st.session_state.get("show_export_logs_modal"):
+        export_logs_dialog(st, conn, campaign_id)
 
 
 def render_campaign_header(st, conn, config: AppConfig, campaign) -> None:
     campaign_id = int(campaign["id"])
     recipient_count = db.campaign_contact_count(conn, campaign_id)
     status = display_campaign_status(str(campaign["status"]))
-    cols = st.columns([4, 1, 1, 1, 1, 1])
-    cols[0].title(str(campaign["name"]))
-    cols[1].metric("Status", status)
-    cols[2].metric("Recipients", recipient_count)
-    if cols[3].button("Show preview"):
-        st.session_state["show_preview_modal"] = True
-    if cols[4].button("Send test"):
-        st.session_state["show_preview_modal"] = True
-    if cols[5].button("Start autopilot", type="primary"):
-        attempt_start_autopilot(st, conn, config, campaign)
-    if st.button("Back to campaigns"):
-        st.session_state.pop("campaign_id", None)
-        st.rerun()
 
-
-def attempt_start_autopilot(st, conn, config: AppConfig, campaign) -> None:
-    campaign_id = int(campaign["id"])
-    sender = db.get_campaign_sender(conn, campaign_id)
-    sender_status = (
-        gmail_connection_status(token_path=sender["token_path"])
-        if sender
-        else gmail_connection_status(token_path="tokens/missing.json")
-    )
-    checklist = campaign_checklist(conn, config, campaign, sender_status)
-    missing = [label for label, ok in checklist.items() if not ok]
-    if not str(campaign["subject_template"]).strip() or not str(campaign["body_template"]).strip():
-        missing.append("Subject/body")
-    if config.sending.daily_cap <= 0:
-        missing.append("Daily cap")
-    recipient_count = db.campaign_contact_count(conn, campaign_id)
-    if recipient_count > 50:
-        st.warning("You selected more than 50 recipients. Autopilot is recommended. Do not send all immediately.")
-    if missing:
-        st.error("Before starting autopilot: " + ", ".join(missing))
-        return
-    db.set_campaign_status(conn, "active", campaign_id)
-    start_background_autopilot(database_path(), config_path())
-    st.success("Autopilot started")
-    st.rerun()
+    header_cols = st.columns([5, 1.6, 1.8, 1.2])
+    with header_cols[0]:
+        title_cols = st.columns([0.4, 5, 1, 1])
+        with title_cols[0]:
+            if st.button("←", key="back_to_campaigns"):
+                st.session_state.pop("campaign_id", None)
+                st.rerun()
+        with title_cols[1]:
+            name = st.text_input("Campaign name", value=str(campaign["name"]), label_visibility="collapsed", key=f"header_name_field_{campaign_id}")
+            if name != campaign["name"]:
+                db.update_campaign_name(conn, campaign_id, name)
+                st.rerun()
+        with title_cols[2]:
+            st.markdown(f"<span class='muted-badge' style='margin-top: 4px;'>{status}</span>", unsafe_allow_html=True)
+        with title_cols[3]:
+            st.markdown(f"<span style='color: #64748b; font-size: 0.95rem; display: inline-block; margin-top: 6px;'>{recipient_count} recipients</span>", unsafe_allow_html=True)
+            
+    with header_cols[1]:
+        if st.button("Show preview", key=f"header_preview_btn_{campaign_id}", use_container_width=True):
+            st.session_state["show_preview_modal"] = True
+            st.rerun()
+            
+    with header_cols[2]:
+        if st.button("Send emails", type="primary", icon="🚀", key=f"header_send_emails_btn_{campaign_id}", use_container_width=True):
+            st.session_state["show_send_modal"] = True
+            st.rerun()
+            
+    with header_cols[3]:
+        with st.popover("More", use_container_width=True):
+            if st.button("Pause campaign", key=f"more_pause_{campaign_id}", use_container_width=True):
+                db.set_campaign_status(conn, "paused", campaign_id)
+                st.success("Campaign paused")
+                st.rerun()
+            if st.button("Stop campaign", key=f"more_stop_{campaign_id}", use_container_width=True):
+                db.set_campaign_status(conn, "stopped", campaign_id)
+                st.warning("Campaign stopped")
+                st.rerun()
+            if st.button("Export logs", key=f"more_logs_{campaign_id}", use_container_width=True):
+                st.session_state["show_export_logs_modal"] = True
+                st.rerun()
 
 
 def composer_section(st, conn, config: AppConfig, campaign) -> None:
     campaign_id = int(campaign["id"])
     init_composer_state(st, campaign)
-    st.subheader("Composer")
-    from_row(st, conn, campaign_id)
-    to_row(st, conn, campaign_id)
+    
+    with st.container(border=True):
+        st.markdown("### Composer")
+        from_row(st, conn, campaign_id)
+        to_row(st, conn, campaign_id)
+        
+        # Subject row with Subject label on the left
+        cols_sub = st.columns([1, 8])
+        with cols_sub[0]:
+            st.markdown("<span style='color: #64748b; font-size: 0.95rem; font-weight: 500; display: inline-block; margin-top: 8px;'>Subject</span>", unsafe_allow_html=True)
+        with cols_sub[1]:
+            st.markdown('<div class="subject-input">', unsafe_allow_html=True)
+            subject = st.text_input("Subject", key=f"subject_{campaign_id}", label_visibility="collapsed", placeholder="Enter your email subject")
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+        st.markdown("---")
+        
+        # Toolbar directly above body
+        tb = st.columns([1.8, 1.8, 6.4])
+        with tb[0]:
+            st.markdown('<div class="toolbar-btn">', unsafe_allow_html=True)
+            if st.button("Insert variable", key=f"ins_var_{campaign_id}", use_container_width=True):
+                st.session_state["show_variable_modal"] = True
+                st.rerun()
+            st.markdown('</div>', unsafe_allow_html=True)
+        with tb[1]:
+            st.markdown('<div class="toolbar-btn">', unsafe_allow_html=True)
+            if st.button("Use template", key=f"use_tpl_{campaign_id}", use_container_width=True):
+                st.session_state["show_template_modal"] = True
+                st.rerun()
+            st.markdown('</div>', unsafe_allow_html=True)
 
-    with st.form(f"composer_form_{campaign_id}"):
-        subject = st.text_input("Subject", key=f"subject_{campaign_id}")
-        body = st.text_area("Body", key=f"body_{campaign_id}", height=320)
-        cv_row(st, conn, config, campaign)
+        st.markdown('<div class="body-textarea">', unsafe_allow_html=True)
+        body = st.text_area("Body", key=f"body_{campaign_id}", height=280, label_visibility="collapsed", placeholder="Compose your email or select a template...")
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        attachment_row(st, conn, config, campaign)
+
         with st.expander("Advanced email options", expanded=False):
-            fallback = st.text_area("Fallback body", key=f"fallback_{campaign_id}", height=180)
-            attachment_path = st.text_input("Raw CV attachment path", key=f"attachment_path_{campaign_id}")
+            fallback = st.text_area("Fallback body", key=f"fallback_{campaign_id}", height=180, placeholder="Fallback content if variables are missing...")
+            attachment_path = st.text_input("Attachment path", key=f"attachment_path_{campaign_id}")
             raw_template_mode = st.checkbox("Raw template mode", value=False)
             st.caption("Use raw template mode only when editing Jinja variables directly.")
-            if st.form_submit_button("Insert variable"):
-                st.session_state["show_variable_modal"] = True
-        saved = st.form_submit_button("Save email", type="primary")
+            require_attachment = st.checkbox(
+                "Require attachment for this campaign",
+                value=db.get_setting(conn, f"campaign_{campaign_id}_require_attachment", "false") == "true",
+                key=f"req_att_check_{campaign_id}"
+            )
 
-    if saved:
-        db.update_campaign(
-            conn,
-            campaign_id,
-            subject,
-            body,
-            fallback,
-            attachment_path,
-        )
-        db.clear_campaign_previews(conn, campaign_id)
-        config.campaign.attachment_path = attachment_path
-        save_config(config, config_path())
-        db.set_setting(conn, f"campaign_{campaign_id}_template_saved", True)
-        db.set_setting(conn, f"campaign_{campaign_id}_test_sent", False)
-        st.success("Email saved")
-        st.rerun()
-
-    if st.button("Insert variable", key=f"insert_variable_main_{campaign_id}"):
-        st.session_state["show_variable_modal"] = True
-    if db.campaign_contact_count(conn, campaign_id) > 50:
-        st.warning("You selected more than 50 recipients. Autopilot is recommended.")
+        cols_btn = st.columns([8, 2])
+        with cols_btn[1]:
+            if st.button("Save draft", type="primary", key=f"save_draft_btn_{campaign_id}", use_container_width=True):
+                db.update_campaign(
+                    conn,
+                    campaign_id,
+                    subject,
+                    body,
+                    fallback,
+                    attachment_path,
+                )
+                db.clear_campaign_previews(conn, campaign_id)
+                config.campaign.attachment_path = attachment_path
+                save_config(config, config_path())
+                db.set_setting(conn, f"campaign_{campaign_id}_template_saved", True)
+                db.set_setting(conn, f"campaign_{campaign_id}_test_sent", False)
+                db.set_setting(conn, f"campaign_{campaign_id}_require_attachment", "true" if require_attachment else "false")
+                st.success("Draft saved successfully")
+                st.rerun()
 
 
 def init_composer_state(st, campaign) -> None:
@@ -681,57 +825,71 @@ def from_row(st, conn, campaign_id: int) -> None:
             db.set_campaign_sender(conn, campaign_id, sender_id)
 
     sender = db.get_campaign_sender(conn, campaign_id)
-    cols = st.columns([5, 1])
-    if sender:
-        status = gmail_connection_status(token_path=sender["token_path"])
-        cols[0].write(f"From: {sender['display_name'] or 'Default sender'} <{sender['email']}>")
-        if not status.connected:
-            cols[0].caption(f"Sender needs reconnect: {status.status}")
-        if cols[1].button("change", key=f"change_sender_{campaign_id}"):
-            st.session_state["show_sender_modal"] = True
-    else:
-        cols[0].write("From: No Gmail sender connected")
-        if cols[1].button("Connect Gmail", key=f"connect_gmail_{campaign_id}"):
-            if credentials_available():
-                try:
-                    connected = connect_and_get_profile(
-                        force_reauth=True,
-                        token_path=default_token_path(),
-                        prompt="select_account consent",
-                    )
-                    sender_id = register_connected_sender(conn, connected)
-                    db.set_campaign_sender(conn, campaign_id, sender_id)
-                    st.success(f"Connected sender: {connected.email}")
-                    st.rerun()
-                except Exception as exc:
-                    st.error(str(exc))
-            else:
-                st.session_state["show_gmail_setup_modal"] = True
+    cols = st.columns([1, 8])
+    with cols[0]:
+        st.markdown("<span style='color: #64748b; font-size: 0.95rem; font-weight: 500; display: inline-block; margin-top: 4px;'>From</span>", unsafe_allow_html=True)
+    with cols[1]:
+        st.markdown('<div class="from-dropdown-btn">', unsafe_allow_html=True)
+        if sender:
+            status = gmail_connection_status(token_path=sender["token_path"])
+            sender_text = f"{sender['display_name'] or 'Default sender'} <{sender['email']}> ▾"
+            if st.button(sender_text, key=f"change_sender_{campaign_id}", use_container_width=True):
+                st.session_state["show_sender_modal"] = True
                 st.rerun()
+            if not status.connected:
+                st.caption(f"Sender needs reconnect: {status.status}")
+        else:
+            if st.button("No sender connected ▾", key=f"connect_gmail_{campaign_id}", use_container_width=True):
+                if credentials_available():
+                    try:
+                        connected = connect_and_get_profile(
+                            force_reauth=True,
+                            token_path=default_token_path(),
+                            prompt="select_account consent",
+                        )
+                        sender_id = register_connected_sender(conn, connected)
+                        db.set_campaign_sender(conn, campaign_id, sender_id)
+                        st.success(f"Connected sender: {connected.email}")
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(str(exc))
+                else:
+                    st.session_state["show_gmail_setup_modal"] = True
+                    st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
 
 
 def to_row(st, conn, campaign_id: int) -> None:
     recipient_count = db.campaign_contact_count(conn, campaign_id)
-    label = f"To: {recipient_count} recipients" if recipient_count else "To: No recipients selected"
-    action = "Edit recipients" if recipient_count else "Select recipients"
-    cols = st.columns([5, 1])
-    cols[0].write(label)
-    if cols[1].button(action, key=f"to_recipients_{campaign_id}"):
-        st.session_state["show_recipient_modal"] = True
+    cols = st.columns([1, 8])
+    with cols[0]:
+        st.markdown("<span style='color: #64748b; font-size: 0.95rem; font-weight: 500; display: inline-block; margin-top: 4px;'>To</span>", unsafe_allow_html=True)
+    with cols[1]:
+        st.markdown('<div class="to-pill-btn">', unsafe_allow_html=True)
+        pill_text = f"{recipient_count} recipient" if recipient_count == 1 else (f"{recipient_count} recipients" if recipient_count else "0 recipients")
+        if st.button(pill_text, key=f"to_recipients_{campaign_id}"):
+            st.session_state["show_recipient_modal"] = True
+            st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
 
 
-def cv_row(st, conn, config: AppConfig, campaign) -> None:
+def attachment_row(st, conn, config: AppConfig, campaign) -> None:
     campaign_id = int(campaign["id"])
     path = str(campaign["attachment_path"] or config.campaign.attachment_path or "")
     resolved = db.resolve_project_path(path) if path else None
     exists = bool(resolved and resolved.exists())
-    filename = Path(path).name if path else "missing"
-    label = f"CV: {filename}" if exists else "CV: missing"
-    action = "Change" if exists else "Upload CV"
-    cols = st.columns([5, 1])
-    cols[0].write(label)
-    if cols[1].form_submit_button(action):
-        st.session_state["show_cv_modal"] = True
+    filename = Path(path).name if path else ""
+    
+    cols = st.columns([1, 8])
+    with cols[0]:
+        st.markdown("<span style='color: #64748b; font-size: 0.95rem; font-weight: 500; display: inline-block; margin-top: 4px;'>File</span>", unsafe_allow_html=True)
+    with cols[1]:
+        st.markdown('<div class="from-dropdown-btn">', unsafe_allow_html=True)
+        pill_text = f"{filename} ▾" if exists else "Add attachment ▾"
+        if st.button(pill_text, key=f"change_attachment_{campaign_id}", use_container_width=True):
+            st.session_state["show_attachment_modal"] = True
+            st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
 
 
 def gmail_setup_dialog(st, conn) -> None:
@@ -920,14 +1078,19 @@ def sender_change_dialog(st, conn, campaign_id: int) -> None:
     _dialog()
 
 
-def cv_upload_dialog(st, conn, config: AppConfig, campaign_id: int) -> None:
-    @st.dialog("CV attachment", width="large")
+def attachment_upload_dialog(st, conn, config: AppConfig, campaign_id: int) -> None:
+    @st.dialog("Attachment", width="large")
     def _dialog() -> None:
         campaign = db.get_campaign(conn, campaign_id)
         current_path = str(campaign["attachment_path"] or config.campaign.attachment_path or "")
-        st.write("Current CV:", Path(current_path).name if current_path else "missing")
-        uploaded = st.file_uploader("Upload CV PDF", type=["pdf"])
-        raw_path = st.text_input("Raw path", value=current_path)
+        resolved = db.resolve_project_path(current_path) if current_path else None
+        exists = bool(resolved and resolved.exists())
+        if exists:
+            st.write(f"Current: {Path(current_path).name}")
+        else:
+            st.write("No attachment added.")
+        uploaded = st.file_uploader("Upload attachment", type=["pdf"])
+        raw_path = st.text_input("File path", value=current_path)
         if uploaded:
             upload_dir = ROOT / "data" / "uploads"
             upload_dir.mkdir(parents=True, exist_ok=True)
@@ -935,7 +1098,8 @@ def cv_upload_dialog(st, conn, config: AppConfig, campaign_id: int) -> None:
             path.write_bytes(uploaded.getbuffer())
             raw_path = str(path.relative_to(ROOT))
             st.success(f"Uploaded {uploaded.name}")
-        if st.button("Save CV", type="primary"):
+        action_cols = st.columns(3)
+        if action_cols[0].button("Save", type="primary"):
             db.update_campaign(
                 conn,
                 campaign_id,
@@ -947,10 +1111,22 @@ def cv_upload_dialog(st, conn, config: AppConfig, campaign_id: int) -> None:
             st.session_state[f"attachment_path_{campaign_id}"] = raw_path
             config.campaign.attachment_path = raw_path
             save_config(config, config_path())
-            st.session_state["show_cv_modal"] = False
+            st.session_state["show_attachment_modal"] = False
             st.rerun()
-        if st.button("Close"):
-            st.session_state["show_cv_modal"] = False
+        if exists and action_cols[1].button("Remove"):
+            db.update_campaign(
+                conn,
+                campaign_id,
+                str(campaign["subject_template"]),
+                str(campaign["body_template"]),
+                str(campaign["fallback_body_template"]),
+                "",
+            )
+            st.session_state[f"attachment_path_{campaign_id}"] = ""
+            st.session_state["show_attachment_modal"] = False
+            st.rerun()
+        if action_cols[2].button("Close"):
+            st.session_state["show_attachment_modal"] = False
             st.rerun()
 
     _dialog()
@@ -979,7 +1155,7 @@ def send_settings_dialog(st, conn, config: AppConfig, campaign_id: int) -> None:
         campaign = db.get_campaign(conn, campaign_id)
         selected_sender = db.get_campaign_sender(conn, campaign_id)
         with st.form(f"send_settings_modal_{campaign_id}"):
-            autopilot_enabled = st.checkbox("Autopilot enabled", value=display_campaign_status(campaign["status"]) == "active")
+            autopilot_enabled = st.checkbox("Autopilot enabled", value=str(campaign["status"]) in {"active", "running"})
             days = st.multiselect(
                 "Sending days",
                 ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"],
@@ -1010,12 +1186,203 @@ def send_settings_dialog(st, conn, config: AppConfig, campaign_id: int) -> None:
                 db.update_sender_daily_cap(conn, int(selected_sender["id"]), int(sender_daily_cap))
             if autopilot_enabled:
                 db.set_campaign_status(conn, "active", campaign_id)
-            elif display_campaign_status(campaign["status"]) == "active":
+            elif str(campaign["status"]) in {"active", "running"}:
                 db.set_campaign_status(conn, "paused", campaign_id)
             st.session_state["show_send_settings_modal"] = False
             st.rerun()
         if st.button("Close"):
             st.session_state["show_send_settings_modal"] = False
+            st.rerun()
+
+    _dialog()
+
+
+def send_dialog(st, conn, config: AppConfig, campaign) -> None:
+    @st.dialog("Send campaign", width="large")
+    def _dialog() -> None:
+        campaign_id = int(campaign["id"])
+        sender = db.get_campaign_sender(conn, campaign_id)
+        sender_status = (
+            gmail_connection_status(token_path=sender["token_path"])
+            if sender
+            else gmail_connection_status(token_path="tokens/missing.json")
+        )
+        checklist = campaign_checklist(conn, config, campaign, sender_status)
+        missing = [label for label, ok in checklist.items() if not ok]
+
+        block_items = []
+        if not checklist.get("Gmail connected", False):
+            block_items.append(("Sender missing", "show_sender_modal"))
+        if not checklist.get("Recipients selected", False) or not checklist.get("Approved recipients", False):
+            block_items.append(("Recipients missing or none approved", "show_recipient_modal"))
+        if not checklist.get("Preview generated", False):
+            block_items.append(("Preview not generated", "show_preview_modal"))
+        if not checklist.get("Test sent", False):
+            block_items.append(("Test not sent", "show_preview_modal"))
+
+        if block_items:
+            st.error("Cannot send yet:")
+            for label, state_key in block_items:
+                cols = st.columns([3, 1])
+                cols[0].write(f"\u26a0\ufe0f {label}")
+                btn_label = {
+                    "show_sender_modal": "Connect sender",
+                    "show_recipient_modal": "Select recipients",
+                    "show_preview_modal": "Preview / Send test"
+                }.get(state_key, "Fix")
+                if cols[1].button(btn_label, key=f"send_fix_{state_key}_{label.replace(' ', '_').replace('/', '_').lower()}"):
+                    st.session_state["show_send_modal"] = False
+                    st.session_state[state_key] = True
+                    st.rerun()
+            if st.button("Close", key="send_modal_close_blocks"):
+                st.session_state["show_send_modal"] = False
+                st.rerun()
+            return
+
+        default_tab = st.session_state.pop("send_mode_tab", "Send now")
+        tab_index = ["Send now", "Schedule", "Autopilot"].index(default_tab) if default_tab in ["Send now", "Schedule", "Autopilot"] else 0
+
+        mode = st.radio("Send mode", ["Send now", "Schedule", "Autopilot"], index=tab_index, horizontal=True)
+
+        if mode == "Send now":
+            recipient_count = db.campaign_contact_count(conn, campaign_id)
+            st.write(f"This will start sending to **{recipient_count} approved recipients** now.")
+            st.info("Sending respects all daily caps, warmup limits, and delays. Emails are not sent all at once.")
+            
+            daily_cap = st.number_input("Campaign daily cap", min_value=1, value=config.sending.daily_cap)
+            delay = st.number_input("Delay between emails (minutes)", min_value=1, value=config.sending.delay_minutes)
+            
+            cols = st.columns(2)
+            if cols[0].button("Start sending", type="primary", key="send_now_confirm"):
+                config.sending.daily_cap = int(daily_cap)
+                config.sending.delay_minutes = int(delay)
+                save_config(config, config_path())
+                db.set_campaign_status(conn, "sending", campaign_id)
+                start_background_autopilot(database_path(), config_path())
+                st.success("Sending campaign now...")
+                st.session_state["show_send_modal"] = False
+                st.rerun()
+            if cols[1].button("Cancel", key="send_now_cancel"):
+                st.session_state["show_send_modal"] = False
+                st.rerun()
+
+        elif mode == "Schedule":
+            from datetime import date as date_type
+            start_date = st.date_input("Start date", value=date_type.today())
+            start_time = st.text_input("Start time", value=config.sending.start_time)
+            days = st.multiselect(
+                "Sending days",
+                ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"],
+                default=config.sending.days,
+            )
+            end_time = st.text_input("End time (time window)", value=config.sending.end_time)
+            daily_cap = st.number_input("Daily cap", min_value=1, value=config.sending.daily_cap)
+            delay = st.number_input("Delay between emails (minutes)", min_value=1, value=config.sending.delay_minutes)
+                
+            cols = st.columns(2)
+            if cols[0].button("Confirm Schedule", type="primary", key="send_schedule_confirm"):
+                config.sending.days = days
+                config.sending.start_time = start_time
+                config.sending.end_time = end_time
+                config.sending.daily_cap = int(daily_cap)
+                config.sending.delay_minutes = int(delay)
+                save_config(config, config_path())
+                db.set_campaign_status(conn, "scheduled", campaign_id)
+                st.success("Campaign scheduled!")
+                st.session_state["show_send_modal"] = False
+                st.rerun()
+            if cols[1].button("Cancel", key="send_sched_cancel"):
+                st.session_state["show_send_modal"] = False
+                st.rerun()
+
+        elif mode == "Autopilot":
+            days_short = ", ".join(d[:3].title() for d in config.sending.days)
+            st.write("Autopilot runs in the background, automatically managing warmup and sending limits.")
+            st.caption(f"Current limits: Daily cap: {config.sending.daily_cap} \u00b7 Delay: {config.sending.delay_minutes} min")
+            st.caption(f"Warmup Schedule: Day 1=5, Day 2=10, Day 3=15, Day 4=20, Day 5+=30/day")
+            
+            daily_cap = st.number_input("Autopilot daily cap max", min_value=1, value=config.sending.daily_cap)
+            delay = st.number_input("Delay (minutes)", min_value=1, value=config.sending.delay_minutes)
+            days = st.multiselect(
+                "Sending days",
+                ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"],
+                default=config.sending.days,
+            )
+                
+            cols = st.columns(2)
+            if cols[0].button("Start Autopilot", type="primary", key="send_autopilot_confirm"):
+                config.sending.days = days
+                config.sending.daily_cap = int(daily_cap)
+                config.sending.delay_minutes = int(delay)
+                save_config(config, config_path())
+                db.set_campaign_status(conn, "active", campaign_id)
+                start_background_autopilot(database_path(), config_path())
+                st.success("Autopilot started!")
+                st.session_state["show_send_modal"] = False
+                st.rerun()
+            if cols[1].button("Cancel", key="send_ap_cancel"):
+                st.session_state["show_send_modal"] = False
+                st.rerun()
+
+    _dialog()
+
+
+def template_dialog(st, campaign_id: int) -> None:
+    @st.dialog("Use template", width="large")
+    def _dialog() -> None:
+        st.caption("Select a template to populate the subject and body. This will overwrite your current draft.")
+        
+        templates = [
+            {
+                "name": "Standard Student Outreach (Default)",
+                "subject": DEFAULT_SUBJECT_TEMPLATE,
+                "body": DEFAULT_BODY_TEMPLATE,
+                "fallback": DEFAULT_FALLBACK_BODY_TEMPLATE,
+            },
+            {
+                "name": "Direct Referral Request",
+                "subject": "Quick question regarding your team at {{ Company_Name }}",
+                "body": "Hi {{ First_Name }},\n\nI was browsing your team profiles at {{ Company_Name }} and thought my background in AI/Computer Science might align with any junior developer positions.\n\nAre you open to a brief chat or referral?\n\nBest regards,\nYour Name",
+                "fallback": "Hi {{ First_Name }},\n\nHope you are well. Are you currently hiring junior technical roles at {{ Company_Name }}?\n\nBest regards,\nYour Name",
+            }
+        ]
+
+        for i, t in enumerate(templates):
+            with st.container(border=True):
+                st.markdown(f"**{t['name']}**")
+                st.write(f"Subject: `{t['subject']}`")
+                if st.button("Apply Template", key=f"apply_tpl_{i}_{campaign_id}"):
+                    st.session_state[f"subject_{campaign_id}"] = t["subject"]
+                    st.session_state[f"body_{campaign_id}"] = t["body"]
+                    st.session_state[f"fallback_{campaign_id}"] = t["fallback"]
+                    st.session_state["show_template_modal"] = False
+                    st.success("Template applied! Make sure to save your draft.")
+                    st.rerun()
+
+        if st.button("Close", key="tpl_close"):
+            st.session_state["show_template_modal"] = False
+            st.rerun()
+
+    _dialog()
+
+
+def export_logs_dialog(st, conn, campaign_id: int) -> None:
+    @st.dialog("Export logs")
+    def _dialog() -> None:
+        log = send_log_dataframe(conn, campaign_id=campaign_id)
+        if log.empty:
+            st.info("No logs for this campaign yet.")
+        else:
+            st.write(f"Export send log with {len(log)} attempts.")
+            st.download_button(
+                "Download Send Log (CSV)",
+                log.to_csv(index=False).encode("utf-8"),
+                f"campaign_{campaign_id}_send_log.csv",
+                "text/csv",
+                use_container_width=True
+            )
+        if st.button("Close", key="export_logs_close"):
+            st.session_state["show_export_logs_modal"] = False
             st.rerun()
 
     _dialog()
@@ -1032,14 +1399,6 @@ def campaign_tabs(st, conn, config: AppConfig, campaign) -> None:
 
 
 def campaign_activity_section(st, conn, config: AppConfig, campaign) -> None:
-    campaign_id = int(campaign["id"])
-    recipient_count = db.campaign_contact_count(conn, campaign_id)
-    if recipient_count == 0:
-        cols = st.columns([4, 1])
-        cols[0].caption("No recipients selected yet.")
-        if cols[1].button("Select recipients", key=f"activity_select_recipients_{campaign_id}"):
-            st.session_state["show_recipient_modal"] = True
-        return
     with st.expander("Campaign activity", expanded=False):
         campaign_tabs(st, conn, config, campaign)
 
@@ -1137,77 +1496,45 @@ def logs_section(st, conn, campaign_id: int) -> None:
 
 def right_settings_panel(st, conn, config: AppConfig, campaign) -> None:
     campaign_id = int(campaign["id"])
-    selected_sender = db.get_campaign_sender(conn, campaign_id)
-    sender_status = (
-        gmail_connection_status(token_path=selected_sender["token_path"])
-        if selected_sender
-        else gmail_connection_status(token_path="tokens/missing.json")
-    )
-    checklist = campaign_checklist(conn, config, campaign, sender_status)
 
-    st.subheader("Send settings")
-    if selected_sender:
-        sender_sent_today = sent_today_for_sender(conn, int(selected_sender["id"]), config)
-        sender_cap = effective_sender_daily_cap(conn, config, int(selected_sender["daily_cap"]))
-        remaining = max(sender_cap - sender_sent_today, 0)
-    else:
-        remaining = max(effective_daily_cap(conn, config) - sent_today_local(conn, config), 0)
-    st.write(f"Autopilot: {'on' if display_campaign_status(campaign['status']) == 'active' else 'off'}")
-    st.write(f"Daily cap: {config.sending.daily_cap}")
-    st.write(f"Delay: {config.sending.delay_minutes} min")
-    st.write(f"Time window: {', '.join(config.sending.days)}, {config.sending.start_time}-{config.sending.end_time}")
-    st.write(f"Remaining today: {remaining}")
-    if st.button("Edit send settings"):
-        st.session_state["show_send_settings_modal"] = True
-    st.caption("Multiple senders are manual only. The app never switches senders automatically.")
+    with st.container(border=True):
+        st.markdown("### Settings")
+        
+        # Schedule send row
+        st.markdown("📅 **Schedule send**")
+        st.caption("Set start date, days and hours window")
+        if st.button("Configure Schedule", key=f"sched_config_btn_{campaign_id}", use_container_width=True):
+            st.session_state["show_send_modal"] = True
+            st.session_state["send_mode_tab"] = "Schedule"
+            st.rerun()
+            
+        st.markdown("---")
+        
+        # Autopilot row
+        st.markdown("🎛️ **Autopilot**")
+        st.caption("Auto-throttle daily caps and warmup limits")
+        if st.button("Configure Autopilot", key=f"ap_config_btn_{campaign_id}", use_container_width=True):
+            st.session_state["show_send_modal"] = True
+            st.session_state["send_mode_tab"] = "Autopilot"
+            st.rerun()
 
-    st.subheader("Readiness")
-    render_readiness_checklist(st, conn, campaign, checklist)
+        st.markdown("---")
 
+        # Track emails row with toggle
+        track_emails = st.toggle("Track emails", value=config.campaign.tracking_enabled, key=f"track_emails_toggle_{campaign_id}", help="Track open rates and link clicks")
+        if track_emails != config.campaign.tracking_enabled:
+            config.campaign.tracking_enabled = track_emails
+            save_config(config, config_path())
+            st.rerun()
 
-def render_readiness_checklist(st, conn, campaign, checklist: dict[str, bool]) -> None:
-    campaign_id = int(campaign["id"])
-    actions = {
-        "Gmail connected": ("Connect", "show_sender_modal"),
-        "Recipients selected": ("Select recipients", "show_recipient_modal"),
-        "CV attached": ("Upload CV", "show_cv_modal"),
-        "Preview generated": ("Show preview", "show_preview_modal"),
-        "Test sent": ("Send test", "show_preview_modal"),
-        "Approved recipients": ("Recipients", None),
-    }
-    for label, ok in checklist.items():
-        cols = st.columns([3, 1])
-        cols[0].write(f"{label}: {'ready' if ok else 'missing'}")
-        if not ok:
-            action_label, state_key = actions.get(label, ("Open", None))
-            if state_key and cols[1].button(action_label, key=f"check_{campaign_id}_{label}"):
-                st.session_state[state_key] = True
-                st.rerun()
+        # Unsubscribe link row with toggle
+        unsubscribe_link = st.toggle("Unsubscribe link", value=config.campaign.followups_enabled, key=f"unsub_link_toggle_{campaign_id}", help="Append opt-out footer link to emails")
+        if unsubscribe_link != config.campaign.followups_enabled:
+            config.campaign.followups_enabled = unsubscribe_link
+            save_config(config, config_path())
+            st.rerun()
 
 
-def campaign_checklist(conn, config: AppConfig, campaign, gmail_status) -> dict[str, bool]:
-    campaign_id = int(campaign["id"])
-    recipient_count = db.campaign_contact_count(conn, campaign_id)
-    preview_count = conn.execute(
-        """
-        SELECT COUNT(*) AS count
-        FROM contacts c
-        INNER JOIN campaign_recipients cr ON cr.contact_id = c.id
-        WHERE cr.campaign_id = ? AND c.preview_generated_at IS NOT NULL
-        """,
-        (campaign_id,),
-    ).fetchone()["count"]
-    approved_count = len(db.campaign_contacts(conn, campaign_id, statuses=(ContactStatus.APPROVED.value,)))
-    attachment = attachment_check(config, campaign)
-    test_sent = bool(db.get_setting(conn, f"campaign_{campaign_id}_test_sent", False))
-    return {
-        "Gmail connected": gmail_status.connected,
-        "Recipients selected": recipient_count > 0,
-        "CV attached": attachment.allowed,
-        "Preview generated": int(preview_count) > 0,
-        "Test sent": test_sent,
-        "Approved recipients": approved_count > 0,
-    }
 
 
 def recipient_selection_dialog(st, conn, campaign_id: int) -> None:
@@ -1550,41 +1877,26 @@ def analytics_page(st, conn, config: AppConfig) -> None:
 
 def settings_page(st, conn, config: AppConfig) -> None:
     st.title("Settings")
-    st.caption("Advanced global settings only. Normal campaign actions live inside the campaign editor.")
-    st.subheader("OAuth status")
-    oauth_status_panel(st, conn)
-    if not credentials_available():
-        st.info("Gmail and Google Sheets use one local Desktop OAuth client file.")
-        if st.button("Open Gmail setup wizard", key="settings_open_gmail_wizard"):
-            st.session_state["show_gmail_setup_modal"] = True
-            st.rerun()
-    else:
-        oauth_cols = st.columns(2)
-        if oauth_cols[0].button("Connect Google Sheets"):
-            try:
-                connect_google_sheets_oauth()
-                st.success("Google Sheets connected")
-                st.rerun()
-            except Exception as exc:
-                st.error(str(exc))
-        oauth_cols[1].link_button("Open Google Sheets API page", "https://console.cloud.google.com/apis/library/sheets.googleapis.com")
+    st.caption("Advanced global defaults. Campaign actions live inside the campaign editor.")
 
-    st.subheader("Advanced defaults")
     with st.form("settings_form"):
-        timezone = st.text_input("Timezone", value=config.timezone)
+        timezone = st.text_input("Timezone default", value=config.timezone)
         max_cap = st.number_input(
-            "Global daily cap max",
+            "Global maximum allowed daily cap",
             min_value=1,
             value=config.sending.max_daily_cap_allowed_without_manual_override,
+            help="This is a safety ceiling. Campaigns and senders can use lower daily caps, but cannot exceed this value.",
         )
         bounce_threshold = st.number_input(
-            "Bounce threshold (%)",
+            "Global bounce threshold default (%)",
             min_value=0.0,
             value=float(config.sending.bounce_rate_pause_threshold),
         )
-        max_errors = st.number_input("Max errors before pause", min_value=1, value=config.sending.max_consecutive_errors)
-        st.text_input("Gmail API credentials", value=os.getenv("GMAIL_CREDENTIALS_PATH", "credentials.json"))
-        st.text_input("Google Sheets OAuth credentials", value=os.getenv("GOOGLE_SHEETS_CREDENTIALS_PATH", "credentials.json"))
+        max_errors = st.number_input(
+            "Global max errors before pause",
+            min_value=1,
+            value=config.sending.max_consecutive_errors,
+        )
         st.text_input("Database path", value=str(database_path()), disabled=True)
         st.text_input("Config path", value=str(config_path()), disabled=True)
         if st.form_submit_button("Save settings", type="primary"):
@@ -1594,6 +1906,57 @@ def settings_page(st, conn, config: AppConfig) -> None:
             config.sending.max_consecutive_errors = int(max_errors)
             save_config(config, config_path())
             st.success("Settings saved")
+
+    with st.expander("Developer OAuth setup", expanded=False):
+        developer_oauth_section(st, conn)
+
+
+def developer_oauth_section(st, conn) -> None:
+    st.caption("OAuth credentials and API status for this local app.")
+    gmail_credentials = credentials_file_path()
+    gmail_default_token = default_token_path()
+    sheets_credentials, sheets_token = sheets_credentials_paths()
+    default_gmail = gmail_connection_status()
+    sheets_status = sheets_connection_status()
+
+    rows = [
+        {"Item": "credentials.json", "Status": "found" if gmail_credentials.exists() else "missing"},
+        {"Item": "OAuth client type", "Status": oauth_client_type()},
+        {"Item": "Gmail API", "Status": "connected" if default_gmail.connected else "not connected"},
+        {"Item": "Google Sheets API", "Status": "connected" if sheets_status.connected else "not connected"},
+        {"Item": "Gmail token", "Status": "found" if gmail_default_token.exists() else "missing"},
+        {"Item": "Sheets token", "Status": "found" if sheets_token.exists() else "missing"},
+    ]
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    link_cols = st.columns(2)
+    link_cols[0].link_button("Open Gmail API page", "https://console.cloud.google.com/apis/library/gmail.googleapis.com")
+    link_cols[1].link_button("Open Google Sheets API page", "https://console.cloud.google.com/apis/library/sheets.googleapis.com")
+    link_cols2 = st.columns(2)
+    link_cols2[0].link_button("Open OAuth scopes page", "https://console.cloud.google.com/apis/credentials/consent")
+    if link_cols2[1].button("Open Gmail setup wizard", key="dev_oauth_open_wizard"):
+        st.session_state["show_gmail_setup_modal"] = True
+        st.rerun()
+
+    senders = db.list_senders(conn)
+    if senders:
+        st.write("Connected senders")
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "Email": sender["email"],
+                        "Display name": sender["display_name"],
+                        "Status": sender["status"],
+                        "Daily cap": sender["daily_cap"],
+                        "Default": bool(sender["is_default"]),
+                    }
+                    for sender in senders
+                ]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
 
 
 if __name__ == "__main__":

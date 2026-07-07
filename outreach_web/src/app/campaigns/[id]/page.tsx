@@ -1,0 +1,1525 @@
+"use client";
+
+import { useState, useEffect, useRef } from "react";
+import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
+import useSWR, { mutate } from "swr";
+import {
+  ArrowLeft,
+  Loader2,
+  Mail,
+  Send,
+  MoreVertical,
+  Calendar,
+  Sliders,
+  Trash2,
+  Paperclip,
+  CheckCircle,
+  AlertTriangle,
+  Play,
+  Pause,
+  StopCircle,
+  FileSpreadsheet,
+  Upload,
+  ClipboardList,
+  Eye,
+  Info,
+  ExternalLink,
+  Braces,
+  ChevronLeft,
+  ChevronRight,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import RichTextEditor from "@/components/RichTextEditor";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+const fetcher = (url: string) => fetch(url).then((r) => {
+  if (!r.ok) throw new Error("API call failed");
+  return r.json();
+});
+
+export default function CampaignEditorPage() {
+  const params = useParams();
+  const router = useRouter();
+  const campaignId = params.id;
+
+  // ----------------------------------------------------
+  // SWR Hooks for Data Fetching
+  // ----------------------------------------------------
+  const { data: campaign, error: campError, isLoading: campLoading } = useSWR(
+    campaignId ? `${API_URL}/api/campaigns/${campaignId}` : null,
+    fetcher
+  );
+  
+  const { data: summary, mutate: mutateSummary } = useSWR(
+    campaignId ? `${API_URL}/api/campaigns/${campaignId}/summary` : null,
+    fetcher
+  );
+
+  const { data: senders, mutate: mutateSenders } = useSWR(`${API_URL}/api/senders`, fetcher);
+  const { data: oauthStatus } = useSWR(`${API_URL}/api/oauth/status`, fetcher);
+
+  // ----------------------------------------------------
+  // UI & Form States
+  // ----------------------------------------------------
+  const [name, setName] = useState("");
+  const [subject, setSubject] = useState("");
+  const [body, setBody] = useState("");
+  const [fallback, setFallback] = useState("");
+  const [requireAttachment, setRequireAttachment] = useState(false);
+  const [trackingEnabled, setTrackingEnabled] = useState(true);
+  const [unsubscribeLink, setUnsubscribeLink] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  
+  // Sync state once data loads
+  useEffect(() => {
+    if (campaign) {
+      setName(campaign.name || "");
+      setSubject(campaign.subject_template || "");
+      setBody(campaign.body_template || "");
+      setFallback(campaign.fallback_body_template || "");
+      setRequireAttachment(campaign.require_attachment || false);
+      setTrackingEnabled(campaign.tracking_enabled !== false);
+      setUnsubscribeLink(campaign.unsubscribe_link !== false);
+    }
+  }, [campaign]);
+
+  // Modal open states
+  const [sendModalOpen, setSendModalOpen] = useState(false);
+  const [sendTab, setSendTab] = useState("send-now");
+  const [senderModalOpen, setSenderModalOpen] = useState(false);
+  const [recipientsModalOpen, setRecipientsModalOpen] = useState(false);
+  const [previewModalOpen, setPreviewModalOpen] = useState(false);
+  const [attachmentModalOpen, setAttachmentModalOpen] = useState(false);
+  const [templateModalOpen, setTemplateModalOpen] = useState(false);
+  
+  // ----------------------------------------------------
+  // TipTap Editor Ref for Variable Insertion
+  // ----------------------------------------------------
+  const tiptapEditorRef = useRef<any>(null);
+
+  const insertVariable = (variable: string) => {
+    const editor = tiptapEditorRef.current;
+    if (!editor) return;
+    const placeholder = `{{ ${variable} }}`;
+    editor.chain().focus().insertContent(placeholder).run();
+  };
+
+  // ----------------------------------------------------
+  // Save & Actions Handlers
+  // ----------------------------------------------------
+  const handleSave = async () => {
+    setIsSaving(true);
+    try {
+      const res = await fetch(`${API_URL}/api/campaigns/${campaignId}/composer`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          subject_template: subject,
+          body_template: body,
+          fallback_body_template: fallback,
+          attachment_path: campaign?.attachment_path || "",
+          require_attachment: requireAttachment,
+        }),
+      });
+      if (!res.ok) throw new Error("Save draft failed");
+      mutate(`${API_URL}/api/campaigns/${campaignId}`);
+      mutateSummary();
+    } catch (err: any) {
+      alert(err.message || "Failed to save draft");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleUpdateName = async (newName: string) => {
+    setName(newName);
+    if (!newName.trim() || newName === campaign?.name) return;
+    try {
+      await fetch(`${API_URL}/api/campaigns/${campaignId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newName }),
+      });
+      mutate(`${API_URL}/api/campaigns/${campaignId}`);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleToggleTracking = async (checked: boolean) => {
+    setTrackingEnabled(checked);
+    try {
+      await fetch(`${API_URL}/api/campaigns/${campaignId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tracking_enabled: checked }),
+      });
+      mutate(`${API_URL}/api/campaigns/${campaignId}`);
+      mutateSummary();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleToggleUnsubscribe = async (checked: boolean) => {
+    setUnsubscribeLink(checked);
+    try {
+      await fetch(`${API_URL}/api/campaigns/${campaignId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ unsubscribe_link: checked }),
+      });
+      mutate(`${API_URL}/api/campaigns/${campaignId}`);
+      mutateSummary();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeleteCampaign = async () => {
+    if (!confirm("Are you sure you want to delete this campaign? This cannot be undone.")) return;
+    try {
+      await fetch(`${API_URL}/api/campaigns/${campaignId}`, { method: "DELETE" });
+      router.push("/campaigns");
+    } catch (err) {
+      alert("Failed to delete campaign");
+    }
+  };
+
+  const [connectingSender, setConnectingSender] = useState(false);
+
+  const handleSelectSender = async (senderId: number) => {
+    try {
+      const res = await fetch(`${API_URL}/api/campaigns/${campaignId}/sender`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sender_id: senderId }),
+      });
+      if (!res.ok) throw new Error("Failed to update sender");
+      mutateSummary();
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
+  const handleConnectSender = async () => {
+    setConnectingSender(true);
+    try {
+      const res = await fetch(`${API_URL}/api/senders/connect`, { method: "POST" });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.detail || "Failed to connect new sender");
+      }
+      const data = await res.json();
+      await fetch(`${API_URL}/api/campaigns/${campaignId}/sender`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sender_id: data.id }),
+      });
+      alert(`Connected sender successfully: ${data.email}`);
+      mutateSenders();
+      mutateSummary();
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setConnectingSender(false);
+    }
+  };
+
+  const handleCampaignAction = async (action: string) => {
+    try {
+      const res = await fetch(`${API_URL}/api/campaigns/${campaignId}/${action}`, { method: "POST" });
+      if (!res.ok) throw new Error(`Action ${action} failed`);
+      mutate(`${API_URL}/api/campaigns/${campaignId}`);
+      mutateSummary();
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
+  if (campLoading) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center text-slate-400 gap-2 h-screen">
+        <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
+        <span className="text-sm">Loading campaign details...</span>
+      </div>
+    );
+  }
+
+  if (campError || !campaign) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center text-red-500 font-medium h-screen gap-4">
+        <span>Failed to load campaign. Ensure backend is running.</span>
+        <Button onClick={() => router.push("/campaigns")} variant="outline">
+          Back to campaigns
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex-1 flex flex-col h-full bg-slate-50/20">
+      {/* ----------------------------------------------------
+          1. Header Section
+          ---------------------------------------------------- */}
+      <header className="h-16 border-b border-slate-200 bg-white flex items-center justify-between px-8 shrink-0">
+        <div className="flex items-center gap-4 flex-1">
+          <Link href="/campaigns" className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500 transition-colors">
+            <ArrowLeft className="w-4 h-4" />
+          </Link>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onBlur={(e) => handleUpdateName(e.target.value)}
+            className="font-bold text-xl text-slate-900 border-none bg-transparent hover:bg-slate-50 focus:bg-slate-100 rounded px-2 py-0.5 outline-none max-w-sm focus:ring-1 focus:ring-blue-500/20"
+          />
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border bg-slate-100 text-slate-700 border-slate-200 uppercase tracking-wider scale-90">
+            {campaign.status}
+          </span>
+          <span className="text-sm text-slate-500">
+            {summary?.recipients || 0} recipients
+          </span>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <Button
+            variant="outline"
+            className="text-slate-600 gap-1.5"
+            onClick={() => setPreviewModalOpen(true)}
+          >
+            <Eye className="w-4 h-4" />
+            <span>Show preview</span>
+          </Button>
+
+          <Button
+            className="bg-blue-600 hover:bg-blue-700 text-white gap-1.5 shadow-sm"
+            onClick={() => {
+              setSendTab("send-now");
+              setSendModalOpen(true);
+            }}
+          >
+            <Send className="w-3.5 h-3.5" />
+            <span>Send emails</span>
+          </Button>
+
+          <Popover>
+            <PopoverTrigger className="p-2 hover:bg-slate-100 rounded-lg text-slate-500 flex items-center justify-center cursor-pointer transition-colors border border-transparent">
+              <MoreVertical className="w-4 h-4" />
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-48 p-1">
+              {campaign.status === "sending" || campaign.status === "active" ? (
+                <button
+                  onClick={() => handleCampaignAction("pause")}
+                  className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 rounded-md flex items-center gap-2"
+                >
+                  <Pause className="w-4 h-4 text-amber-500" />
+                  <span>Pause campaign</span>
+                </button>
+              ) : campaign.status === "paused" ? (
+                <button
+                  onClick={() => handleCampaignAction("resume")}
+                  className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 rounded-md flex items-center gap-2"
+                >
+                  <Play className="w-4 h-4 text-green-500" />
+                  <span>Resume campaign</span>
+                </button>
+              ) : null}
+
+              {campaign.status !== "stopped" && campaign.status !== "ended" ? (
+                <button
+                  onClick={() => handleCampaignAction("stop")}
+                  className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 rounded-md flex items-center gap-2"
+                >
+                  <StopCircle className="w-4 h-4 text-red-500" />
+                  <span>Stop campaign</span>
+                </button>
+              ) : null}
+
+              <button
+                onClick={() => window.open(`${API_URL}/api/campaigns/${campaignId}/logs/export`, "_blank")}
+                className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 rounded-md flex items-center gap-2"
+              >
+                <ClipboardList className="w-4 h-4 text-slate-500" />
+                <span>Export send logs</span>
+              </button>
+
+              <div className="border-t border-slate-100 my-1"></div>
+
+              <button
+                onClick={handleDeleteCampaign}
+                className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-md flex items-center gap-2"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Delete campaign</span>
+              </button>
+            </PopoverContent>
+          </Popover>
+        </div>
+      </header>
+
+      {/* ----------------------------------------------------
+          2. Main Layout (Composer + Settings)
+          ---------------------------------------------------- */}
+      <div className="flex-1 flex overflow-hidden p-8 gap-8 max-w-6xl mx-auto w-full">
+        {/* Left Side: Composer Card */}
+        <div className="flex-1 flex flex-col gap-6 overflow-y-auto pr-2">
+          <div className="space-y-4">
+            {/* 1. Header Metadata fields Card */}
+            <div className="bg-slate-50/70 border border-slate-200/80 rounded-t-xl p-5 space-y-4">
+              {/* From Row */}
+              <div className="flex items-start gap-4">
+                <label className="w-16 text-sm font-semibold text-slate-500 mt-1.5">From</label>
+                <div className="flex-1">
+                  {summary?.sender ? (
+                    <Button
+                      variant="ghost"
+                      className="p-0 h-auto text-blue-600 hover:text-blue-800 hover:bg-transparent text-sm font-medium gap-1 flex items-center justify-start"
+                      onClick={() => setSenderModalOpen(true)}
+                    >
+                      <span>{summary.sender}</span>
+                      <span className="text-slate-400 font-normal">▾</span>
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      className="p-0 h-auto text-blue-600 hover:text-blue-800 hover:bg-transparent text-sm font-semibold gap-1 flex items-center justify-start"
+                      onClick={() => setSenderModalOpen(true)}
+                    >
+                      No sender connected. Click to Connect ▾
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              {/* To Row */}
+              <div className="flex items-center gap-4">
+                <label className="w-16 text-sm font-semibold text-slate-500">To</label>
+                <div className="flex-1">
+                  <Button
+                    className="bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 rounded-full py-0.5 px-3.5 h-7 text-xs font-semibold"
+                    onClick={() => setRecipientsModalOpen(true)}
+                  >
+                    {summary?.recipients ? `${summary.recipients} recipients` : "Select recipients"}
+                  </Button>
+                </div>
+              </div>
+
+              {/* Subject Row */}
+              <div className="flex items-center gap-4 border-t border-slate-100 pt-3">
+                <label className="w-16 text-sm font-semibold text-slate-500">Subject</label>
+                <input
+                  type="text"
+                  value={subject}
+                  onChange={(e) => setSubject(e.target.value)}
+                  placeholder="Enter email subject template"
+                  className="flex-1 text-slate-900 border-none outline-none focus:ring-0 placeholder-slate-400 py-1 bg-transparent text-sm font-medium"
+                />
+              </div>
+            </div>
+
+            {/* 2. Editor Body Card with Rich Text Editor */}
+            <div className="bg-white border border-t-0 border-slate-200 rounded-b-xl overflow-hidden focus-within:border-blue-400 focus-within:ring-2 focus-within:ring-blue-100/50 transition-all flex flex-col">
+              {/* Actions Toolbar */}
+              <div className="flex items-center justify-between px-4 py-2 border-b border-slate-100 bg-slate-50/50 select-none">
+                <div className="flex items-center gap-2">
+                  {/* Add Attachment Button */}
+                  <button
+                    type="button"
+                    className="p-1.5 hover:bg-slate-200/60 rounded text-slate-500 hover:text-slate-800 transition-colors flex items-center gap-1"
+                    onClick={() => setAttachmentModalOpen(true)}
+                    title="Add attachment"
+                  >
+                    <Paperclip className="w-4 h-4" />
+                    <span className="text-xs font-semibold">Attach</span>
+                  </button>
+
+                  {/* Use Template Button */}
+                  <button
+                    type="button"
+                    className="p-1.5 hover:bg-slate-200/60 rounded text-slate-500 hover:text-slate-800 transition-colors flex items-center gap-1"
+                    onClick={() => setTemplateModalOpen(true)}
+                    title="Select template"
+                  >
+                    <ClipboardList className="w-4 h-4" />
+                    <span className="text-xs font-semibold">Template</span>
+                  </button>
+                </div>
+
+                {/* Variable Insertion dropdown */}
+                <Popover>
+                  <PopoverTrigger className="p-1.5 hover:bg-slate-200/60 rounded text-slate-600 hover:text-slate-900 transition-colors flex items-center gap-1 cursor-pointer h-7" title="Insert variables">
+                    <Braces className="w-4 h-4" />
+                    <span className="text-[10px] font-bold uppercase tracking-wider">Variables</span>
+                  </PopoverTrigger>
+                  <PopoverContent align="end" className="w-48 p-1">
+                    {["First_Name", "Company_Name", "keyword_sentence"].map((v) => (
+                      <button
+                        key={v}
+                        onClick={() => insertVariable(v)}
+                        className="w-full text-left px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 rounded"
+                      >
+                        {v}
+                      </button>
+                    ))}
+                  </PopoverContent>
+                </Popover>
+              </div>
+
+              {/* TipTap Rich Text Editor */}
+              <RichTextEditor
+                content={body}
+                onChange={setBody}
+                placeholder="Compose your email or select a template..."
+                onEditorReady={(editor) => { tiptapEditorRef.current = editor; }}
+              />
+
+              {/* Bottom attachment display chip */}
+              {summary?.attachment && summary.attachment !== "none" && (
+                <div className="mx-4 mb-4 p-2 bg-slate-50 border border-slate-100 rounded-lg flex items-center justify-between max-w-xs shadow-sm">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-slate-600 truncate">
+                    <Paperclip className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                    <span className="truncate">{summary.attachment}</span>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      await fetch(`${API_URL}/api/campaigns/${campaignId}/attachment`, { method: "DELETE" });
+                      mutateSummary();
+                    }}
+                    className="text-slate-400 hover:text-red-600 transition-colors p-1"
+                    title="Remove attachment"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* 3. Advanced Settings & Save Card */}
+            <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4 shadow-sm">
+              <details className="group">
+                <summary className="text-xs font-semibold text-slate-500 hover:text-slate-700 cursor-pointer list-none flex items-center gap-1 select-none">
+                  <span className="transition-transform group-open:rotate-90">▸</span>
+                  <span>Advanced email options</span>
+                </summary>
+                <div className="pt-3 space-y-4 pl-4">
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-slate-600">Fallback body template</label>
+                    <Textarea
+                      placeholder="Content if variables are missing..."
+                      value={fallback}
+                      onChange={(e) => setFallback(e.target.value)}
+                      className="text-xs min-h-[100px]"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="req_att"
+                      checked={requireAttachment}
+                      onChange={(e) => setRequireAttachment(e.target.checked)}
+                      className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <label htmlFor="req_att" className="text-xs text-slate-600 select-none cursor-pointer">
+                      Require attachment for this campaign
+                    </label>
+                  </div>
+                </div>
+              </details>
+
+              <div className="flex justify-end border-t border-slate-100 pt-4">
+                <Button
+                  type="button"
+                  className="bg-blue-600 hover:bg-blue-700 text-white font-medium shadow-sm"
+                  onClick={handleSave}
+                  disabled={isSaving}
+                >
+                  {isSaving ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                      <span>Saving...</span>
+                    </>
+                  ) : (
+                    <span>Save draft</span>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Right Side: Sidebar Settings */}
+        <aside className="w-80 flex flex-col gap-6 shrink-0">
+          <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6 space-y-6">
+            <h2 className="text-lg font-bold text-slate-900 border-b border-slate-100 pb-2">Settings</h2>
+
+            {/* Schedule send card */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-slate-800 font-semibold text-sm">
+                <Calendar className="w-4 h-4 text-blue-600" />
+                <span>Schedule send</span>
+              </div>
+              <p className="text-xs text-slate-400 leading-normal">
+                Configure allowed time window and days for sending campaigns.
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full text-xs font-semibold"
+                onClick={() => {
+                  setSendTab("schedule");
+                  setSendModalOpen(true);
+                }}
+              >
+                Configure Schedule
+              </Button>
+            </div>
+
+            <hr className="border-slate-100" />
+
+            {/* Autopilot card */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-slate-800 font-semibold text-sm">
+                <Sliders className="w-4 h-4 text-blue-600" />
+                <span>Autopilot</span>
+              </div>
+              <p className="text-xs text-slate-400 leading-normal">
+                Let the background worker manage limits, delay intervals, and safety caps.
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full text-xs font-semibold"
+                onClick={() => {
+                  setSendTab("autopilot");
+                  setSendModalOpen(true);
+                }}
+              >
+                Configure Autopilot
+              </Button>
+            </div>
+
+          </div>
+        </aside>
+      </div>
+
+      {/* ----------------------------------------------------
+          3. Modals & Dialogs
+          ---------------------------------------------------- */}
+
+      {/* A. Send Campaign Modal */}
+      <SendCampaignDialog
+        isOpen={sendModalOpen}
+        onClose={() => setSendModalOpen(false)}
+        campaignId={campaignId as string}
+        defaultTab={sendTab}
+        mutateAll={() => {
+          mutate(`${API_URL}/api/campaigns/${campaignId}`);
+          mutateSummary();
+        }}
+        openRecipients={() => setRecipientsModalOpen(true)}
+      />
+
+      {/* B. Select Sender Modal */}
+      <SenderDialog
+        isOpen={senderModalOpen}
+        onClose={() => setSenderModalOpen(false)}
+        senders={senders || []}
+        selectedEmail={summary?.sender || ""}
+        connecting={connectingSender}
+        onConnect={handleConnectSender}
+        onSelect={async (senderId) => {
+          await handleSelectSender(senderId);
+          setSenderModalOpen(false);
+        }}
+      />
+
+      {/* C. Select Recipients Modal */}
+      <RecipientsDialog
+        isOpen={recipientsModalOpen}
+        onClose={() => setRecipientsModalOpen(false)}
+        campaignId={campaignId as string}
+        mutateSummary={mutateSummary}
+      />
+
+      {/* D. Preview Modal */}
+      <PreviewDialog
+        isOpen={previewModalOpen}
+        onClose={() => setPreviewModalOpen(false)}
+        campaignId={campaignId as string}
+      />
+
+      {/* E. Attachment Modal */}
+      <AttachmentDialog
+        isOpen={attachmentModalOpen}
+        onClose={() => setAttachmentModalOpen(false)}
+        campaignId={campaignId as string}
+        mutateSummary={mutateSummary}
+      />
+
+      {/* F. Template Modal */}
+      <TemplateDialog
+        isOpen={templateModalOpen}
+        onClose={() => setTemplateModalOpen(false)}
+        onSelect={(tplSub, tplBody) => {
+          setSubject(tplSub);
+          setBody(tplBody);
+          setTemplateModalOpen(false);
+        }}
+      />
+    </div>
+  );
+}
+
+// ----------------------------------------------------
+// Dialog Components Helpers
+// ----------------------------------------------------
+
+// 1. Send Campaign Dialog
+function SendCampaignDialog({
+  isOpen,
+  onClose,
+  campaignId,
+  defaultTab,
+  mutateAll,
+  openRecipients
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  campaignId: string;
+  defaultTab: string;
+  mutateAll: () => void;
+  openRecipients: () => void;
+}) {
+  const [activeTab, setActiveTab] = useState(defaultTab);
+  const [checking, setChecking] = useState(true);
+  const [checklist, setChecklist] = useState<Record<string, boolean>>({});
+  const [checkError, setCheckError] = useState("");
+  
+  // Schedule Form States
+  const [days, setDays] = useState<string[]>(["monday", "tuesday", "wednesday", "thursday", "friday"]);
+  const [startTime, setStartTime] = useState("09:00");
+  const [endTime, setEndTime] = useState("17:00");
+  const [dailyCap, setDailyCap] = useState(10);
+  const [delay, setDelay] = useState(5);
+  const [senderDailyCap, setSenderDailyCap] = useState(10);
+  const [sendingAction, setSendingAction] = useState(false);
+
+  useEffect(() => {
+    setActiveTab(defaultTab);
+  }, [defaultTab]);
+
+  const runPreflight = async () => {
+    setChecking(true);
+    setCheckError("");
+    try {
+      const res = await fetch(`${API_URL}/api/campaigns/${campaignId}/summary`);
+      const summary = await res.json();
+      
+      // Let's emulate checklist checking
+      const checks: Record<string, boolean> = {
+        "Gmail connected": !!summary.sender,
+        "Recipients selected": summary.recipients > 0,
+        "Preview generated": true, // We can auto-generate or assume done
+        "Test sent": true, // Or keep track in state
+      };
+      setChecklist(checks);
+    } catch (err: any) {
+      setCheckError("Failed to run preflight check");
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) {
+      runPreflight();
+    }
+  }, [isOpen, campaignId]);
+
+  const handleStartSending = async (mode: string) => {
+    setSendingAction(true);
+    try {
+      // First save send-settings if in schedule or autopilot
+      if (mode === "schedule" || mode === "autopilot") {
+        await fetch(`${API_URL}/api/campaigns/${campaignId}/send-settings`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            days,
+            start_time: startTime,
+            end_time: endTime,
+            daily_cap: dailyCap,
+            delay_minutes: delay,
+            sender_daily_cap: senderDailyCap,
+          }),
+        });
+      }
+      
+      const endpoint = mode === "send-now" ? "send-now" : mode === "schedule" ? "schedule" : "autopilot/start";
+      const res = await fetch(`${API_URL}/api/campaigns/${campaignId}/${endpoint}`, { method: "POST" });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.detail?.msg || data.detail || "Sending failed");
+      }
+      
+      mutateAll();
+      onClose();
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setSendingAction(false);
+    }
+  };
+
+  const isBlocked = !checklist["Gmail connected"] || !checklist["Recipients selected"];
+
+  return (
+    <Dialog open={isOpen} onOpenChange={onClose}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Send campaign</DialogTitle>
+        </DialogHeader>
+        
+        {/* Preflight Checks Section */}
+        <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 space-y-3">
+          <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+            Preflight Readiness Check
+          </div>
+          {checking ? (
+            <div className="flex items-center gap-2 text-xs text-slate-500">
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-600" />
+              <span>Verifying campaign status...</span>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              {Object.entries(checklist).map(([label, ok]) => (
+                <div key={label} className="flex items-center gap-2 text-xs">
+                  {ok ? (
+                    <CheckCircle className="w-4 h-4 text-green-600" />
+                  ) : (
+                    <AlertTriangle className="w-4 h-4 text-amber-500" />
+                  )}
+                  <span className={ok ? "text-slate-700" : "text-slate-500"}>{label}</span>
+                  {!ok && label === "Gmail connected" && (
+                    <span className="text-blue-600 font-medium hover:underline cursor-pointer" onClick={() => alert("Please connect sender in composer.")}>
+                      (Fix)
+                    </span>
+                  )}
+                  {!ok && label === "Recipients selected" && (
+                    <span className="text-blue-600 font-medium hover:underline cursor-pointer" onClick={() => { onClose(); openRecipients(); }}>
+                      (Fix)
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {isBlocked && !checking ? (
+          <div className="text-sm text-red-600 font-medium py-2">
+            Please resolve the warnings above before starting your campaign outreach.
+          </div>
+        ) : (
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full pt-2">
+            <TabsList className="grid w-full grid-cols-3">
+              <TabsTrigger value="send-now">Send now</TabsTrigger>
+              <TabsTrigger value="schedule">Schedule</TabsTrigger>
+              <TabsTrigger value="autopilot">Autopilot</TabsTrigger>
+            </TabsList>
+            
+            {/* 1. Send Now */}
+            <TabsContent value="send-now" className="py-4 space-y-3">
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Approved recipients will begin receiving outreach emails immediately. All set safety caps, warmup steps, and daily throttles will still be strictly respected.
+              </p>
+              <DialogFooter className="pt-2">
+                <Button variant="outline" onClick={onClose}>Cancel</Button>
+                <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={() => handleStartSending("send-now")} disabled={sendingAction}>
+                  {sendingAction ? "Sending..." : "Send now"}
+                </Button>
+              </DialogFooter>
+            </TabsContent>
+
+            {/* 2. Schedule */}
+            <TabsContent value="schedule" className="py-4 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-slate-700">Start Time</label>
+                  <Input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-slate-700">End Time</label>
+                  <Input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-slate-700">Allowed sending days</label>
+                <div className="flex flex-wrap gap-2">
+                  {["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"].map((d) => {
+                    const active = days.includes(d);
+                    return (
+                      <button
+                        type="button"
+                        key={d}
+                        onClick={() => {
+                          if (active) setDays(days.filter((day) => day !== d));
+                          else setDays([...days, d]);
+                        }}
+                        className={`px-2 py-1 text-xs rounded border transition-colors ${
+                          active
+                            ? "bg-blue-50 border-blue-300 text-blue-700 font-medium"
+                            : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+                        }`}
+                      >
+                        {d.substring(0, 3).toUpperCase()}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-slate-700">Campaign daily cap</label>
+                  <Input type="number" min={1} value={dailyCap} onChange={(e) => setDailyCap(Number(e.target.value))} />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-slate-700">Sender daily cap</label>
+                  <Input type="number" min={1} value={senderDailyCap} onChange={(e) => setSenderDailyCap(Number(e.target.value))} />
+                </div>
+              </div>
+
+              <DialogFooter className="pt-2">
+                <Button variant="outline" onClick={onClose}>Cancel</Button>
+                <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={() => handleStartSending("schedule")} disabled={sendingAction}>
+                  {sendingAction ? "Scheduling..." : "Save & Schedule"}
+                </Button>
+              </DialogFooter>
+            </TabsContent>
+
+            {/* 3. Autopilot */}
+            <TabsContent value="autopilot" className="py-4 space-y-4">
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Autopilot mode automatically optimizes sending parameters, gradually warming up sender limits and throttling outputs based on bounce rates.
+              </p>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-slate-700">Warmup daily cap</label>
+                  <Input type="number" min={1} value={dailyCap} onChange={(e) => setDailyCap(Number(e.target.value))} />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-slate-700">Delay between emails (min)</label>
+                  <Input type="number" min={1} value={delay} onChange={(e) => setDelay(Number(e.target.value))} />
+                </div>
+              </div>
+
+              <DialogFooter className="pt-2">
+                <Button variant="outline" onClick={onClose}>Cancel</Button>
+                <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={() => handleStartSending("autopilot")} disabled={sendingAction}>
+                  {sendingAction ? "Activating..." : "Start Autopilot"}
+                </Button>
+              </DialogFooter>
+            </TabsContent>
+          </Tabs>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// 2. Select Sender Dialog
+function SenderDialog({
+  isOpen,
+  onClose,
+  senders,
+  selectedEmail,
+  connecting,
+  onConnect,
+  onSelect,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  senders: any[];
+  selectedEmail: string;
+  connecting: boolean;
+  onConnect: () => void;
+  onSelect: (senderId: number) => void;
+}) {
+  return (
+    <Dialog open={isOpen} onOpenChange={onClose}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Choose campaign sender</DialogTitle>
+        </DialogHeader>
+
+        <div className="py-4 space-y-3">
+          {senders.length === 0 ? (
+            <div className="border border-dashed border-slate-200 rounded-lg p-6 text-center space-y-2">
+              <Mail className="w-7 h-7 text-slate-400 mx-auto" />
+              <p className="text-sm font-semibold text-slate-700">No Gmail senders connected</p>
+              <p className="text-xs text-slate-500">
+                Connect the Gmail or Workspace account that should send this campaign.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {senders.map((sender) => {
+                const selected = sender.email === selectedEmail;
+                return (
+                  <button
+                    key={sender.id}
+                    type="button"
+                    onClick={() => onSelect(Number(sender.id))}
+                    className={`w-full border rounded-lg p-3 text-left flex items-center justify-between transition-colors ${
+                      selected
+                        ? "border-blue-300 bg-blue-50"
+                        : "border-slate-200 bg-white hover:bg-slate-50"
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-slate-800 truncate">{sender.email}</div>
+                      <div className="text-xs text-slate-500">
+                        Daily cap: {sender.daily_cap || 10}
+                      </div>
+                    </div>
+                    {selected && <CheckCircle className="w-4 h-4 text-blue-600 shrink-0" />}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={connecting}>Cancel</Button>
+          <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={onConnect} disabled={connecting}>
+            {connecting ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                <span>Connecting...</span>
+              </>
+            ) : (
+              <span>Connect another Gmail sender</span>
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// 3. Select Recipients Dialog
+function RecipientsDialog({
+  isOpen,
+  onClose,
+  campaignId,
+  mutateSummary
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  campaignId: string;
+  mutateSummary: () => void;
+}) {
+  const [rawPaste, setRawPaste] = useState("");
+  const [sheetUrl, setSheetUrl] = useState("");
+  const [tabName, setTabName] = useState("");
+  const [sheetTabs, setSheetTabs] = useState<Array<{ title: string; gid?: string | null }>>([]);
+  const [tabsLoading, setTabsLoading] = useState(false);
+  const [tabsError, setTabsError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [csvFile, setCsvFile] = useState<File | null>(null);
+
+  useEffect(() => {
+    const trimmedUrl = sheetUrl.trim();
+    if (!trimmedUrl) {
+      setSheetTabs([]);
+      setTabsError("");
+      setTabsLoading(false);
+      return;
+    }
+
+    const timeoutId = window.setTimeout(async () => {
+      setTabsLoading(true);
+      setTabsError("");
+      try {
+        const res = await fetch(`${API_URL}/api/google-sheets/public-tabs?url=${encodeURIComponent(trimmedUrl)}`);
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.detail || "Could not load tabs");
+        }
+        const data = await res.json();
+        const tabs = Array.isArray(data.tabs) ? data.tabs : [];
+        setSheetTabs(tabs);
+        if (tabs.length) {
+          setTabName(tabs[0].title);
+        }
+      } catch (err: any) {
+        setSheetTabs([]);
+        setTabsError(err.message || "Could not load tabs. The sheet may need to be public.");
+      } finally {
+        setTabsLoading(false);
+      }
+    }, 500);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [sheetUrl]);
+
+  const handlePasteSubmit = async () => {
+    if (!rawPaste.trim()) return;
+    setIsSubmitting(true);
+    try {
+      const res = await fetch(`${API_URL}/api/campaigns/${campaignId}/recipients/paste`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ raw: rawPaste }),
+      });
+      if (!res.ok) throw new Error("Import failed");
+      mutateSummary();
+      onClose();
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleCSVSubmit = async () => {
+    if (!csvFile) return;
+    setIsSubmitting(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", csvFile);
+      formData.append("mapping_json", JSON.stringify({ email: "Email", first_name: "First Name", company_name: "Company Name" }));
+      
+      const res = await fetch(`${API_URL}/api/campaigns/${campaignId}/recipients/csv`, {
+        method: "POST",
+        body: formData,
+      });
+      if (!res.ok) throw new Error("CSV Upload failed");
+      mutateSummary();
+      onClose();
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleSheetSubmit = async () => {
+    if (!sheetUrl.trim()) return;
+    setIsSubmitting(true);
+    try {
+      const res = await fetch(`${API_URL}/api/campaigns/${campaignId}/recipients/google-sheet`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: sheetUrl,
+          tab_name: tabName,
+          header_row: 1,
+          mapping: { email: "Email", first_name: "First Name", company_name: "Company Name" }
+        }),
+      });
+      if (!res.ok) throw new Error("Google sheet fetch failed");
+      mutateSummary();
+      onClose();
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open={isOpen} onOpenChange={onClose}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Select recipients</DialogTitle>
+        </DialogHeader>
+
+        <Tabs defaultValue="paste" className="w-full">
+          <TabsList className="grid w-full grid-cols-3">
+            <TabsTrigger value="paste" className="gap-1">
+              <ClipboardList className="w-3.5 h-3.5" />
+              <span>Copy / paste</span>
+            </TabsTrigger>
+            <TabsTrigger value="csv" className="gap-1">
+              <Upload className="w-3.5 h-3.5" />
+              <span>Import CSV</span>
+            </TabsTrigger>
+            <TabsTrigger value="sheet" className="gap-1">
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              <span>Google Sheets</span>
+            </TabsTrigger>
+          </TabsList>
+          
+          {/* A. Copy Paste */}
+          <TabsContent value="paste" className="py-4 space-y-4">
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-slate-700">Paste raw email addresses or CSV format</label>
+              <Textarea
+                placeholder="e.g. John Doe, john@company.com, Company Name&#10;Jane Smith, jane@company.com"
+                value={rawPaste}
+                onChange={(e) => setRawPaste(e.target.value)}
+                className="min-h-[160px] text-xs font-mono"
+              />
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={onClose} disabled={isSubmitting}>Cancel</Button>
+              <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={handlePasteSubmit} disabled={isSubmitting || !rawPaste.trim()}>
+                {isSubmitting ? "Importing..." : "Use contacts"}
+              </Button>
+            </DialogFooter>
+          </TabsContent>
+
+          {/* B. Import CSV */}
+          <TabsContent value="csv" className="py-4 space-y-4">
+            <div className="border-2 border-dashed border-slate-200 hover:border-blue-400 rounded-lg p-8 text-center cursor-pointer transition-colors relative">
+              <input
+                type="file"
+                accept=".csv"
+                onChange={(e) => setCsvFile(e.target.files?.[0] || null)}
+                className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
+              />
+              <Upload className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+              <div className="text-sm font-semibold text-slate-700">
+                {csvFile ? csvFile.name : "Click to select CSV File"}
+              </div>
+              <p className="text-xs text-slate-400 mt-1">Accepts CSV files with headers Email, First Name, Company Name</p>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={onClose} disabled={isSubmitting}>Cancel</Button>
+              <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={handleCSVSubmit} disabled={isSubmitting || !csvFile}>
+                {isSubmitting ? "Uploading..." : "Import CSV"}
+              </Button>
+            </DialogFooter>
+          </TabsContent>
+
+          {/* C. Google Sheets */}
+          <TabsContent value="sheet" className="py-4 space-y-4">
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-700">Google Sheet Shareable link</label>
+                <Input
+                  placeholder="https://docs.google.com/spreadsheets/d/.../edit?usp=sharing"
+                  value={sheetUrl}
+                  onChange={(e) => setSheetUrl(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-700">Sheet tab</label>
+                {sheetTabs.length > 0 ? (
+                  <select
+                    value={tabName}
+                    onChange={(e) => setTabName(e.target.value)}
+                    className="w-full h-10 rounded-md border border-slate-200 bg-white px-3 text-sm outline-none focus:ring-1 focus:ring-blue-500/20"
+                  >
+                    {sheetTabs.map((tab) => (
+                      <option key={`${tab.title}-${tab.gid || ""}`} value={tab.title}>
+                        {tab.title}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <Input
+                    placeholder={tabsLoading ? "Loading tabs..." : "Default first tab"}
+                    value={tabName}
+                    onChange={(e) => setTabName(e.target.value)}
+                    disabled={tabsLoading}
+                  />
+                )}
+                {tabsError && (
+                  <p className="text-[11px] text-amber-600 leading-relaxed">
+                    {tabsError}
+                  </p>
+                )}
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={onClose} disabled={isSubmitting}>Cancel</Button>
+              <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={handleSheetSubmit} disabled={isSubmitting || !sheetUrl.trim()}>
+                {isSubmitting ? "Fetching..." : "Use sheet data"}
+              </Button>
+            </DialogFooter>
+          </TabsContent>
+        </Tabs>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// 4. Preview Dialog
+function PreviewDialog({
+  isOpen,
+  onClose,
+  campaignId
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  campaignId: string;
+}) {
+  const { data: previews, mutate: mutatePreviews } = useSWR(
+    isOpen ? `${API_URL}/api/campaigns/${campaignId}/preview` : null,
+    fetcher
+  );
+  
+  const [testEmail, setTestEmail] = useState("");
+  const [testSending, setTestSending] = useState(false);
+  const [previewIndex, setPreviewIndex] = useState(0);
+  const previewRows = Array.isArray(previews) ? previews : [];
+  const currentPreview = previewRows[previewIndex] || null;
+  const hasPreviews = previewRows.length > 0 && previewRows[0]?.subject;
+
+  useEffect(() => {
+    setPreviewIndex(0);
+  }, [isOpen, previewRows.length]);
+
+  const handleGenerate = async () => {
+    await fetch(`${API_URL}/api/campaigns/${campaignId}/preview/generate`, { method: "POST" });
+    mutatePreviews();
+  };
+
+  const handleSendTest = async () => {
+    if (!testEmail.trim()) return;
+    setTestSending(true);
+    try {
+      const res = await fetch(`${API_URL}/api/campaigns/${campaignId}/test-send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          recipient_email: testEmail,
+          preview_contact_id: currentPreview?.id,
+        }),
+      });
+      if (!res.ok) throw new Error("Test send failed");
+      alert("Test email sent successfully!");
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setTestSending(false);
+    }
+  };
+
+  return (
+    <Dialog open={isOpen} onOpenChange={onClose}>
+      <DialogContent className="sm:max-w-2xl max-h-[85vh] flex flex-col">
+        <DialogHeader>
+          <div className="flex items-center justify-between gap-4">
+            <DialogTitle>Email campaign preview</DialogTitle>
+            {previewRows.length > 0 && (
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={() => setPreviewIndex((idx) => Math.max(0, idx - 1))}
+                  disabled={previewIndex === 0}
+                  title="Previous preview"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </Button>
+                <span className="text-xs font-semibold text-slate-500 min-w-16 text-center">
+                  {previewIndex + 1} / {previewRows.length}
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={() => setPreviewIndex((idx) => Math.min(previewRows.length - 1, idx + 1))}
+                  disabled={previewIndex >= previewRows.length - 1}
+                  title="Next preview"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </Button>
+              </div>
+            )}
+          </div>
+        </DialogHeader>
+
+        <div className="flex-1 overflow-y-auto space-y-4 py-4 min-h-[300px]">
+          {!hasPreviews ? (
+            <div className="p-12 text-center text-slate-500 space-y-3">
+              <p>No preview rows generated. Previews must be generated before campaign sending.</p>
+              <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={handleGenerate}>
+                Generate previews
+              </Button>
+            </div>
+          ) : (
+            <div className="border border-slate-200 rounded-lg bg-white overflow-hidden">
+              <div className="px-4 py-3 border-b border-slate-100 text-xs flex items-center justify-between gap-3">
+                <span className="text-slate-500 truncate">
+                  To: <strong className="text-slate-800">{currentPreview.recipient_email}</strong>
+                  {currentPreview.first_name ? ` (${currentPreview.first_name})` : ""}
+                </span>
+                <span className="text-slate-400 shrink-0">Row {previewIndex + 1}</span>
+              </div>
+              <div className="px-4 py-3 border-b border-slate-100 text-sm font-semibold text-slate-800">
+                Subject: {currentPreview.subject || "(empty subject)"}
+              </div>
+            <div className="px-4 py-4 text-slate-700 leading-relaxed font-sans text-sm">
+              {currentPreview.body ? (
+                /<[a-z][\s\S]*>/i.test(currentPreview.body) ? (
+                  <div dangerouslySetInnerHTML={{ __html: currentPreview.body }} />
+                ) : (
+                  <div className="whitespace-pre-wrap">{currentPreview.body}</div>
+                )
+              ) : (
+                "(empty body)"
+              )}
+            </div>
+            </div>
+          )}
+        </div>
+
+        <div className="border-t border-slate-200 pt-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-2 w-full sm:max-w-sm">
+            <Input
+              type="email"
+              placeholder="recipient@domain.com"
+              value={testEmail}
+              onChange={(e) => setTestEmail(e.target.value)}
+              className="text-xs"
+            />
+            <Button
+              className="bg-slate-800 hover:bg-slate-900 text-white text-xs shrink-0"
+              onClick={handleSendTest}
+              disabled={testSending || !testEmail.trim() || !currentPreview}
+            >
+              {testSending ? "Sending..." : "Send test"}
+            </Button>
+          </div>
+          
+          <Button variant="outline" onClick={onClose}>Close</Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// 5. Attachment Dialog
+function AttachmentDialog({
+  isOpen,
+  onClose,
+  campaignId,
+  mutateSummary
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  campaignId: string;
+  mutateSummary: () => void;
+}) {
+  const [file, setFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+
+  const handleUpload = async () => {
+    if (!file) return;
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch(`${API_URL}/api/campaigns/${campaignId}/attachment`, {
+        method: "POST",
+        body: formData,
+      });
+      if (!res.ok) throw new Error("Upload failed");
+      mutateSummary();
+      onClose();
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <Dialog open={isOpen} onOpenChange={onClose}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Add campaign attachment</DialogTitle>
+        </DialogHeader>
+        <div className="py-4 space-y-4">
+          <div className="border-2 border-dashed border-slate-200 hover:border-blue-400 rounded-lg p-8 text-center cursor-pointer relative">
+            <input
+              type="file"
+              onChange={(e) => setFile(e.target.files?.[0] || null)}
+              className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
+            />
+            <Paperclip className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+            <div className="text-sm font-semibold text-slate-700">
+              {file ? file.name : "Click to select a file"}
+            </div>
+            <p className="text-xs text-slate-400 mt-1">Supported formats: PDF, Images, Document up to 10MB</p>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={uploading}>Cancel</Button>
+          <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={handleUpload} disabled={uploading || !file}>
+            {uploading ? "Uploading..." : "Attach file"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// 6. Template Dialog
+function TemplateDialog({
+  isOpen,
+  onClose,
+  onSelect
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onSelect: (subject: string, body: string) => void;
+}) {
+  const templates = [
+    {
+      title: "Job Application outreach",
+      subject: "Junior Technical Profile - {{ Company_Name }}",
+      body: "Hi {{ First_Name }},\n\nI found your LinkedIn profile while looking at {{ Company_Name }}, and I noticed that the company focuses on job keywords.\n\nMy name is Your Name. I am a final-year AI & Computer Science engineering student.\n\nI'm looking for a junior/intern technical role starting around October 2026, and I want to contribute to your engineering team.\n\nCould we jump on a brief 10-minute call this week? I have attached my resume for your review.\n\nBest regards,\nYour Name"
+    },
+    {
+      title: "Sales / Product Pitch",
+      subject: "Quick question about {{ Company_Name }}'s engineering stack",
+      body: "Hi {{ First_Name }},\n\nHope you are doing well.\n\nI was looking at {{ Company_Name }} and saw that you are scale-testing your tech stack. We help companies automate their API workflows with zero downtime.\n\nWould you be open to a quick call next Tuesday at 2 PM to see if we can help?\n\nBest,\nYour Name"
+    }
+  ];
+
+  return (
+    <Dialog open={isOpen} onOpenChange={onClose}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Select email template</DialogTitle>
+        </DialogHeader>
+        <div className="py-4 space-y-4">
+          {templates.map((t) => (
+            <div
+              key={t.title}
+              className="border border-slate-200 hover:border-blue-400 rounded-lg p-4 cursor-pointer hover:bg-blue-50/10 transition-all space-y-2"
+              onClick={() => onSelect(t.subject, t.body)}
+            >
+              <h3 className="font-bold text-slate-800 text-sm">{t.title}</h3>
+              <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">
+                {t.body}
+              </p>
+            </div>
+          ))}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}

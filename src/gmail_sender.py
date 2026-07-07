@@ -18,7 +18,10 @@ from googleapiclient.discovery import build
 from . import db
 
 
-SCOPES = ["https://www.googleapis.com/auth/gmail.send"]
+SCOPES = [
+    "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/userinfo.email",
+]
 
 
 @dataclass(frozen=True)
@@ -72,7 +75,7 @@ def clear_gmail_token() -> None:
         token_path.unlink()
 
 
-def get_gmail_service(
+def get_google_credentials(
     force_reauth: bool = False,
     token_path: str | Path | None = None,
     prompt: str | None = None,
@@ -98,7 +101,21 @@ def get_gmail_service(
             creds = flow.run_local_server(port=0, **kwargs)
         final_token_path.parent.mkdir(parents=True, exist_ok=True)
         final_token_path.write_text(creds.to_json(), encoding="utf-8")
+    return creds
+
+
+def get_gmail_service(
+    force_reauth: bool = False,
+    token_path: str | Path | None = None,
+    prompt: str | None = None,
+):
+    creds = get_google_credentials(force_reauth=force_reauth, token_path=token_path, prompt=prompt)
     return build("gmail", "v1", credentials=creds)
+
+
+def get_connected_email(creds: Credentials) -> str:
+    profile = build("oauth2", "v2", credentials=creds).userinfo().get().execute()
+    return str(profile.get("email", ""))
 
 
 def gmail_connection_status(token_path: str | Path | None = None) -> GmailConnectionStatus:
@@ -114,6 +131,13 @@ def gmail_connection_status(token_path: str | Path | None = None) -> GmailConnec
         creds = Credentials.from_authorized_user_file(str(final_token_path), SCOPES)
     except Exception as exc:
         return GmailConnectionStatus(False, "Token invalid", detail=str(exc), token_path=str(final_token_path))
+    if not creds.has_scopes(SCOPES):
+        return GmailConnectionStatus(
+            False,
+            "Token missing scopes",
+            detail="Reconnect Gmail so the app can identify the sender email and send messages.",
+            token_path=str(final_token_path),
+        )
     if creds.expired and not creds.refresh_token:
         return GmailConnectionStatus(
             False,
@@ -128,12 +152,10 @@ def gmail_connection_status(token_path: str | Path | None = None) -> GmailConnec
         except Exception as exc:
             return GmailConnectionStatus(False, "Token expired", detail=str(exc), token_path=str(final_token_path))
     try:
-        service = build("gmail", "v1", credentials=creds)
-        profile = service.users().getProfile(userId="me").execute()
         return GmailConnectionStatus(
             True,
             "Connected",
-            email=str(profile.get("emailAddress", "")),
+            email=get_connected_email(creds),
             token_path=str(final_token_path),
         )
     except Exception as exc:
@@ -146,12 +168,11 @@ def connect_and_get_profile(
     prompt: str | None = None,
 ) -> GmailConnectionStatus:
     final_token_path = resolve_token_path(token_path)
-    service = get_gmail_service(force_reauth=force_reauth, token_path=final_token_path, prompt=prompt)
-    profile = service.users().getProfile(userId="me").execute()
+    creds = get_google_credentials(force_reauth=force_reauth, token_path=final_token_path, prompt=prompt)
     return GmailConnectionStatus(
         True,
         "Connected",
-        email=str(profile.get("emailAddress", "")),
+        email=get_connected_email(creds),
         token_path=str(final_token_path),
     )
 

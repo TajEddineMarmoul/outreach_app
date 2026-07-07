@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+from html import unescape
 from io import StringIO
 from dataclasses import dataclass
 from pathlib import Path
@@ -64,9 +65,17 @@ def parse_google_sheet_url_details(url: str) -> SheetUrl:
     raise ValueError("Could not find a Google Sheet ID in the URL")
 
 
-def get_public_sheet_csv(sheet_id: str, gid: str | None = None, header_row: int = 1) -> pd.DataFrame:
-    params = f"&gid={gid}" if gid else ""
-    url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv{params}"
+def get_public_sheet_csv(
+    sheet_id: str,
+    gid: str | None = None,
+    header_row: int = 1,
+    sheet_name: str | None = None,
+) -> pd.DataFrame:
+    if sheet_name:
+        url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={quote(sheet_name)}"
+    else:
+        params = f"&gid={gid}" if gid else ""
+        url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv{params}"
     response = requests.get(url, timeout=30)
     response.raise_for_status()
     return pd.read_csv(StringIO(response.text), header=max(header_row - 1, 0))
@@ -76,6 +85,43 @@ def get_published_csv(url: str, header_row: int = 1) -> pd.DataFrame:
     response = requests.get(url, timeout=30)
     response.raise_for_status()
     return pd.read_csv(StringIO(response.text), header=max(header_row - 1, 0))
+
+
+def list_public_sheet_tabs(sheet_url: str) -> list[dict[str, str | None]]:
+    sheet = parse_google_sheet_url_details(sheet_url)
+    feed_url = f"https://spreadsheets.google.com/feeds/worksheets/{sheet.sheet_id}/public/basic?alt=json"
+    try:
+        response = requests.get(feed_url, timeout=20)
+        if response.ok:
+            feed = response.json().get("feed", {})
+            tabs = []
+            for entry in feed.get("entry", []):
+                title = entry.get("title", {}).get("$t", "").strip()
+                if title:
+                    tabs.append({"title": title, "gid": None})
+            if tabs:
+                return tabs
+    except Exception:
+        pass
+
+    page_url = f"https://docs.google.com/spreadsheets/d/{sheet.sheet_id}/edit"
+    response = requests.get(page_url, timeout=20)
+    response.raise_for_status()
+    tabs_by_title: dict[str, dict[str, str | None]] = {}
+    patterns = [
+        r'"sheetId":(\d+).*?"title":"([^"]+)"',
+        r'\{"gid":(\d+),"name":"(.*?)"',
+    ]
+    for pattern in patterns:
+        for gid, raw_title in re.findall(pattern, response.text):
+            title = bytes(raw_title, "utf-8").decode("unicode_escape").strip()
+            if title:
+                tabs_by_title[title] = {"title": title, "gid": gid}
+    for raw_title in re.findall(r'docs-sheet-tab-caption">([^<]+)</div>', response.text):
+        title = unescape(raw_title).strip()
+        if title and title not in tabs_by_title:
+            tabs_by_title[title] = {"title": title, "gid": None}
+    return list(tabs_by_title.values())
 
 
 def sheets_credentials_paths() -> tuple[Path, Path]:

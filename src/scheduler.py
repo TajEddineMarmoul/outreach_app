@@ -47,7 +47,13 @@ def next_approved_contact(conn, campaign_id: int | None = None):
 def attachment_path_for_send(config: AppConfig, campaign) -> str | None:
     if not config.campaign.attachment_enabled:
         return None
-    return str(campaign["attachment_path"] or config.campaign.attachment_path)
+    path_str = str(campaign["attachment_path"] or config.campaign.attachment_path)
+    if not path_str:
+        return None
+    path = db.resolve_project_path(path_str)
+    if not path.exists():
+        return None
+    return path_str
 
 
 def send_contact(
@@ -196,7 +202,7 @@ def send_test_email(
         None,
         int(campaign["id"]),
         to_email,
-        f"[TEST] {rendered.subject}",
+        rendered.subject,
         rendered.body,
         attachment_name(config, campaign),
         status="test_attempting",
@@ -207,7 +213,7 @@ def send_test_email(
         result = send_email(
             sender=final_sender_email,
             recipient=to_email,
-            subject=f"[TEST] {rendered.subject}",
+            subject=rendered.subject,
             body=rendered.body,
             attachment_path=attachment_path,
             token_path=sender_token_path,
@@ -257,7 +263,7 @@ def autopilot_tick(db_path: str | Path, config_path: str | Path) -> tuple[bool, 
     conn = db.init_db(db_path)
     try:
         campaign = conn.execute(
-            "SELECT * FROM campaigns WHERE status IN ('active', 'running') ORDER BY updated_at LIMIT 1"
+            "SELECT * FROM campaigns WHERE status IN ('active', 'running', 'sending') ORDER BY updated_at LIMIT 1"
         ).fetchone()
         if campaign is None:
             return False, "No active campaign"
