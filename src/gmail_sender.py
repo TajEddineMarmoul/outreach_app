@@ -1,0 +1,226 @@
+from __future__ import annotations
+
+import base64
+import mimetypes
+import os
+import re
+import shutil
+from dataclasses import dataclass
+from email.message import EmailMessage
+from pathlib import Path
+
+from dotenv import load_dotenv
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+
+from . import db
+
+
+SCOPES = ["https://www.googleapis.com/auth/gmail.send"]
+
+
+@dataclass(frozen=True)
+class GmailSendResult:
+    message_id: str
+    thread_id: str
+
+
+@dataclass(frozen=True)
+class GmailConnectionStatus:
+    connected: bool
+    status: str
+    email: str = ""
+    detail: str = ""
+    token_path: str = ""
+
+
+def credentials_paths() -> tuple[Path, Path]:
+    load_dotenv()
+    credentials_path = db.resolve_project_path(os.getenv("GMAIL_CREDENTIALS_PATH", "credentials.json"))
+    token_path = db.resolve_project_path(os.getenv("GMAIL_TOKEN_PATH", "token.json"))
+    return credentials_path, token_path
+
+
+def credentials_file_path() -> Path:
+    return credentials_paths()[0]
+
+
+def default_token_path() -> Path:
+    return credentials_paths()[1]
+
+
+def resolve_token_path(token_path: str | Path | None = None) -> Path:
+    if token_path:
+        return db.resolve_project_path(token_path)
+    return default_token_path()
+
+
+def sanitize_email_for_path(email: str) -> str:
+    safe = re.sub(r"[^a-zA-Z0-9._-]+", "_", email.strip().lower())
+    return safe or "sender"
+
+
+def sender_token_path_for_email(email: str) -> Path:
+    return db.resolve_project_path(Path("tokens") / f"gmail_{sanitize_email_for_path(email)}.json")
+
+
+def clear_gmail_token() -> None:
+    _, token_path = credentials_paths()
+    if token_path.exists():
+        token_path.unlink()
+
+
+def get_gmail_service(
+    force_reauth: bool = False,
+    token_path: str | Path | None = None,
+    prompt: str | None = None,
+):
+    credentials_path = credentials_file_path()
+    final_token_path = resolve_token_path(token_path)
+    if force_reauth and final_token_path.exists():
+        final_token_path.unlink()
+    creds = None
+    if final_token_path.exists():
+        creds = Credentials.from_authorized_user_file(str(final_token_path), SCOPES)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            if not credentials_path.exists():
+                raise FileNotFoundError(
+                    f"Gmail OAuth credentials not found at {credentials_path}. "
+                    "Create OAuth desktop credentials and save them there."
+                )
+            flow = InstalledAppFlow.from_client_secrets_file(str(credentials_path), SCOPES)
+            kwargs = {"prompt": prompt} if prompt else {}
+            creds = flow.run_local_server(port=0, **kwargs)
+        final_token_path.parent.mkdir(parents=True, exist_ok=True)
+        final_token_path.write_text(creds.to_json(), encoding="utf-8")
+    return build("gmail", "v1", credentials=creds)
+
+
+def gmail_connection_status(token_path: str | Path | None = None) -> GmailConnectionStatus:
+    final_token_path = resolve_token_path(token_path)
+    if not final_token_path.exists():
+        return GmailConnectionStatus(
+            False,
+            "Token missing",
+            detail=f"Missing {final_token_path}",
+            token_path=str(final_token_path),
+        )
+    try:
+        creds = Credentials.from_authorized_user_file(str(final_token_path), SCOPES)
+    except Exception as exc:
+        return GmailConnectionStatus(False, "Token invalid", detail=str(exc), token_path=str(final_token_path))
+    if creds.expired and not creds.refresh_token:
+        return GmailConnectionStatus(
+            False,
+            "Token expired",
+            detail="Reconnect Gmail to refresh the token.",
+            token_path=str(final_token_path),
+        )
+    if not creds.valid:
+        try:
+            creds.refresh(Request())
+            final_token_path.write_text(creds.to_json(), encoding="utf-8")
+        except Exception as exc:
+            return GmailConnectionStatus(False, "Token expired", detail=str(exc), token_path=str(final_token_path))
+    try:
+        service = build("gmail", "v1", credentials=creds)
+        profile = service.users().getProfile(userId="me").execute()
+        return GmailConnectionStatus(
+            True,
+            "Connected",
+            email=str(profile.get("emailAddress", "")),
+            token_path=str(final_token_path),
+        )
+    except Exception as exc:
+        return GmailConnectionStatus(False, "Connection check failed", detail=str(exc), token_path=str(final_token_path))
+
+
+def connect_and_get_profile(
+    force_reauth: bool = False,
+    token_path: str | Path | None = None,
+    prompt: str | None = None,
+) -> GmailConnectionStatus:
+    final_token_path = resolve_token_path(token_path)
+    service = get_gmail_service(force_reauth=force_reauth, token_path=final_token_path, prompt=prompt)
+    profile = service.users().getProfile(userId="me").execute()
+    return GmailConnectionStatus(
+        True,
+        "Connected",
+        email=str(profile.get("emailAddress", "")),
+        token_path=str(final_token_path),
+    )
+
+
+def connect_sender_account(force_reauth: bool = True) -> GmailConnectionStatus:
+    pending_path = db.resolve_project_path(Path("tokens") / "gmail_pending.json")
+    if pending_path.exists():
+        pending_path.unlink()
+    status = connect_and_get_profile(
+        force_reauth=force_reauth,
+        token_path=pending_path,
+        prompt="select_account consent",
+    )
+    final_path = sender_token_path_for_email(status.email)
+    final_path.parent.mkdir(parents=True, exist_ok=True)
+    if pending_path != final_path:
+        shutil.move(str(pending_path), str(final_path))
+    return GmailConnectionStatus(
+        True,
+        "Connected",
+        email=status.email,
+        token_path=str(final_path),
+    )
+
+
+def build_message(
+    sender: str,
+    recipient: str,
+    subject: str,
+    body: str,
+    attachment_path: str | Path | None = None,
+) -> dict[str, str]:
+    message = EmailMessage()
+    message["To"] = recipient
+    if sender:
+        message["From"] = sender
+    message["Subject"] = subject
+    message.set_content(body)
+
+    if attachment_path:
+        path = db.resolve_project_path(attachment_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Attachment not found: {path}")
+        mime_type, _ = mimetypes.guess_type(path)
+        maintype, subtype = (mime_type or "application/pdf").split("/", 1)
+        message.add_attachment(
+            path.read_bytes(),
+            maintype=maintype,
+            subtype=subtype,
+            filename=path.name,
+        )
+
+    encoded = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
+    return {"raw": encoded}
+
+
+def send_email(
+    sender: str,
+    recipient: str,
+    subject: str,
+    body: str,
+    attachment_path: str | Path | None = None,
+    token_path: str | Path | None = None,
+    service=None,
+) -> GmailSendResult:
+    gmail = service or get_gmail_service(token_path=token_path)
+    raw_message = build_message(sender, recipient, subject, body, attachment_path)
+    sent = gmail.users().messages().send(userId="me", body=raw_message).execute()
+    return GmailSendResult(
+        message_id=str(sent.get("id", "")),
+        thread_id=str(sent.get("threadId", "")),
+    )

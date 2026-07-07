@@ -1,0 +1,200 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from pathlib import Path
+
+from zoneinfo import ZoneInfo
+
+from src import db
+from src.dnc import add_email
+from src.models import AppConfig, ContactStatus
+from src.safety import is_allowed_send_time, pre_send_checks
+
+
+def config_with_attachment(tmp_path: Path) -> tuple[AppConfig, Path]:
+    cv_path = tmp_path / "cv.pdf"
+    cv_path.write_bytes(b"%PDF-1.4\n")
+    config = AppConfig()
+    config.timezone = "Europe/Paris"
+    config.sending.days = ["monday", "tuesday", "wednesday", "thursday", "friday"]
+    config.sending.start_time = "09:00"
+    config.sending.end_time = "17:00"
+    config.sending.delay_minutes = 10
+    config.sending.daily_cap = 10
+    config.campaign.attachment_enabled = True
+    config.campaign.attachment_path = str(cv_path)
+    return config, cv_path
+
+
+def approved_previewed_contact(conn, email: str = "lead@example.com"):
+    db.insert_contact(
+        conn,
+        {
+            "first_name": "Lead",
+            "email": email,
+            "company_name": "Company",
+            "keyword_1": "ai",
+            "status": ContactStatus.APPROVED.value,
+        },
+    )
+    contact = db.fetch_contact_by_email(conn, email)
+    db.mark_preview_generated(conn, int(contact["id"]), "Subject", "Body")
+    return db.fetch_contact_by_email(conn, email)
+
+
+def update_campaign_attachment(conn, path: Path):
+    campaign = db.get_default_campaign(conn)
+    db.update_campaign(
+        conn,
+        int(campaign["id"]),
+        str(campaign["subject_template"]),
+        str(campaign["body_template"]),
+        str(campaign["fallback_body_template"]),
+        str(path),
+    )
+    return db.get_default_campaign(conn)
+
+
+def test_do_not_contact_skips_send(tmp_path: Path) -> None:
+    conn = db.init_db(tmp_path / "outreach.db")
+    config, cv_path = config_with_attachment(tmp_path)
+    campaign = update_campaign_attachment(conn, cv_path)
+    contact = approved_previewed_contact(conn)
+    add_email(conn, "lead@example.com", "Asked not to contact")
+    contact = db.fetch_contact_by_email(conn, "lead@example.com")
+
+    result = pre_send_checks(
+        conn,
+        contact,
+        campaign,
+        config,
+        now=datetime(2026, 7, 7, 10, 0, tzinfo=ZoneInfo("Europe/Paris")),
+    )
+
+    assert result.allowed is False
+    assert "do-not-contact" in result.reason
+
+
+def test_already_sent_contact_is_skipped(tmp_path: Path) -> None:
+    conn = db.init_db(tmp_path / "outreach.db")
+    config, cv_path = config_with_attachment(tmp_path)
+    campaign = update_campaign_attachment(conn, cv_path)
+    contact = approved_previewed_contact(conn)
+    db.set_contact_status(conn, int(contact["id"]), ContactStatus.SENT.value)
+    contact = db.fetch_contact_by_email(conn, "lead@example.com")
+
+    result = pre_send_checks(
+        conn,
+        contact,
+        campaign,
+        config,
+        now=datetime(2026, 7, 7, 10, 0, tzinfo=ZoneInfo("Europe/Paris")),
+    )
+
+    assert result.allowed is False
+
+
+def test_daily_cap_is_enforced_with_warmup(tmp_path: Path) -> None:
+    conn = db.init_db(tmp_path / "outreach.db")
+    config, cv_path = config_with_attachment(tmp_path)
+    campaign = update_campaign_attachment(conn, cv_path)
+    contact = approved_previewed_contact(conn)
+
+    for index in range(5):
+        log_id = db.create_send_attempt(
+            conn,
+            None,
+            int(campaign["id"]),
+            f"sent{index}@example.com",
+            "Subject",
+            "Body",
+            "",
+            status="sent",
+        )
+        db.update_send_log(
+            conn,
+            log_id,
+            "sent",
+            sent_at=datetime(2026, 7, 7, 9, index, tzinfo=timezone.utc).isoformat(),
+        )
+
+    result = pre_send_checks(
+        conn,
+        contact,
+        campaign,
+        config,
+        now=datetime(2026, 7, 7, 12, 0, tzinfo=ZoneInfo("Europe/Paris")),
+    )
+
+    assert result.allowed is False
+    assert result.reason == "Daily cap reached"
+
+
+def test_time_window_is_enforced(tmp_path: Path) -> None:
+    conn = db.init_db(tmp_path / "outreach.db")
+    config, cv_path = config_with_attachment(tmp_path)
+    campaign = update_campaign_attachment(conn, cv_path)
+    contact = approved_previewed_contact(conn)
+
+    assert is_allowed_send_time(
+        config, datetime(2026, 7, 7, 10, 0, tzinfo=ZoneInfo("Europe/Paris"))
+    )
+    result = pre_send_checks(
+        conn,
+        contact,
+        campaign,
+        config,
+        now=datetime(2026, 7, 7, 20, 0, tzinfo=ZoneInfo("Europe/Paris")),
+    )
+
+    assert result.allowed is False
+    assert result.reason == "Outside allowed sending window"
+
+
+def test_attachment_missing_blocks_send(tmp_path: Path) -> None:
+    conn = db.init_db(tmp_path / "outreach.db")
+    config = AppConfig()
+    missing = tmp_path / "missing.pdf"
+    config.campaign.attachment_enabled = True
+    config.campaign.attachment_path = str(missing)
+    campaign = update_campaign_attachment(conn, missing)
+    contact = approved_previewed_contact(conn)
+
+    result = pre_send_checks(
+        conn,
+        contact,
+        campaign,
+        config,
+        now=datetime(2026, 7, 7, 10, 0, tzinfo=ZoneInfo("Europe/Paris")),
+    )
+
+    assert result.allowed is False
+    assert "Attachment is enabled but missing" in result.reason
+
+
+def test_resume_after_crash_does_not_resend_attempted_contact(tmp_path: Path) -> None:
+    conn = db.init_db(tmp_path / "outreach.db")
+    config, cv_path = config_with_attachment(tmp_path)
+    campaign = update_campaign_attachment(conn, cv_path)
+    contact = approved_previewed_contact(conn)
+    db.create_send_attempt(
+        conn,
+        int(contact["id"]),
+        int(campaign["id"]),
+        str(contact["email"]),
+        "Subject",
+        "Body",
+        cv_path.name,
+        status="attempting",
+    )
+
+    result = pre_send_checks(
+        conn,
+        contact,
+        campaign,
+        config,
+        now=datetime(2026, 7, 7, 10, 0, tzinfo=ZoneInfo("Europe/Paris")),
+    )
+
+    assert result.allowed is False
+    assert "send attempt" in result.reason
