@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import os
+os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
+
 import argparse
 import json
-import os
 import re
 import sys
 from pathlib import Path

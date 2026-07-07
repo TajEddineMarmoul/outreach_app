@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
+
 import sys
 import json
 import sqlite3
@@ -14,8 +16,6 @@ from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Que
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
-
-os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
 
 # Ensure root project dir is in sys.path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
