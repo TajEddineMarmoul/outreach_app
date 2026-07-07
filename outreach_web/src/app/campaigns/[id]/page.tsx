@@ -564,12 +564,27 @@ export default function CampaignEditorPage() {
                     <Braces className="w-4 h-4" />
                     <span className="text-[10px] font-bold uppercase tracking-wider">Variables</span>
                   </PopoverTrigger>
-                  <PopoverContent align="end" className="w-48 p-1">
-                    {["First_Name", "Company_Name", "keyword_sentence"].map((v) => (
+                  <PopoverContent align="end" className="w-48 max-h-64 overflow-y-auto p-1">
+                    {[
+                      "First_Name",
+                      "Last_Name",
+                      "Full_Name",
+                      "Email",
+                      "Company_Name",
+                      "Company_Website",
+                      "LinkedIn",
+                      "Title",
+                      "Industry",
+                      "keyword_1",
+                      "keyword_2",
+                      "keyword_3",
+                      "keyword_sentence",
+                      "Country"
+                    ].map((v) => (
                       <button
                         key={v}
                         onClick={() => insertVariable(v)}
-                        className="w-full text-left px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 rounded"
+                        className="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 rounded transition-colors text-slate-700 cursor-pointer"
                       >
                         {v}
                       </button>
