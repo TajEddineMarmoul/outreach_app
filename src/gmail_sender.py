@@ -244,8 +244,11 @@ def build_message(
     if sender:
         message["From"] = sender
     message["Subject"] = subject
-    message.set_content(body)
-
+    import re
+    if re.search(r'<[a-z][\s\S]*>', body, re.IGNORECASE):
+        message.set_content(body, subtype="html")
+    else:
+        message.set_content(body)
     if attachment_path:
         path = db.resolve_project_path(attachment_path)
         if not path.exists():

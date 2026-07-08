@@ -1,20 +1,20 @@
-campaign:
-  attachment_enabled: false
-  attachment_path: ''
-  followups_enabled: false
-  tracking_enabled: false
+timezone: Europe/Paris
 sending:
-  bounce_rate_pause_threshold: 5.0
-  daily_cap: 10
   days:
   - monday
   - tuesday
   - wednesday
   - thursday
   - friday
-  delay_minutes: 5
-  end_time: '17:00'
-  max_consecutive_errors: 3
-  max_daily_cap_allowed_without_manual_override: 50
   start_time: 09:00
-timezone: Europe/Paris
+  end_time: '17:00'
+  delay_minutes: 5
+  daily_cap: 10
+  max_daily_cap_allowed_without_manual_override: 50
+  max_consecutive_errors: 3
+  bounce_rate_pause_threshold: 5.0
+campaign:
+  attachment_enabled: false
+  attachment_path: ''
+  tracking_enabled: false
+  followups_enabled: false
