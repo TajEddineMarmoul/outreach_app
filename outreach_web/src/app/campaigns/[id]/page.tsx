@@ -1657,8 +1657,11 @@ function PreviewDialog({
   const currentPreview = previewRows[previewIndex] || null;
   const hasPreviews = previewRows.length > 0 && previewRows[0]?.subject !== null && previewRows[0]?.subject !== undefined;
 
+  const [testResult, setTestResult] = useState<{ type: "success" | "error"; message: string } | null>(null);
+
   useEffect(() => {
     setPreviewIndex(0);
+    setTestResult(null);
   }, [isOpen, previewRows.length]);
 
   const handleGenerate = async () => {
@@ -1669,6 +1672,7 @@ function PreviewDialog({
   const handleSendTest = async () => {
     if (!testEmail.trim()) return;
     setTestSending(true);
+    setTestResult(null);
     try {
       const res = await fetch(`${API_URL}/api/campaigns/${campaignId}/test-send`, {
         method: "POST",
@@ -1678,10 +1682,13 @@ function PreviewDialog({
           preview_contact_id: currentPreview?.id,
         }),
       });
-      if (!res.ok) throw new Error("Test send failed");
-      alert("Test email sent successfully!");
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => null);
+        throw new Error(errorData?.detail || "Test send failed");
+      }
+      setTestResult({ type: "success", message: "Test email sent successfully!" });
     } catch (err: any) {
-      alert(err.message);
+      setTestResult({ type: "error", message: err.message });
     } finally {
       setTestSending(false);
     }
@@ -1765,25 +1772,33 @@ function PreviewDialog({
           )}
         </div>
 
-        <div className="border-t border-slate-200 pt-4 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-2 w-full sm:max-w-sm">
-            <Input
-              type="email"
-              placeholder="recipient@domain.com"
-              value={testEmail}
-              onChange={(e) => setTestEmail(e.target.value)}
-              className="text-xs"
-            />
-            <Button
-              className="bg-slate-800 hover:bg-slate-900 text-white text-xs shrink-0"
-              onClick={handleSendTest}
-              disabled={testSending || !testEmail.trim() || !currentPreview}
-            >
-              {testSending ? "Sending..." : "Send test"}
-            </Button>
+        <div className="border-t border-slate-200 pt-4">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="flex flex-col w-full sm:max-w-sm gap-2">
+              <div className="flex items-center gap-2">
+                <Input
+                  type="email"
+                  placeholder="recipient@domain.com"
+                  value={testEmail}
+                  onChange={(e) => setTestEmail(e.target.value)}
+                  className="text-xs"
+                />
+                <Button
+                  className="bg-slate-800 hover:bg-slate-900 text-white text-xs shrink-0"
+                  onClick={handleSendTest}
+                  disabled={testSending || !testEmail.trim() || !currentPreview}
+                >
+                  {testSending ? "Sending..." : "Send test"}
+                </Button>
+              </div>
+              {testResult && (
+                <div className={cn("text-[11px] font-medium px-1", testResult.type === "success" ? "text-emerald-600" : "text-red-500")}>
+                  {testResult.message}
+                </div>
+              )}
+            </div>
+            <Button variant="outline" onClick={onClose} className="self-end sm:self-auto">Close</Button>
           </div>
-          
-          <Button variant="outline" onClick={onClose}>Close</Button>
         </div>
       </DialogContent>
     </Dialog>
