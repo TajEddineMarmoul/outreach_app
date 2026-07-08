@@ -77,6 +77,11 @@ export default function CampaignEditorPage() {
   const { data: senders, mutate: mutateSenders } = useSWR(`${API_URL}/api/senders`, fetcher);
   const { data: oauthStatus } = useSWR(`${API_URL}/api/oauth/status`, fetcher);
 
+  const senderCountInGroup = useMemo(() => {
+    if (!summary?.sender || !senders) return 0;
+    return senders.filter((s: any) => s.group_name?.trim() === summary.sender.trim()).length;
+  }, [summary?.sender, senders]);
+
   // ----------------------------------------------------
   // UI & Form States
   // ----------------------------------------------------
@@ -520,6 +525,9 @@ export default function CampaignEditorPage() {
                       onClick={() => setSenderModalOpen(true)}
                     >
                       <span>{summary.sender}</span>
+                      <span className="text-xs font-normal text-slate-400 ml-1">
+                        ({senderCountInGroup} sender{senderCountInGroup !== 1 ? "s" : ""})
+                      </span>
                       <span className="text-slate-400 font-normal">▾</span>
                     </Button>
                   ) : (
