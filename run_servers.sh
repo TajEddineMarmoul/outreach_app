@@ -12,10 +12,20 @@ cleanup() {
 # Run cleanup on script interruption or exit
 trap cleanup SIGINT SIGTERM EXIT
 
+# Ensure Node.js version is >= 20.9.0 (load NVM if available, or prepend v22.22.0 to PATH)
+if [ -s "$HOME/.nvm/nvm.sh" ]; then
+    . "$HOME/.nvm/nvm.sh"
+    nvm use 22.22.0 >/dev/null 2>&1 || nvm use default >/dev/null 2>&1
+elif [ -d "$HOME/.nvm/versions/node/v22.22.0/bin" ]; then
+    export PATH="$HOME/.nvm/versions/node/v22.22.0/bin:$PATH"
+fi
+
 echo "========================================="
 echo "      Outreach App Server Launcher       "
 echo "========================================="
+echo "Using Node.js version: $(node -v 2>/dev/null || echo 'Unknown')"
 echo ""
+
 
 echo "[1/2] Launching FastAPI Backend on Port 8000..."
 ./.venv/bin/python -m uvicorn api.main:app --port 8000 --reload &
