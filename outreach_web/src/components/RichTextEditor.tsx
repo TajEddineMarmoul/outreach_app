@@ -27,7 +27,7 @@ export default function RichTextEditor({ content, onChange, placeholder, onEdito
   const isUpdatingRef = useRef(false);
 
   const editor = useEditor({
-    immediatelyRender: false,
+    immediatelyRender: true,
     extensions: [
       StarterKit.configure({
         heading: false,

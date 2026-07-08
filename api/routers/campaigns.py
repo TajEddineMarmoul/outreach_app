@@ -7,139 +7,36 @@ import sys
 import json
 import sqlite3
 from pathlib import Path
-from typing import Any, Optional, List, Dict
+from typing import Optional, List, Dict
 import pandas as pd
 from io import StringIO
 
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Query
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
-# Ensure root project dir is in sys.path
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from src import db
-from src.models import (
-    AppConfig,
-    load_config,
-    save_config,
-    ContactStatus,
-    DEFAULT_BODY_TEMPLATE,
-    DEFAULT_FALLBACK_BODY_TEMPLATE,
-    DEFAULT_SUBJECT_TEMPLATE,
+from api.deps import PROJECT_ROOT, db, get_db_path, config_path, get_db
+from api.schemas import (
+    CampaignCreate,
+    CampaignUpdate,
+    ComposerUpdate,
+    SendSettingsUpdate,
+    SenderSelect,
+    RecipientsPaste,
+    RecipientsGoogleSheet,
+    RecipientsSelectExisting,
+    TestSendRequest,
+    SenderUpdate,
 )
-from src.gmail_sender import (
-    connect_and_get_profile,
-    connect_sender_account,
-    credentials_file_path,
-    default_token_path,
-    gmail_connection_status,
-)
-from src.google_sheets import (
-    get_public_sheet_csv,
-    get_published_csv,
-    list_public_sheet_tabs,
-    parse_google_sheet_url_details,
-)
-from src.importer import (
-    import_dataframe,
-    normalize_email,
-    detect_columns,
-)
-from src.safety import (
-    campaign_checklist,
-    pre_send_checks,
-)
-from src.scheduler import (
-    start_background_autopilot,
-    stop_autopilot,
-    send_test_email,
-)
+from src.models import AppConfig, load_config, save_config, ContactStatus
+from src.gmail_sender import gmail_connection_status
+from src.google_sheets import get_public_sheet_csv, get_published_csv, list_public_sheet_tabs, parse_google_sheet_url_details
+from src.importer import import_dataframe, normalize_email, detect_columns
+from src.safety import campaign_checklist
+from src.scheduler import start_background_autopilot, stop_autopilot, send_test_email, bulk_send_approved
 from src.analytics import send_log_dataframe
-from src.dnc import add_email as dnc_add_email, rows as dnc_rows
-
-from fastapi import APIRouter
 
 router = APIRouter()
-
-
-
-# Startup Context Settings
-def get_db_path() -> Path:
-    return db.get_db_path(os.getenv("OUTREACH_DB_PATH", "data/outreach.db"))
-
-def config_path() -> Path:
-    return db.resolve_project_path(os.getenv("OUTREACH_CONFIG_PATH", "config.yaml"), PROJECT_ROOT)
-
-def get_db():
-    conn = db.init_db(get_db_path())
-    try:
-        yield conn
-    finally:
-        conn.close()
-
-
-
-# Pydantic schemas
-class CampaignCreate(BaseModel):
-    name: str
-
-class CampaignUpdate(BaseModel):
-    name: Optional[str] = None
-    subject_template: Optional[str] = None
-    body_template: Optional[str] = None
-    fallback_body_template: Optional[str] = None
-    attachment_path: Optional[str] = None
-    require_attachment: Optional[bool] = None
-    tracking_enabled: Optional[bool] = None
-    unsubscribe_link: Optional[bool] = None
-
-class ComposerUpdate(BaseModel):
-    subject_template: str
-    body_template: str
-    fallback_body_template: str
-    attachment_path: str
-    require_attachment: Optional[bool] = False
-
-class SendSettingsUpdate(BaseModel):
-    days: List[str]
-    start_time: str
-    end_time: str
-    daily_cap: int
-    delay_minutes: int
-    sender_daily_cap: Optional[int] = None
-
-class SenderSelect(BaseModel):
-    sender_id: int
-
-class RecipientsPaste(BaseModel):
-    raw: str
-
-class RecipientsGoogleSheet(BaseModel):
-    url: str
-    tab_name: str
-    header_row: int
-    use_private: Optional[bool] = False
-    mapping: Dict[str, str]
-
-class RecipientsSelectExisting(BaseModel):
-    contact_ids: List[int]
-
-class TestSendRequest(BaseModel):
-    recipient_email: str
-    preview_contact_id: Optional[int] = None
-
-class SettingsUpdate(BaseModel):
-    timezone: str
-    max_daily_cap: int
-    bounce_rate_pause_threshold: float
-    max_consecutive_errors: int
-
-class SaveCredentialsRequest(BaseModel):
-    content: str
 
 
 # ----------------------------------------------------
@@ -275,7 +172,7 @@ def patch_composer(campaign_id: int, req: ComposerUpdate, conn=Depends(get_db)):
         req.subject_template,
         req.body_template,
         req.fallback_body_template,
-        req.attachment_path,
+        str(campaign["attachment_path"] or ""),
     )
     db.clear_campaign_previews(conn, campaign_id)
     db.set_setting(conn, f"campaign_{campaign_id}_template_saved", True)
@@ -283,7 +180,7 @@ def patch_composer(campaign_id: int, req: ComposerUpdate, conn=Depends(get_db)):
     db.set_setting(conn, f"campaign_{campaign_id}_require_attachment", "true" if req.require_attachment else "false")
     
     config = load_config(config_path())
-    config.campaign.attachment_path = req.attachment_path
+    config.campaign.attachment_path = str(campaign["attachment_path"] or "")
     save_config(config, config_path())
     
     return {"status": "success"}
@@ -357,12 +254,6 @@ def patch_campaign_sender(campaign_id: int, req: SenderSelect, conn=Depends(get_
         raise HTTPException(status_code=404, detail="Campaign not found")
     db.set_campaign_sender(conn, campaign_id, req.sender_id)
     return {"status": "success"}
-
-
-class SenderUpdate(BaseModel):
-    display_name: str = ""
-    daily_cap: int = 10
-    group_name: str = ""
 
 
 @router.get("/api/campaigns/{campaign_id}/recipients")
@@ -683,41 +574,109 @@ def run_preflight(conn, config, campaign):
     if block_items:
         raise HTTPException(status_code=400, detail={"msg": "Preflight validation failed", "blocks": block_items})
 
+class BulkSendRequest(BaseModel):
+    delay_minutes: int = 5
+
+class BulkScheduleRequest(BaseModel):
+    delay_minutes: int = 5
+    scheduled_at: str = ""  # ISO datetime
+
+class AutopilotStartRequest(BaseModel):
+    days: Optional[List[str]] = None
+    start_time: str = "09:00"
+    end_time: str = "17:00"
+    daily_cap: int = 10
+    delay_minutes: int = 5
+    scheduled_at: str = ""  # ISO datetime
+
 @router.post("/api/campaigns/{campaign_id}/send-now")
-def post_send_now(campaign_id: int, conn=Depends(get_db)):
+def post_send_now(campaign_id: int, req: BulkSendRequest = BulkSendRequest(), conn=Depends(get_db)):
+    import threading
+
     campaign = db.get_campaign(conn, campaign_id)
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
-        
+
     config = load_config(config_path())
     run_preflight(conn, config, campaign)
-    
+
     db.set_campaign_status(conn, "sending", campaign_id)
-    start_background_autopilot(get_db_path(), config_path())
-    return {"status": "success", "mode": "sending"}
+
+    def _run():
+        c = db.init_db(get_db_path())
+        cfg = load_config(config_path())
+        bulk_send_approved(c, campaign_id, cfg, req.delay_minutes)
+        c.close()
+
+    threading.Thread(target=_run, daemon=True).start()
+    return {"status": "success", "mode": "bulk_sending"}
 
 @router.post("/api/campaigns/{campaign_id}/schedule")
-def post_schedule(campaign_id: int, conn=Depends(get_db)):
+def post_schedule(campaign_id: int, req: BulkScheduleRequest = BulkScheduleRequest(), conn=Depends(get_db)):
+    import threading
+    from datetime import datetime, timezone
+
     campaign = db.get_campaign(conn, campaign_id)
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
-        
+
     config = load_config(config_path())
     run_preflight(conn, config, campaign)
-    
+
     db.set_campaign_status(conn, "scheduled", campaign_id)
+
+    scheduled_dt = None
+    if req.scheduled_at:
+        try:
+            scheduled_dt = datetime.fromisoformat(req.scheduled_at)
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="Invalid scheduled_at format, use ISO datetime")
+
+    def _run():
+        if scheduled_dt:
+            now = datetime.now(timezone.utc)
+            if scheduled_dt.tzinfo is None:
+                scheduled_dt_aware = scheduled_dt.replace(tzinfo=timezone.utc)
+            else:
+                scheduled_dt_aware = scheduled_dt
+            delay = (scheduled_dt_aware - now).total_seconds()
+            if delay > 0:
+                time.sleep(delay)
+        c = db.init_db(get_db_path())
+        camp = c.execute("SELECT status FROM campaigns WHERE id = ?", (campaign_id,)).fetchone()
+        if camp and camp["status"] not in ("scheduled",):
+            c.close()
+            return
+        cfg = load_config(config_path())
+        bulk_send_approved(c, campaign_id, cfg, req.delay_minutes)
+        c.close()
+
+    threading.Thread(target=_run, daemon=True).start()
     return {"status": "success", "mode": "scheduled"}
 
 @router.post("/api/campaigns/{campaign_id}/autopilot/start")
-def post_autopilot_start(campaign_id: int, conn=Depends(get_db)):
+def post_autopilot_start(campaign_id: int, req: AutopilotStartRequest = AutopilotStartRequest(), conn=Depends(get_db)):
     campaign = db.get_campaign(conn, campaign_id)
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
-        
+
     config = load_config(config_path())
     run_preflight(conn, config, campaign)
-    
-    db.set_campaign_status(conn, "active", campaign_id)
+
+    if req.days is not None:
+        config.sending.days = req.days
+    config.sending.start_time = req.start_time
+    config.sending.end_time = req.end_time
+    config.sending.daily_cap = req.daily_cap
+    config.sending.delay_minutes = req.delay_minutes
+    save_config(config, config_path())
+
+    if req.scheduled_at:
+        db.set_campaign_status(conn, "scheduled", campaign_id)
+        db.set_setting(conn, f"campaign_{campaign_id}_autopilot_start_at", req.scheduled_at)
+    else:
+        db.set_campaign_status(conn, "active", campaign_id)
+
     start_background_autopilot(get_db_path(), config_path())
     return {"status": "success", "mode": "autopilot"}
 
@@ -781,5 +740,5 @@ def get_public_google_sheet_tabs(url: str = Query(...)):
 @router.get("/api/logs")
 def get_global_logs(conn=Depends(get_db)):
     log = send_log_dataframe(conn)
-    return log.to_dict(orient="records")
+    return log.fillna('').to_dict(orient="records")
 

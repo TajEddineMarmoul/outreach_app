@@ -153,47 +153,17 @@ def get_connected_email(creds: Credentials) -> str:
 
 
 def gmail_connection_status(token_path: str | Path | None = None) -> GmailConnectionStatus:
-    final_token_path = resolve_token_path(token_path)
-    if not final_token_path.exists():
-        return GmailConnectionStatus(
-            False,
-            "Token missing",
-            detail=f"Missing {final_token_path}",
-            token_path=str(final_token_path),
-        )
     try:
-        creds = Credentials.from_authorized_user_file(str(final_token_path), SCOPES)
-    except Exception as exc:
-        return GmailConnectionStatus(False, "Token invalid", detail=str(exc), token_path=str(final_token_path))
-    if not creds.has_scopes(SCOPES):
+        final_token_path = resolve_token_path(token_path)
+        creds = get_google_credentials(token_path=final_token_path)
+        email = get_connected_email(creds)
         return GmailConnectionStatus(
-            False,
-            "Token missing scopes",
-            detail="Reconnect Gmail so the app can identify the sender email and send messages.",
-            token_path=str(final_token_path),
-        )
-    if creds.expired and not creds.refresh_token:
-        return GmailConnectionStatus(
-            False,
-            "Token expired",
-            detail="Reconnect Gmail to refresh the token.",
-            token_path=str(final_token_path),
-        )
-    if not creds.valid:
-        try:
-            creds.refresh(Request())
-            final_token_path.write_text(creds.to_json(), encoding="utf-8")
-        except Exception as exc:
-            return GmailConnectionStatus(False, "Token expired", detail=str(exc), token_path=str(final_token_path))
-    try:
-        return GmailConnectionStatus(
-            True,
-            "Connected",
-            email=get_connected_email(creds),
-            token_path=str(final_token_path),
+            True, "Connected", email=email, token_path=str(final_token_path)
         )
     except Exception as exc:
-        return GmailConnectionStatus(False, "Connection check failed", detail=str(exc), token_path=str(final_token_path))
+        return GmailConnectionStatus(
+            False, str(exc), token_path=str(token_path or "tokens/missing.json")
+        )
 
 
 def connect_and_get_profile(
@@ -275,10 +245,11 @@ def send_email(
     token_path: str | Path | None = None,
     service=None,
 ) -> GmailSendResult:
-    gmail = service or get_gmail_service(token_path=token_path)
-    raw_message = build_message(sender, recipient, subject, body, attachment_path)
-    sent = gmail.users().messages().send(userId="me", body=raw_message).execute()
+    if service is None:
+        service = get_gmail_service(token_path=token_path)
+    message = build_message(sender, recipient, subject, body, attachment_path)
+    sent = service.users().messages().send(userId="me", body=message).execute()
     return GmailSendResult(
-        message_id=str(sent.get("id", "")),
-        thread_id=str(sent.get("threadId", "")),
+        message_id=sent["id"],
+        thread_id=sent.get("threadId", ""),
     )

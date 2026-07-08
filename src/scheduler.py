@@ -240,6 +240,53 @@ def pre_send_attachment_only(config: AppConfig, campaign) -> tuple[bool, str]:
     return True, ""
 
 
+def bulk_send_approved(
+    conn,
+    campaign_id: int,
+    config: AppConfig,
+    delay_minutes: int,
+    service=None,
+) -> tuple[int, str]:
+    sender = db.get_campaign_sender(conn, campaign_id)
+    if not sender:
+        return 0, "No sender selected"
+    sender_token_path = str(sender["token_path"])
+    if service is None:
+        from .gmail_sender import get_gmail_service
+        gmail_status = gmail_connection_status(token_path=sender_token_path)
+        if not gmail_status.connected:
+            return 0, f"Gmail not connected: {gmail_status.status}"
+        service = get_gmail_service(token_path=sender_token_path)
+    campaign = db.get_campaign(conn, campaign_id)
+    if not campaign:
+        return 0, "Campaign not found"
+
+    sent = 0
+    failed = 0
+    while True:
+        contact = next_approved_contact(conn, campaign_id=campaign_id)
+        if not contact:
+            break
+        ok, msg = send_contact(
+            conn, int(contact["id"]), config,
+            campaign_id=campaign_id,
+            enforce_time_window=False,
+            enforce_daily_cap=False,
+            service=service,
+        )
+        if ok:
+            sent += 1
+        else:
+            failed += 1
+            if "Campaign paused" in msg or "Too many" in msg:
+                break
+        if delay_minutes > 0:
+            time.sleep(delay_minutes * 60)
+
+    db.set_campaign_status(conn, "ended", campaign_id)
+    return sent, f"Bulk send complete: {sent} sent, {failed} failed"
+
+
 def start_autopilot(conn) -> None:
     db.set_campaign_status(conn, "active")
 
@@ -261,7 +308,7 @@ def autopilot_tick(db_path: str | Path, config_path: str | Path) -> tuple[bool, 
     conn = db.init_db(db_path)
     try:
         campaign = conn.execute(
-            "SELECT * FROM campaigns WHERE status IN ('active', 'running', 'sending') ORDER BY updated_at LIMIT 1"
+            "SELECT * FROM campaigns WHERE status = 'active' ORDER BY updated_at LIMIT 1"
         ).fetchone()
         if campaign is None:
             return False, "No active campaign"

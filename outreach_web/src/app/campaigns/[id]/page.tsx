@@ -164,7 +164,6 @@ export default function CampaignEditorPage() {
           subject_template: subject,
           body_template: body,
           fallback_body_template: fallback,
-          attachment_path: campaign?.attachment_path || "",
           require_attachment: requireAttachment,
         }),
       });
@@ -190,7 +189,6 @@ export default function CampaignEditorPage() {
           subject_template: subject,
           body_template: body,
           fallback_body_template: fallback,
-          attachment_path: campaign?.attachment_path || "",
           require_attachment: requireAttachment,
         }),
       });
@@ -455,59 +453,7 @@ export default function CampaignEditorPage() {
         </div>
       </header>
 
-      {/* Validation Warnings Banner */}
-      {valSummary && (valSummary.used_warnings.length > 0 || valSummary.other_warnings.length > 0) && (
-        <div className="bg-amber-50/85 border-b border-amber-200/50 px-8 py-3 select-none flex flex-col gap-2 shrink-0 backdrop-blur-sm animate-in fade-in slide-in-from-top-2 duration-200">
-          <div className="flex items-start justify-between">
-            <div className="flex items-start gap-2.5">
-              <AlertTriangle className="w-4.5 h-4.5 text-amber-600 mt-0.5 shrink-0" />
-              <div className="space-y-1">
-                <p className="text-sm font-semibold text-amber-800">
-                  Data Warning: Some recipient columns have empty values
-                </p>
-                {valSummary.used_warnings.length > 0 && (
-                  <p className="text-xs text-amber-700 leading-normal">
-                    <span className="font-semibold text-red-700">Critical (Used in Template):</span> The following variables are referenced in your email template but have empty values for some contacts:{" "}
-                    {valSummary.used_warnings.map((w: any, idx: number) => (
-                      <span key={w.column} className="font-semibold underline decoration-red-400">
-                        {w.column} ({w.empty_count} rows){idx < valSummary.used_warnings.length - 1 ? ", " : ""}
-                      </span>
-                    ))}
-                    . <span className="font-medium text-amber-950">You must fix these values or contacts will be blocked from approval/sending.</span>
-                  </p>
-                )}
-                {valSummary.other_warnings.length > 0 && !showAllWarnings && (
-                  <button
-                    onClick={() => setShowAllWarnings(true)}
-                    className="text-xs font-semibold text-amber-700 hover:text-amber-900 underline flex items-center gap-1 cursor-pointer select-none pt-0.5"
-                  >
-                    Show all empty columns ({valSummary.other_warnings.length} more)
-                  </button>
-                )}
-                {valSummary.other_warnings.length > 0 && showAllWarnings && (
-                  <div className="space-y-1 pt-1.5 border-t border-amber-200/40">
-                    <p className="text-xs text-amber-700 leading-normal">
-                      <span className="font-semibold">Other Empty Columns:</span> The following columns also contain empty values for some contacts (but are not used in your template):{" "}
-                      {valSummary.other_warnings.map((w: any, idx: number) => (
-                        <span key={w.column} className="font-medium text-slate-700">
-                          {w.column} ({w.empty_count} rows){idx < valSummary.other_warnings.length - 1 ? ", " : ""}
-                        </span>
-                      ))}
-                      .
-                    </p>
-                    <button
-                      onClick={() => setShowAllWarnings(false)}
-                      className="text-xs font-semibold text-amber-700 hover:text-amber-900 underline flex items-center gap-1 cursor-pointer select-none"
-                    >
-                      Hide other empty columns
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Validation Warnings Banner Removed */}
 
       {/* ----------------------------------------------------
           2. Main Layout (Composer + Settings)
@@ -641,24 +587,7 @@ export default function CampaignEditorPage() {
                 onEditorReady={(editor) => { tiptapEditorRef.current = editor; }}
               />
 
-              {/* Unknown variable warnings */}
-              {(() => {
-                const used = [...body.matchAll(/\{\{\s*(\w+)\s*\}\}/g)].map(m => m[1]);
-                const valid = new Set(activeVariables);
-                const unknown = [...new Set(used.filter(v => !valid.has(v)))];
-                if (unknown.length === 0) return null;
-                return (
-                  <div className="mx-4 mb-3 space-y-1">
-                    {unknown.map(v => (
-                      <div key={v} className="flex items-center gap-1.5 text-xs text-red-600 font-medium">
-                        <span className="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" />
-                        <code className="bg-red-50 px-1 rounded">&#123;&#123; {v} &#125;&#125;</code>
-                        <span className="text-red-400">not in your imported data</span>
-                      </div>
-                    ))}
-                  </div>
-                );
-              })()}
+      {/* Unknown variable warnings Removed */}
 
               {/* Bottom attachment display chip */}
               {summary?.attachment && summary.attachment !== "none" && (
