@@ -170,7 +170,7 @@ def test_attachment_missing_blocks_send(tmp_path: Path) -> None:
     )
 
     assert result.allowed is False
-    assert "Attachment is enabled but missing" in result.reason
+    assert "Attachment is missing" in result.reason
 
 
 def test_resume_after_crash_does_not_resend_attempted_contact(tmp_path: Path) -> None:

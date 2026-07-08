@@ -156,14 +156,18 @@ def delay_elapsed(conn, config: AppConfig, now: datetime | None = None) -> bool:
 
 
 def attachment_check(config: AppConfig, campaign) -> SafetyResult:
-    if not config.campaign.attachment_enabled:
-        return SafetyResult(True)
-    attachment_path = str(campaign["attachment_path"] or config.campaign.attachment_path)
+    attachment_path = str(campaign["attachment_path"] or "")
+    if not attachment_path and config.campaign.attachment_enabled:
+        attachment_path = str(config.campaign.attachment_path or "")
+
     if not attachment_path.strip():
-        return SafetyResult(False, "Attachment is enabled but no file is selected")
+        if config.campaign.attachment_enabled:
+            return SafetyResult(False, "Attachment is enabled but no file is selected")
+        return SafetyResult(True)
+
     path = db.resolve_project_path(attachment_path)
     if not path.is_file():
-        return SafetyResult(False, f"Attachment is enabled but missing: {path}")
+        return SafetyResult(False, f"Attachment is missing: {path}")
     if path.suffix.lower() != ".pdf":
         return SafetyResult(False, "Attachment must be a PDF file")
     return SafetyResult(True)
