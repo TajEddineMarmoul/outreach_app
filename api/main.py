@@ -823,7 +823,7 @@ def post_test_send(campaign_id: int, req: TestSendRequest, conn=Depends(get_db))
     config = load_config(config_path())
     success, msg = send_test_email(conn, contact_id, req.recipient_email, config, campaign_id=campaign_id)
     if not success:
-        raise HTTPException(status_code=500, detail=msg)
+        raise HTTPException(status_code=400, detail=msg)
     
     db.set_setting(conn, f"campaign_{campaign_id}_test_sent", True)
     return {"status": "success", "detail": msg}

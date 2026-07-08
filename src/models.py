@@ -48,7 +48,7 @@ class SendingConfig(BaseModel):
 
 
 class CampaignConfig(BaseModel):
-    attachment_enabled: bool = True
+    attachment_enabled: bool = False
     attachment_path: str = "data/uploads/resume.pdf"
     tracking_enabled: bool = False
     followups_enabled: bool = False
