@@ -166,6 +166,7 @@ function GroupCard({
   onRename,
   onConnectToGroup,
   connectingGroup,
+  isUngrouped = false,
 }: {
   groupName: string;
   senders: Sender[];
@@ -174,6 +175,7 @@ function GroupCard({
   onRename: (oldName: string, newName: string) => void;
   onConnectToGroup: (groupName: string) => void;
   connectingGroup: string | null;
+  isUngrouped?: boolean;
 }) {
   const [open, setOpen] = useState(true);
   const isConnecting = connectingGroup === groupName;
@@ -190,26 +192,32 @@ function GroupCard({
           className="flex items-center gap-2 text-sm font-bold text-slate-700 hover:text-slate-900 transition-colors cursor-pointer"
         >
           {open ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
-          <InlineEdit
-            value={groupName}
-            onSave={(newName) => onRename(groupName, newName)}
-            className="text-sm font-bold text-slate-700"
-          />
+          {isUngrouped ? (
+            <span className="text-sm font-bold text-slate-500">{groupName}</span>
+          ) : (
+            <InlineEdit
+              value={groupName}
+              onSave={(newName) => onRename(groupName, newName)}
+              className="text-sm font-bold text-slate-700"
+            />
+          )}
           <span className="text-xs font-normal text-slate-400 ml-1">
             {senders.length} sender{senders.length !== 1 ? "s" : ""}
           </span>
         </div>
 
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => onConnectToGroup(groupName)}
-          disabled={isConnecting}
-          className="h-8 text-xs gap-1.5 border-slate-200 hover:border-blue-300 hover:text-blue-600"
-        >
-          {isConnecting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
-          {isConnecting ? "Connecting…" : "Add sender"}
-        </Button>
+        {!isUngrouped && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => onConnectToGroup(groupName)}
+            disabled={isConnecting}
+            className="h-8 text-xs gap-1.5 border-slate-200 hover:border-blue-300 hover:text-blue-600"
+          >
+            {isConnecting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+            {isConnecting ? "Connecting…" : "Add sender"}
+          </Button>
+        )}
       </div>
 
       {/* Sender list */}
@@ -260,10 +268,24 @@ export default function SendersPage() {
   // Bucket senders into groups
   const buckets: Record<string, Sender[]> = {};
   for (const g of allGroups) buckets[g] = [];
+  
+  const UNGROUPED_KEY = "__ungrouped__";
+  buckets[UNGROUPED_KEY] = [];
+
   for (const s of senders) {
     const g = s.group_name?.trim();
-    if (g && buckets[g]) buckets[g].push(s);
+    if (g && buckets[g]) {
+      buckets[g].push(s);
+    } else {
+      buckets[UNGROUPED_KEY].push(s);
+    }
   }
+
+  // Combine regular groups with the ungrouped list if it has items
+  const groupKeys = [
+    ...allGroups,
+    ...(buckets[UNGROUPED_KEY].length > 0 ? [UNGROUPED_KEY] : [])
+  ];
 
   // ── patch a sender ──
   const handlePatch = useCallback(
@@ -431,18 +453,19 @@ export default function SendersPage() {
       )}
 
       {/* Group cards */}
-      {allGroups.length > 0 && (
+      {groupKeys.length > 0 && (
         <div className="space-y-4">
-          {allGroups.map((g) => (
+          {groupKeys.map((g) => (
             <GroupCard
               key={g}
-              groupName={g}
+              groupName={g === UNGROUPED_KEY ? "Ungrouped Senders" : g}
               senders={buckets[g] ?? []}
               onPatch={handlePatch}
               onDelete={handleDelete}
               onRename={handleRenameGroup}
               onConnectToGroup={handleConnectToGroup}
               connectingGroup={connectingGroup}
+              isUngrouped={g === UNGROUPED_KEY}
             />
           ))}
         </div>

@@ -234,6 +234,7 @@ def get_campaign_summary(campaign_id: int, conn=Depends(get_db)):
     
     config = load_config(config_path())
     selected_sender = db.get_campaign_sender(conn, campaign_id)
+    sender_group = str(selected_sender["group_name"]) if (selected_sender and selected_sender["group_name"]) else None
     sender_email = str(selected_sender["email"]) if selected_sender else None
     
     status = str(campaign["status"])
@@ -260,7 +261,8 @@ def get_campaign_summary(campaign_id: int, conn=Depends(get_db)):
     sheet_synced = (sheet_contacts["cnt"] or 0) > 0
 
     return {
-        "sender": sender_email,
+        "sender": sender_group,
+        "sender_email": sender_email,
         "recipients": recipient_count,
         "mode": status,
         "attachment": att_label,

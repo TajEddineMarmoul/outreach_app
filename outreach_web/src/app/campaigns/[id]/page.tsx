@@ -697,7 +697,7 @@ export default function CampaignEditorPage() {
         isOpen={senderModalOpen}
         onClose={() => setSenderModalOpen(false)}
         senders={senders || []}
-        selectedEmail={summary?.sender || ""}
+        selectedEmail={summary?.sender_email || ""}
         onSelect={async (senderId) => {
           await handleSelectSender(senderId);
           setSenderModalOpen(false);
@@ -1042,10 +1042,24 @@ function SenderDialog({
   // Bucket senders into groups
   const buckets: Record<string, any[]> = {};
   for (const g of allGroups) buckets[g] = [];
+  
+  const UNGROUPED_KEY = "__ungrouped__";
+  buckets[UNGROUPED_KEY] = [];
+
   for (const s of senders) {
     const g = s.group_name?.trim();
-    if (g && buckets[g]) buckets[g].push(s);
+    if (g && buckets[g]) {
+      buckets[g].push(s);
+    } else {
+      buckets[UNGROUPED_KEY].push(s);
+    }
   }
+
+  // Render both regular groups and the ungrouped section if there are ungrouped senders
+  const groupKeys = [
+    ...allGroups,
+    ...(buckets[UNGROUPED_KEY].length > 0 ? [UNGROUPED_KEY] : [])
+  ];
 
   // ── patch a sender ──
   const handlePatch = async (id: number, patch: Partial<any>) => {
@@ -1220,7 +1234,8 @@ function SenderDialog({
               </Button>
             </div>
           ) : (
-            allGroups.map((g) => {
+            groupKeys.map((g) => {
+              const isUngrouped = g === UNGROUPED_KEY;
               const groupSenders = buckets[g] || [];
               const isConnecting = connectingGroup === g;
               return (
@@ -1228,26 +1243,32 @@ function SenderDialog({
                   {/* Group header */}
                   <div className="flex items-center justify-between px-4 py-2 bg-white border-b border-slate-100">
                     <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700">
-                      <InlineEditSender
-                        value={g}
-                        onSave={(newName) => handleRenameGroup(g, newName)}
-                        className="text-xs font-bold text-slate-700"
-                      />
+                      {isUngrouped ? (
+                        <span className="text-xs font-bold text-slate-500">Ungrouped Senders</span>
+                      ) : (
+                        <InlineEditSender
+                          value={g}
+                          onSave={(newName) => handleRenameGroup(g, newName)}
+                          className="text-xs font-bold text-slate-700"
+                        />
+                      )}
                       <span className="text-[10px] font-normal text-slate-400">
                         ({groupSenders.length} sender{groupSenders.length !== 1 ? "s" : ""})
                       </span>
                     </div>
 
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => handleConnectToGroup(g)}
-                      disabled={isConnecting}
-                      className="h-7 text-[10px] gap-1 px-2 border-slate-200 hover:border-blue-300 hover:text-blue-600 cursor-pointer"
-                    >
-                      {isConnecting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
-                      {isConnecting ? "Connecting..." : "Add sender"}
-                    </Button>
+                    {!isUngrouped && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleConnectToGroup(g)}
+                        disabled={isConnecting}
+                        className="h-7 text-[10px] gap-1 px-2 border-slate-200 hover:border-blue-300 hover:text-blue-600 cursor-pointer"
+                      >
+                        {isConnecting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+                        {isConnecting ? "Connecting..." : "Add sender"}
+                      </Button>
+                    )}
                   </div>
 
                   {/* Senders under this group */}
