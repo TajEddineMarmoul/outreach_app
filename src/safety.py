@@ -157,12 +157,8 @@ def delay_elapsed(conn, config: AppConfig, now: datetime | None = None) -> bool:
 
 def attachment_check(config: AppConfig, campaign) -> SafetyResult:
     attachment_path = str(campaign["attachment_path"] or "")
-    if not attachment_path and config.campaign.attachment_enabled:
-        attachment_path = str(config.campaign.attachment_path or "")
 
     if not attachment_path.strip():
-        if config.campaign.attachment_enabled:
-            return SafetyResult(False, "Attachment is enabled but no file is selected")
         return SafetyResult(True)
 
     path = db.resolve_project_path(attachment_path)
@@ -213,11 +209,9 @@ def pre_send_checks(
         return SafetyResult(False, "Duplicate recipient email exists")
     if db.has_send_attempt(conn, int(contact["id"])):
         return SafetyResult(False, "Recipient already has a send attempt or sent log")
-    require_att = db.get_setting(conn, f"campaign_{campaign['id']}_require_attachment", "false") == "true" or getattr(config.campaign, "attachment_enabled", False)
-    if require_att:
-        attachment = attachment_check(config, campaign)
-        if not attachment.allowed:
-            return attachment
+    attachment = attachment_check(config, campaign)
+    if not attachment.allowed:
+        return attachment
     if enforce_time_window and not is_allowed_send_time(config, now=now):
         return SafetyResult(False, "Outside allowed sending window")
     if enforce_daily_cap and not has_remaining_daily_capacity(conn, config, now=now):
@@ -284,9 +278,9 @@ def next_send_time(config: AppConfig, now: datetime | None = None) -> str:
 
 
 def attachment_name(config: AppConfig, campaign) -> str:
-    if not config.campaign.attachment_enabled:
+    attachment_path = str(campaign["attachment_path"] or "")
+    if not attachment_path:
         return ""
-    attachment_path = str(campaign["attachment_path"] or config.campaign.attachment_path)
     return Path(attachment_path).name
 
 

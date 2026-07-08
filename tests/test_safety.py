@@ -21,7 +21,6 @@ def config_with_attachment(tmp_path: Path) -> tuple[AppConfig, Path]:
     config.sending.end_time = "17:00"
     config.sending.delay_minutes = 10
     config.sending.daily_cap = 10
-    config.campaign.attachment_enabled = True
     config.campaign.attachment_path = str(cv_path)
     return config, cv_path
 
@@ -156,7 +155,7 @@ def test_attachment_missing_blocks_send(tmp_path: Path) -> None:
     conn = db.init_db(tmp_path / "outreach.db")
     config = AppConfig()
     missing = tmp_path / "missing.pdf"
-    config.campaign.attachment_enabled = True
+    missing = tmp_path / "missing.pdf"
     config.campaign.attachment_path = str(missing)
     campaign = update_campaign_attachment(conn, missing)
     contact = approved_previewed_contact(conn)

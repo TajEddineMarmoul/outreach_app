@@ -14,7 +14,6 @@ sending:
   max_consecutive_errors: 3
   bounce_rate_pause_threshold: 5.0
 campaign:
-  attachment_enabled: false
   attachment_path: ''
   tracking_enabled: false
   followups_enabled: false

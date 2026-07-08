@@ -46,9 +46,6 @@ def next_approved_contact(conn, campaign_id: int | None = None):
 
 def attachment_path_for_send(config: AppConfig, campaign) -> str | None:
     path_str = str(campaign["attachment_path"] or "")
-    if not path_str and config.campaign.attachment_enabled:
-        path_str = str(config.campaign.attachment_path or "")
-        
     if not path_str:
         return None
     path = db.resolve_project_path(path_str)
