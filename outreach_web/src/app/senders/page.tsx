@@ -184,21 +184,21 @@ function GroupCard({
     <div className="border border-slate-200 rounded-2xl bg-slate-50/60 overflow-hidden">
       {/* Group header */}
       <div className="flex items-center justify-between px-5 py-3 bg-white border-b border-slate-100">
-        <div
-          role="button"
-          tabIndex={0}
-          onClick={() => setOpen(!open)}
-          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpen(!open); } }}
-          className="flex items-center gap-2 text-sm font-bold text-slate-700 hover:text-slate-900 transition-colors cursor-pointer"
-        >
-          {open ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
+        <div className="flex items-center gap-2 text-sm font-bold text-slate-700">
+          <button
+            onClick={() => setOpen(!open)}
+            className="hover:text-slate-900 transition-colors flex items-center justify-center"
+            aria-label="Toggle group"
+          >
+            {open ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
+          </button>
           {isUngrouped ? (
             <span className="text-sm font-bold text-slate-500">{groupName}</span>
           ) : (
             <InlineEdit
               value={groupName}
               onSave={(newName) => onRename(groupName, newName)}
-              className="text-sm font-bold text-slate-700"
+              className="text-sm font-bold text-slate-700 hover:text-slate-900"
             />
           )}
           <span className="text-xs font-normal text-slate-400 ml-1">

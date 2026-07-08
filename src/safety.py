@@ -159,8 +159,10 @@ def attachment_check(config: AppConfig, campaign) -> SafetyResult:
     if not config.campaign.attachment_enabled:
         return SafetyResult(True)
     attachment_path = str(campaign["attachment_path"] or config.campaign.attachment_path)
+    if not attachment_path.strip():
+        return SafetyResult(False, "Attachment is enabled but no file is selected")
     path = db.resolve_project_path(attachment_path)
-    if not path.exists():
+    if not path.is_file():
         return SafetyResult(False, f"Attachment is enabled but missing: {path}")
     if path.suffix.lower() != ".pdf":
         return SafetyResult(False, "Attachment must be a PDF file")
