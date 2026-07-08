@@ -1,0 +1,19 @@
+timezone: Europe/Paris
+sending:
+  days:
+  - monday
+  - tuesday
+  - wednesday
+  - thursday
+  - friday
+  start_time: 09:00
+  end_time: '17:00'
+  delay_minutes: 10
+  daily_cap: 10
+  max_daily_cap_allowed_without_manual_override: 50
+  max_consecutive_errors: 3
+  bounce_rate_pause_threshold: 5.0
+campaign:
+  attachment_path: ''
+  tracking_enabled: false
+  followups_enabled: false
