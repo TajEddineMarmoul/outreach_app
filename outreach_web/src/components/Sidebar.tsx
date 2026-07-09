@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { Mail, FileText, Users, BarChart2, Settings, Send, AtSign } from "lucide-react";
 import { UserButton, useUser } from "@clerk/nextjs";
 import { cn } from "@/lib/utils";
+import { isAdminUser } from "@/lib/auth";
 
 const menuItems = [
   { name: "Campaigns", href: "/campaigns", icon: Mail },
@@ -18,6 +19,7 @@ const menuItems = [
 export default function Sidebar() {
   const pathname = usePathname();
   const { user } = useUser();
+  const isAdmin = isAdminUser(user);
 
   return (
     <aside className="w-72 border-r border-slate-200 bg-slate-50/80 backdrop-blur flex flex-col h-screen sticky top-0">
@@ -57,8 +59,9 @@ export default function Sidebar() {
         <div className="flex items-center gap-3">
           <UserButton />
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-slate-900 truncate">
+            <p className="text-sm font-semibold text-slate-900 truncate flex items-center gap-1.5">
               {user?.fullName || user?.primaryEmailAddress?.emailAddress || "User"}
+              {isAdmin && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 border border-blue-200">Admin</span>}
             </p>
             <p className="text-xs text-slate-500 truncate">
               {user?.primaryEmailAddress?.emailAddress || ""}
