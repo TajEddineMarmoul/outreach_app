@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from api.deps import db, get_db, get_current_user_id, get_db_path, config_path
 from api.schemas import SettingsUpdate
 from src.models import load_config
-from src.gmail_sender import credentials_file_path, save_credentials_json
+from src.gmail_sender import credentials_file_path
 
 router = APIRouter()
 
@@ -59,9 +59,9 @@ def save_credentials(req: CredentialsContent, user_id: str = Depends(get_current
     if not isinstance(data, dict):
         raise HTTPException(status_code=400, detail="Expected a JSON object")
 
-    client_section = data.get("web")
+    client_section = data.get("web") or data.get("installed")
     if not client_section:
-        raise HTTPException(status_code=400, detail="Only Web application OAuth client JSON is supported. Create a 'Web application' client in Google Cloud Console.")
+        raise HTTPException(status_code=400, detail="OAuth JSON must contain a 'web' or 'installed' key")
 
     client_id = (client_section.get("client_id") or "").strip()
     client_secret = (client_section.get("client_secret") or "").strip()
