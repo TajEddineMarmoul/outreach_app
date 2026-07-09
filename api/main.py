@@ -14,7 +14,7 @@ app = FastAPI(title="Outreach App API", version="1.0.0")
 _default_origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-    "https://outreach-5x1gb66bd-crazytajdines-projects.vercel.app",
+    "https://outreach-web-mu.vercel.app",
 ]
 _origins = os.getenv("CORS_ORIGINS", ",".join(_default_origins)).split(",")
 
