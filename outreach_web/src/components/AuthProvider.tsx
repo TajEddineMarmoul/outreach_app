@@ -20,7 +20,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
   };
 
   return (
-    <SWRConfig value={{ fetcher }}>
+    <SWRConfig value={{ fetcher, revalidateOnFocus: false, revalidateOnReconnect: false, shouldRetryOnError: false }}>
       {children}
     </SWRConfig>
   );
