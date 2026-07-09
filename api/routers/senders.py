@@ -1,16 +1,15 @@
 from __future__ import annotations
 
-import os
+import os, re
 os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
 
 from pathlib import Path
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from api.deps import db, get_db, get_current_user_id
 from api.schemas import SenderUpdate, GroupCreate
-from src.gmail_sender import connect_and_get_profile, connect_sender_account, credentials_file_path
+from src.gmail_sender import SCOPES
 
 router = APIRouter()
 
@@ -26,25 +25,42 @@ def list_senders(conn=Depends(get_db), user_id: str = Depends(get_current_user_i
 
 @router.post("/api/senders/connect")
 def connect_sender(conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
-    if not credentials_file_path().exists():
-        raise HTTPException(status_code=400, detail="Gmail client credentials.json missing")
-    try:
-        connected = connect_sender_account(user_id, force_reauth=True)
-        sender_id = db.upsert_sender(
-            conn,
-            email=connected.email,
-            token_path=connected.token_path,
-            user_id=user_id,
-            display_name="Default sender",
-            daily_cap=10,
-            status="connected",
-        )
-        db.set_setting(conn, "sender_email", connected.email, user_id)
-        return {"id": sender_id, "email": connected.email}
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+    from src.gmail_sender import get_connected_email, sender_token_path_for_email
+
+    safe_user = re.sub(r"[^a-zA-Z0-9._-]+", "_", user_id)
+    token_dir = db.resolve_project_path(Path("tokens") / safe_user)
+    if not token_dir.exists():
+        raise HTTPException(status_code=400, detail="No Gmail tokens found. Complete the OAuth flow first (start → authorize → callback).")
+
+    # Find the most recent token file
+    token_files = sorted(token_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True)
+    token_path = next((f for f in token_files if f.name != "gmail_pending.json"), None)
+    if not token_path:
+        raise HTTPException(status_code=400, detail="No Gmail token found. Complete the OAuth flow first.")
+
+    from google.oauth2.credentials import Credentials
+    creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
+    email = get_connected_email(creds)
+
+    # Rename to the proper path
+    proper_path = sender_token_path_for_email(email, user_id)
+    if str(token_path) != str(proper_path):
+        proper_path.parent.mkdir(parents=True, exist_ok=True)
+        from shutil import move
+        move(str(token_path), str(proper_path))
+        token_path = proper_path
+
+    sender_id = db.upsert_sender(
+        conn,
+        email=email,
+        token_path=str(token_path),
+        user_id=user_id,
+        display_name="Default sender",
+        daily_cap=10,
+        status="connected",
+    )
+    db.set_setting(conn, "sender_email", email, user_id)
+    return {"id": sender_id, "email": email}
 
 @router.post("/api/senders/{sender_id}/reconnect")
 def reconnect_sender(sender_id: int, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):

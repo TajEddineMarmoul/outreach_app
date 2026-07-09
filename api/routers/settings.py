@@ -11,13 +11,18 @@ from pydantic import BaseModel
 from api.deps import db, get_db, get_current_user_id, get_db_path, config_path
 from api.schemas import SettingsUpdate
 from src.models import load_config
-from src.gmail_sender import credentials_file_path
+from src.gmail_sender import credentials_file_path, SCOPES
+from google_auth_oauthlib.flow import InstalledAppFlow
 
 router = APIRouter()
 
 
 class CredentialsContent(BaseModel):
     content: str
+
+
+class OAuthCode(BaseModel):
+    code: str
 
 @router.get("/api/settings")
 def get_settings(conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
@@ -70,4 +75,40 @@ def save_credentials(req: CredentialsContent, user_id: str = Depends(get_current
 
     path = credentials_file_path()
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    return {"status": "success", "client_type": "web"}
+    return {"status": "success", "client_type": "web" if "web" in data else "installed"}
+
+
+@router.post("/api/oauth/start")
+def start_oauth(user_id: str = Depends(get_current_user_id)):
+    path = credentials_file_path()
+    if not path.exists():
+        raise HTTPException(status_code=400, detail="Save credentials.json first")
+
+    flow = InstalledAppFlow.from_client_secrets_file(str(path), SCOPES)
+    auth_url, _ = flow.authorization_url(
+        access_type="offline",
+        include_granted_scopes="true",
+        prompt="consent",
+    )
+    return {"auth_url": auth_url}
+
+
+@router.post("/api/oauth/callback")
+def oauth_callback(req: OAuthCode, user_id: str = Depends(get_current_user_id)):
+    from src.gmail_sender import sender_token_path_for_email, get_connected_email
+
+    path = credentials_file_path()
+    if not path.exists():
+        raise HTTPException(status_code=400, detail="Save credentials.json first")
+
+    flow = InstalledAppFlow.from_client_secrets_file(str(path), SCOPES)
+    flow.fetch_token(code=req.code)
+
+    creds = flow.credentials
+    email = get_connected_email(creds)
+
+    token_path = sender_token_path_for_email(email, user_id)
+    token_path.parent.mkdir(parents=True, exist_ok=True)
+    token_path.write_text(creds.to_json(), encoding="utf-8")
+
+    return {"status": "success", "email": email}
