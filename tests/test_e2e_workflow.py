@@ -39,8 +39,7 @@ def test_full_campaign_lifecycle(tmp_path):
     res = client.post("/api/senders/connect", json={"email": "mock@sender.com"}, headers=AUTH_HEADERS)
     # Wait, the connect endpoint expects an actual OAuth flow.
     # We can mock this by directly inserting a sender into the DB.
-    db_path = db.get_db_path()
-    conn = db.init_db(db_path)
+    conn = db.init_db()
     try:
         sender_id = db.upsert_sender(conn, "mock@sender.com", "mock_token_path")
         db.set_campaign_sender(conn, campaign_id, sender_id)

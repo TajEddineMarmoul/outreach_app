@@ -18,3 +18,8 @@ httpx>=0.28
 PyJWT>=2.8.0
 
 psycopg2-binary>=2.9
+SQLAlchemy>=2.0
+alembic>=1.13
+cryptography>=42.0
+redis>=5.0
+rq>=1.16

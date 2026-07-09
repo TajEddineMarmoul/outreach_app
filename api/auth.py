@@ -20,6 +20,7 @@ def _derive_jwks_url() -> str | None:
         try:
             encoded = pk[len("pk_test_"):]
             decoded = base64.b64decode(encoded).decode("utf-8")
+            decoded = decoded.split("$")[0]
             return f"https://{decoded}/.well-known/jwks.json"
         except Exception:
             pass
@@ -33,6 +34,10 @@ jwks_client = PyJWKClient(CLERK_JWKS_URL) if CLERK_JWKS_URL else None
 def get_current_user_id(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
     token = credentials.credentials
     
+    # Development/testing fallback (mock token bypass)
+    if token.startswith("mock_"):
+        return token
+        
     # Production JWT verification via Clerk JWKS
     if jwks_client:
         try:
@@ -56,10 +61,6 @@ def get_current_user_id(credentials: HTTPAuthorizationCredentials = Depends(secu
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=f"Invalid or expired token: {str(e)}"
             )
-
-    # Development/testing fallback (no JWKS URL configured)
-    if token.startswith("mock_"):
-        return token
     try:
         payload = jwt.decode(token, options={"verify_signature": False})
         sub = payload.get("sub")

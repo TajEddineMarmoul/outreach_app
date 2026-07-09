@@ -126,6 +126,8 @@ def get_campaign_status(conn: sqlite3.Connection, campaign_id: int | None = None
 
 
 def delete_campaign(conn: sqlite3.Connection, campaign_id: int, user_id: str = "default_user") -> None:
+    conn.execute("DELETE FROM send_log WHERE campaign_id = ? AND user_id = ?", (campaign_id, user_id))
+    conn.execute("DELETE FROM settings WHERE key LIKE ? AND user_id = ?", (f"campaign_{campaign_id}_%", user_id))
     conn.execute("DELETE FROM campaigns WHERE id = ? AND user_id = ?", (campaign_id, user_id))
     conn.commit()
 

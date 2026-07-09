@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Q
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
-from api.deps import PROJECT_ROOT, db, get_db_path, config_path, get_db, get_current_user_id
+from api.deps import PROJECT_ROOT, db, config_path, get_db, get_current_user_id
 from api.schemas import (
     CampaignCreate,
     CampaignUpdate,
@@ -33,7 +33,7 @@ from src.gmail_sender import gmail_connection_status
 from src.google_sheets import get_public_sheet_csv, get_published_csv, list_public_sheet_tabs, parse_google_sheet_url_details
 from src.importer import import_dataframe, normalize_email, detect_columns
 from src.safety import campaign_checklist
-from src.scheduler import start_background_autopilot, stop_autopilot, send_test_email, bulk_send_approved
+from src.scheduler import send_test_email, bulk_send_approved
 from src.analytics import send_log_dataframe
 
 router = APIRouter()
@@ -120,8 +120,33 @@ def get_campaign_summary(campaign_id: int, conn=Depends(get_db), user_id: str = 
     
     config = load_config(config_path())
     selected_sender = db.get_campaign_sender(conn, campaign_id, user_id)
-    sender_group = str(selected_sender["group_name"]) if (selected_sender and selected_sender["group_name"]) else None
     sender_email = str(selected_sender["email"]) if selected_sender else None
+    sender_group_id = None
+    sender_group_capacity = None
+    try:
+        from sqlalchemy import select
+        from sqlalchemy.exc import SQLAlchemyError
+        from src.platform.db import SessionLocal
+        from src.platform.models import Campaign as PlatformCampaign
+        from src.platform.services import require_group, serialize_group
+
+        platform_session = SessionLocal()
+        try:
+            platform_campaign = platform_session.scalar(
+                select(PlatformCampaign).where(PlatformCampaign.id == campaign_id, PlatformCampaign.user_id == user_id)
+            )
+            if platform_campaign and platform_campaign.selected_sender_group_id:
+                group = require_group(platform_session, user_id, platform_campaign.selected_sender_group_id)
+                group_payload = serialize_group(platform_session, group)
+                sender_group_id = group.id
+                sender_group = group.name
+                sender_group_capacity = group_payload
+                connected = [sender for sender in group.senders if sender.status == "connected"]
+                sender_email = connected[0].email if connected else None
+        finally:
+            platform_session.close()
+    except Exception:
+        pass
     
     status = str(campaign["status"])
     recipient_count = db.campaign_contact_count(conn, campaign_id)
@@ -147,7 +172,9 @@ def get_campaign_summary(campaign_id: int, conn=Depends(get_db), user_id: str = 
     sheet_synced = (sheet_contacts["cnt"] or 0) > 0
 
     return {
-        "sender": sender_group,
+        "sender": sender_email,
+        "sender_group_id": sender_group_id,
+        "sender_group_capacity": sender_group_capacity,
         "sender_email": sender_email,
         "recipients": recipient_count,
         "mode": status,
@@ -256,6 +283,21 @@ def patch_campaign_sender(campaign_id: int, req: SenderSelect, conn=Depends(get_
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
     db.set_campaign_sender(conn, campaign_id, req.sender_id, user_id)
+    return {"status": "success"}
+
+
+@router.get("/api/senders")
+def list_senders(conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    senders = db.list_senders(conn, user_id)
+    return [dict(s) for s in senders]
+
+
+@router.patch("/api/senders/{sender_id}/default")
+def set_default_sender(sender_id: int, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    sender = db.get_sender(conn, sender_id, user_id)
+    if not sender:
+        raise HTTPException(status_code=404, detail="Sender not found")
+    db.set_default_sender(conn, sender_id, user_id)
     return {"status": "success"}
 
 
@@ -472,7 +514,7 @@ def post_generate_previews(campaign_id: int, limit: Optional[int] = None, conn=D
     first_body = None
     first_subject = None
     for c in contacts:
-        preview = generate_preview(conn, int(c["id"]), campaign_id=campaign_id, mark=False)
+        preview = generate_preview(conn, int(c["id"]), user_id, campaign_id=campaign_id, mark=False)
         if count == 0:
             first_body = preview.body
             first_subject = preview.subject
@@ -501,13 +543,13 @@ class ApproveRecipientsRequest(BaseModel):
 def post_approve_recipients(campaign_id: int, req: ApproveRecipientsRequest, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
     from src.preview import approve_contacts
     if req.contact_ids is not None:
-        approved = approve_contacts(conn, req.contact_ids)
+        approved = approve_contacts(conn, req.contact_ids, user_id)
     else:
         pending = [
             row["id"] for row in db.campaign_contacts(conn, campaign_id, user_id, statuses=("pending",))
             if row["preview_generated_at"] is not None
         ]
-        approved = approve_contacts(conn, pending)
+        approved = approve_contacts(conn, pending, user_id)
     return {"approved": approved}
 
 class RejectRecipientsRequest(BaseModel):
@@ -516,7 +558,7 @@ class RejectRecipientsRequest(BaseModel):
 @router.post("/api/campaigns/{campaign_id}/recipients/reject")
 def post_reject_recipients(campaign_id: int, req: RejectRecipientsRequest, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
     from src.preview import reject_contacts
-    rejected = reject_contacts(conn, req.contact_ids)
+    rejected = reject_contacts(conn, req.contact_ids, user_id)
     return {"rejected": rejected}
 
 @router.post("/api/campaigns/{campaign_id}/test-send")
@@ -543,7 +585,58 @@ def post_test_send(campaign_id: int, req: TestSendRequest, conn=Depends(get_db),
             raise HTTPException(status_code=400, detail="Preview contact is not attached to this campaign")
 
     config = load_config(config_path())
-    success, msg = send_test_email(conn, contact_id, req.recipient_email, config, campaign_id=campaign_id)
+    success, msg = send_test_email(conn, contact_id, req.recipient_email, config, campaign_id=campaign_id, user_id=user_id)
+    if msg == "No Gmail sender selected":
+        try:
+            from datetime import datetime, timezone
+            from sqlalchemy import select
+            from src.platform.db import SessionLocal
+            from src.platform.models import Sender as PlatformSender, SendLog as PlatformSendLog
+            from src.platform.gmail import gmail_service_for_sender
+            from src.gmail_sender import send_email as gmail_send
+            from src.preview import generate_preview
+
+            platform_session = SessionLocal()
+            try:
+                platform_sender = platform_session.scalar(
+                    select(PlatformSender).where(
+                        PlatformSender.user_id == user_id,
+                        PlatformSender.status == "connected",
+                    ).order_by(PlatformSender.is_default.desc(), PlatformSender.id).limit(1)
+                )
+                if not platform_sender:
+                    raise HTTPException(status_code=400, detail="No connected Gmail sender found")
+                rendered = generate_preview(conn, contact_id, user_id, campaign_id=campaign_id, mark=False)
+                result = gmail_send(
+                    sender=platform_sender.email,
+                    recipient=req.recipient_email,
+                    subject=rendered.subject,
+                    body=rendered.body,
+                    service=gmail_service_for_sender(platform_session, platform_sender),
+                )
+                log = PlatformSendLog(
+                    user_id=user_id,
+                    campaign_id=campaign_id,
+                    sender_id=platform_sender.id,
+                    recipient_email=req.recipient_email,
+                    sender_email=platform_sender.email,
+                    subject=rendered.subject,
+                    body_snapshot=rendered.body,
+                    status="test_sent",
+                    sent_at=datetime.now(timezone.utc),
+                    gmail_message_id=result.message_id,
+                    gmail_thread_id=result.thread_id,
+                )
+                platform_session.add(log)
+                platform_session.commit()
+            finally:
+                platform_session.close()
+            db.set_setting(conn, f"campaign_{campaign_id}_test_sent", True, user_id)
+            return {"status": "success", "detail": "Test email sent"}
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
     if not success:
         raise HTTPException(status_code=400, detail=msg)
     
@@ -608,9 +701,9 @@ def post_send_now(campaign_id: int, req: BulkSendRequest = BulkSendRequest(), co
     db.set_campaign_status(conn, "sending", campaign_id, user_id)
 
     def _run():
-        c = db.init_db(get_db_path())
+        c = db.init_db()
         cfg = load_config(config_path())
-        bulk_send_approved(c, campaign_id, cfg, req.delay_minutes)
+        bulk_send_approved(c, campaign_id, cfg, req.delay_minutes, user_id=user_id)
         c.close()
 
     threading.Thread(target=_run, daemon=True).start()
@@ -647,13 +740,13 @@ def post_schedule(campaign_id: int, req: BulkScheduleRequest = BulkScheduleReque
             delay = (scheduled_dt_aware - now).total_seconds()
             if delay > 0:
                 time.sleep(delay)
-        c = db.init_db(get_db_path())
+        c = db.init_db()
         camp = c.execute("SELECT status FROM campaigns WHERE id = ?", (campaign_id,)).fetchone()
         if camp and camp["status"] not in ("scheduled",):
             c.close()
             return
         cfg = load_config(config_path())
-        bulk_send_approved(c, campaign_id, cfg, req.delay_minutes)
+        bulk_send_approved(c, campaign_id, cfg, req.delay_minutes, user_id=user_id)
         c.close()
 
     threading.Thread(target=_run, daemon=True).start()
@@ -682,7 +775,6 @@ def post_autopilot_start(campaign_id: int, req: AutopilotStartRequest = Autopilo
     else:
         db.set_campaign_status(conn, "active", campaign_id, user_id)
 
-    start_background_autopilot(get_db_path(), config_path())
     return {"status": "success", "mode": "autopilot"}
 
 @router.post("/api/campaigns/{campaign_id}/pause")
@@ -746,4 +838,3 @@ def get_public_google_sheet_tabs(url: str = Query(...)):
 def get_global_logs(conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
     log = send_log_dataframe(conn, user_id=user_id)
     return log.fillna('').to_dict(orient="records")
-

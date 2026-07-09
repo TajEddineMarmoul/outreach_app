@@ -128,3 +128,13 @@
     @apply font-sans;
   }
 }
+
+.ProseMirror .template-variable-invalid {
+  color: #dc2626;
+  background: #fef2f2;
+  border-radius: 3px;
+  text-decoration-line: underline;
+  text-decoration-style: wavy;
+  text-decoration-color: #dc2626;
+  text-underline-offset: 3px;
+}

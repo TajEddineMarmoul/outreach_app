@@ -37,10 +37,10 @@ def upsert_sender(
     else:
         cursor = conn.execute(
             """
-            INSERT INTO senders(email, display_name, token_path, connected_at, status, daily_cap, is_default, group_name, user_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO senders(email, display_name, token_path, connected_at, status, daily_cap, is_default, user_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (normalized, display_name, token_path, now, status, daily_cap, 1 if is_default else 0, "Default Group", user_id),
+            (normalized, display_name, token_path, now, status, daily_cap, 1 if is_default else 0, user_id),
         )
         sender_id = int(cursor.lastrowid)
     conn.commit()
@@ -101,14 +101,10 @@ def update_sender(
     user_id: str = "default_user",
     display_name: str = "",
     daily_cap: int = 10,
-    group_name: str = "",
 ) -> None:
-    group_name = group_name.strip() if group_name else ""
-    if not group_name:
-        group_name = "Default Group"
     conn.execute(
-        "UPDATE senders SET display_name = ?, daily_cap = ?, group_name = ? WHERE id = ? AND user_id = ?",
-        (display_name, daily_cap, group_name, sender_id, user_id),
+        "UPDATE senders SET display_name = ?, daily_cap = ? WHERE id = ? AND user_id = ?",
+        (display_name, daily_cap, sender_id, user_id),
     )
     conn.commit()
 
@@ -130,7 +126,7 @@ def get_campaign_sender(conn: sqlite3.Connection, campaign_id: int | None, user_
         sender = get_sender(conn, int(campaign["selected_sender_id"]), user_id)
         if sender and sender["status"] != "removed":
             return sender
-    return None
+    return get_default_sender(conn, user_id)
 
 
 def update_sender_daily_cap(conn: sqlite3.Connection, sender_id: int, daily_cap: int, user_id: str = "default_user") -> None:

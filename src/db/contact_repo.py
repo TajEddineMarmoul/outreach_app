@@ -87,16 +87,30 @@ def add_campaign_recipients(
     contact_ids: Iterable[int],
 ) -> int:
     now = utcnow_iso()
-    before = conn.total_changes
-    conn.executemany(
-        """
-        INSERT OR IGNORE INTO campaign_recipients(campaign_id, contact_id, created_at)
-        VALUES (?, ?, ?)
-        """,
-        [(campaign_id, int(contact_id), now) for contact_id in contact_ids],
-    )
+    attached = 0
+    for contact_id in contact_ids:
+        normalized_contact_id = int(contact_id)
+        existing = conn.execute(
+            """
+            SELECT 1
+            FROM campaign_recipients
+            WHERE campaign_id = ? AND contact_id = ?
+            LIMIT 1
+            """,
+            (campaign_id, normalized_contact_id),
+        ).fetchone()
+        if existing:
+            continue
+        conn.execute(
+            """
+            INSERT INTO campaign_recipients(campaign_id, contact_id, created_at)
+            VALUES (?, ?, ?)
+            """,
+            (campaign_id, normalized_contact_id, now),
+        )
+        attached += 1
     conn.commit()
-    return conn.total_changes - before
+    return attached
 
 
 def add_campaign_recipients_by_emails(
@@ -183,12 +197,12 @@ def set_contacts_status(conn: sqlite3.Connection, contact_ids: Iterable[int], st
     if not ids:
         return 0
     placeholders = ",".join("?" for _ in ids)
-    conn.execute(
+    cursor = conn.execute(
         f"UPDATE contacts SET status = ?, updated_at = ? WHERE id IN ({placeholders}) AND user_id = ?",
         [status, utcnow_iso(), *ids, user_id],
     )
     conn.commit()
-    return conn.total_changes
+    return max(cursor.rowcount, 0)
 
 
 def mark_preview_generated(

@@ -14,6 +14,7 @@ function OAuthCallbackInner() {
 
   useEffect(() => {
     const code = searchParams.get("code");
+    const state = searchParams.get("state");
     const error = searchParams.get("error");
 
     if (error) {
@@ -31,7 +32,7 @@ function OAuthCallbackInner() {
     authFetch(`${API_URL}/api/oauth/callback`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code }),
+      body: JSON.stringify({ code, state }),
     })
       .then(async (res) => {
         if (!res.ok) throw new Error((await res.json()).detail || "Failed");

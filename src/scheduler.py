@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import time
 from datetime import datetime
 from pathlib import Path
@@ -64,8 +65,11 @@ def send_contact(
     enforce_time_window: bool = True,
     enforce_daily_cap: bool = True,
     service=None,
+    user_id: str = "default_user",
+    sender: sqlite3.Row | None = None,
 ) -> tuple[bool, str]:
-    sender = db.get_campaign_sender(conn, campaign_id) if campaign_id else db.get_default_sender(conn)
+    if sender is None:
+        sender = db.get_campaign_sender(conn, campaign_id) if campaign_id else db.get_default_sender(conn)
     if sender is None and not sender_email:
         return False, "No Gmail sender selected"
     final_sender_email = str(sender["email"]) if sender else sender_email
@@ -84,6 +88,7 @@ def send_contact(
         contact,
         campaign,
         config,
+        user_id,
         now=now,
         enforce_time_window=enforce_time_window,
         enforce_daily_cap=enforce_daily_cap,
@@ -135,7 +140,7 @@ def send_contact(
         error = str(exc)
         db.update_send_log(conn, log_id, "failed", error_message=error)
         db.set_contact_status(conn, int(contact["id"]), ContactStatus.FAILED.value)
-        pause = should_pause_campaign(conn, config, last_error=error)
+        pause = should_pause_campaign(conn, config, user_id, last_error=error)
         if pause.allowed:
             db.set_campaign_status(conn, "paused", int(campaign["id"]))
             return False, f"{error}. Campaign paused: {pause.reason}"
@@ -149,6 +154,7 @@ def send_next_approved(
     campaign_id: int | None = None,
     now: datetime | None = None,
     service=None,
+    user_id: str = "default_user",
 ) -> tuple[bool, str]:
     contact = next_approved_contact(conn, campaign_id=campaign_id)
     if not contact:
@@ -161,6 +167,7 @@ def send_next_approved(
         campaign_id=campaign_id,
         now=now,
         service=service,
+        user_id=user_id,
     )
 
 
@@ -172,6 +179,7 @@ def send_test_email(
     sender_email: str = "",
     campaign_id: int | None = None,
     service=None,
+    user_id: str = "default_user",
 ) -> tuple[bool, str]:
     from .preview import generate_preview
 
@@ -193,7 +201,7 @@ def send_test_email(
     attachment = pre_send_attachment_only(config, campaign)
     if not attachment[0]:
         return attachment
-    rendered = generate_preview(conn, contact_id, campaign_id=campaign_id, mark=False)
+    rendered = generate_preview(conn, contact_id, user_id, campaign_id=campaign_id, mark=False)
     attachment_path = attachment_path_for_send(config, campaign)
     log_id = db.create_send_attempt(
         conn,
@@ -246,33 +254,33 @@ def bulk_send_approved(
     config: AppConfig,
     delay_minutes: int,
     service=None,
+    user_id: str = "default_user",
 ) -> tuple[int, str]:
-    sender = db.get_campaign_sender(conn, campaign_id)
-    if not sender:
-        return 0, "No sender selected"
-    sender_token_path = str(sender["token_path"])
-    if service is None:
-        from .gmail_sender import get_gmail_service
-        gmail_status = gmail_connection_status(token_path=sender_token_path)
-        if not gmail_status.connected:
-            return 0, f"Gmail not connected: {gmail_status.status}"
-        service = get_gmail_service(token_path=sender_token_path)
+    senders = db.list_senders(conn, user_id)
+    senders = [s for s in senders if s["status"] == "connected"]
+    if not senders:
+        return 0, "No connected senders available"
     campaign = db.get_campaign(conn, campaign_id)
     if not campaign:
         return 0, "Campaign not found"
 
     sent = 0
     failed = 0
+    sender_index = 0
     while True:
         contact = next_approved_contact(conn, campaign_id=campaign_id)
         if not contact:
             break
+        current_sender = senders[sender_index % len(senders)]
+        sender_index += 1
         ok, msg = send_contact(
             conn, int(contact["id"]), config,
             campaign_id=campaign_id,
             enforce_time_window=False,
             enforce_daily_cap=False,
-            service=service,
+            service=None,
+            user_id=user_id,
+            sender=current_sender,
         )
         if ok:
             sent += 1
@@ -303,7 +311,7 @@ def stop_autopilot(conn) -> None:
     db.set_campaign_status(conn, "ended")
 
 
-def autopilot_tick(db_path: str | Path, config_path: str | Path) -> tuple[bool, str]:
+def autopilot_tick(db_path: str | Path, config_path: str | Path, user_id: str = "default_user") -> tuple[bool, str]:
     config = load_config(config_path)
     conn = db.init_db(db_path)
     try:
@@ -318,6 +326,7 @@ def autopilot_tick(db_path: str | Path, config_path: str | Path) -> tuple[bool, 
             conn,
             config,
             campaign_id=int(campaign["id"]),
+            user_id=user_id,
         )
         return sent, message
     finally:

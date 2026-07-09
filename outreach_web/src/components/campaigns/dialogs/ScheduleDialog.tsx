@@ -51,18 +51,21 @@ export default function ScheduleDialog({
       if (mode === "schedule" && scheduledAt) {
         body.scheduled_at = new Date(scheduledAt).toISOString();
       }
+      console.log(`[Send] POST /api/campaigns/${campaignId}/${endpoint}`, body);
       const res = await authFetch(`${API_URL}/api/campaigns/${campaignId}/${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
+      const data = await res.json().catch(() => ({}));
+      console.log(`[Send] Response ${res.status}:`, data);
       if (!res.ok) {
-        const data = await res.json();
         throw new Error(data.detail?.msg || data.detail || "Failed");
       }
       mutateAll();
       onClose();
     } catch (err: any) {
+      console.error("[Send] Error:", err.message);
       alert(err.message);
     } finally {
       setSendingAction(false);

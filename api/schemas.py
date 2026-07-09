@@ -75,7 +75,6 @@ class SaveCredentialsRequest(BaseModel):
 class SenderUpdate(BaseModel):
     display_name: str = ""
     daily_cap: int = 10
-    group_name: str = ""
 
 
 class TemplateCreate(BaseModel):

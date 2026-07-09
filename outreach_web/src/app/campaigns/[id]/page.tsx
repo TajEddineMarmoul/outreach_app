@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import useSWR, { mutate } from "swr";
@@ -44,13 +44,27 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import RichTextEditor from "@/components/RichTextEditor";
+import type { Editor } from "@tiptap/react";
 import ScheduleDialog from "@/components/campaigns/dialogs/ScheduleDialog";
 import SenderSelectionDialog from "@/components/campaigns/dialogs/SenderSelectionDialog";
 import PreviewDialog from "@/components/campaigns/dialogs/PreviewDialog";
 import AttachmentDialog from "@/components/campaigns/dialogs/AttachmentDialog";
+import LogsSection from "@/components/campaigns/LogsSection";
+import ProgressSection from "@/components/campaigns/ProgressSection";
 import { useApiClient } from "@/lib/api";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+const TEMPLATE_VARIABLE_PATTERN = /\{\{\s*([^{}]+?)\s*\}\}/g;
+
+function normalizeTemplateVariable(variable: string): string {
+  return variable.trim().replace(/\s+/g, "_");
+}
+
+function extractTemplateVariables(template: string): string[] {
+  return [...template.matchAll(TEMPLATE_VARIABLE_PATTERN)].map((match) =>
+    normalizeTemplateVariable(match[1])
+  );
+}
 
 export default function CampaignEditorPage() {
   const params = useParams();
@@ -73,12 +87,18 @@ export default function CampaignEditorPage() {
     campaignId ? `${API_URL}/api/campaigns/${campaignId}/validation-summary` : null
   );
 
-  const { data: senders, mutate: mutateSenders } = useSWR(`${API_URL}/api/senders`);
+  const { data: senderGroups, mutate: mutateSenderGroups } = useSWR(`${API_URL}/api/sender-groups`);
 
-  const senderCountInGroup = useMemo(() => {
-    if (!summary?.sender || !senders) return 0;
-    return senders.filter((s: any) => s.group_name?.trim() === summary.sender.trim()).length;
-  }, [summary?.sender, senders]);
+  const selectedSenderGroup = useMemo(() => {
+    if (!senderGroups || !summary) return null;
+    return (
+      senderGroups.find((group: any) => group.id === summary.sender_group_id) ||
+      senderGroups.find((group: any) => group.name === summary.sender) ||
+      null
+    );
+  }, [senderGroups, summary]);
+
+  const senderCountInGroup = selectedSenderGroup?.connected_sender_count ?? 0;
 
   // ----------------------------------------------------
   // UI & Form States
@@ -94,14 +114,19 @@ export default function CampaignEditorPage() {
   const [showAllWarnings, setShowAllWarnings] = useState(false);
 
   const activeVariables = useMemo(() => {
-    if (!valSummary?.all_columns?.length) return [];
-    const columns = [...valSummary.all_columns];
-    const hasKeywords = columns.some(col => col.startsWith("keyword_"));
-    if (hasKeywords && !columns.includes("keyword_sentence")) {
-      columns.push("keyword_sentence");
-    }
-    return columns.sort();
+    const columns: unknown[] = Array.isArray(valSummary?.all_columns) ? valSummary.all_columns : [];
+    return [...new Set(columns.map((column) => normalizeTemplateVariable(String(column))))].sort();
   }, [valSummary]);
+
+  const unknownVariables = useMemo(() => {
+    const validVariables = new Set(activeVariables);
+    const usedVariables = [
+      ...extractTemplateVariables(subject),
+      ...extractTemplateVariables(body),
+    ];
+
+    return [...new Set(usedVariables.filter((variable) => !validVariables.has(variable)))].sort();
+  }, [activeVariables, body, subject]);
 
   useEffect(() => {
     if (valSummary) {
@@ -136,12 +161,19 @@ export default function CampaignEditorPage() {
   // ----------------------------------------------------
   // TipTap Editor Ref for Variable Insertion
   // ----------------------------------------------------
-  const tiptapEditorRef = useRef<any>(null);
+  const tiptapEditorRef = useRef<Editor | null>(null);
+
+  const handleEditorReady = useCallback((editor: Editor | null) => {
+    tiptapEditorRef.current = editor;
+  }, []);
 
   const insertVariable = (variable: string) => {
     const editor = tiptapEditorRef.current;
-    if (!editor) return;
     const placeholder = `{{ ${variable} }}`;
+    if (!editor || editor.isDestroyed || typeof editor.chain !== "function") {
+      setBody((current) => `${current || ""}${placeholder}`);
+      return;
+    }
     editor.chain().focus().insertContent(placeholder).run();
   };
 
@@ -264,43 +296,21 @@ export default function CampaignEditorPage() {
     }
   };
 
-  const [connectingSender, setConnectingSender] = useState(false);
-
-  const handleSelectSender = async (senderId: number) => {
+  const handleSelectSenderGroup = async (senderGroupId: number) => {
     try {
-      const res = await authFetch(`${API_URL}/api/campaigns/${campaignId}/sender`, {
+      const res = await authFetch(`${API_URL}/api/campaigns/${campaignId}/sender-group`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sender_id: senderId }),
+        body: JSON.stringify({ sender_group_id: senderGroupId }),
       });
-      if (!res.ok) throw new Error("Failed to update sender");
-      mutateSummary();
-    } catch (err: any) {
-      alert(err.message);
-    }
-  };
-
-  const handleConnectSender = async () => {
-    setConnectingSender(true);
-    try {
-      const res = await authFetch(`${API_URL}/api/senders/connect`, { method: "POST" });
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.detail || "Failed to connect new sender");
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.detail || "Failed to update sender group");
       }
-      const data = await res.json();
-      await authFetch(`${API_URL}/api/campaigns/${campaignId}/sender`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sender_id: data.id }),
-      });
-      alert(`Connected sender successfully: ${data.email}`);
-      mutateSenders();
       mutateSummary();
+      mutateSenderGroups();
     } catch (err: any) {
       alert(err.message);
-    } finally {
-      setConnectingSender(false);
     }
   };
 
@@ -447,167 +457,179 @@ export default function CampaignEditorPage() {
         </div>
       </header>
 
-      {/* Validation Warnings Banner Removed */}
+      <div className="flex-1 flex overflow-hidden p-8 max-w-6xl mx-auto w-full">
+        <Tabs defaultValue="composer" className="flex-1 flex flex-col">
+          <TabsList className="w-fit">
+            <TabsTrigger value="composer" className="gap-1.5">
+              <Mail className="w-4 h-4" />
+              Composer
+            </TabsTrigger>
+            <TabsTrigger value="progress" className="gap-1.5">
+              <Send className="w-4 h-4" />
+              Progress
+            </TabsTrigger>
+            <TabsTrigger value="logs" className="gap-1.5">
+              <ClipboardList className="w-4 h-4" />
+              Logs
+            </TabsTrigger>
+          </TabsList>
 
-      {/* ----------------------------------------------------
-          2. Main Layout (Composer + Settings)
-          ---------------------------------------------------- */}
-      <div className="flex-1 flex overflow-hidden p-8 gap-8 max-w-6xl mx-auto w-full">
-        {/* Left Side: Composer Card */}
-        <div className="flex-1 flex flex-col gap-6 overflow-y-auto pr-2">
-          <div className="space-y-4">
-            {/* 1. Header Metadata fields Card */}
-            <div className="bg-slate-50/70 border border-slate-200/80 rounded-t-xl p-5 space-y-4">
-              {/* From Row */}
-              <div className="flex items-start gap-4">
-                <label className="w-16 text-sm font-semibold text-slate-500 mt-1.5">From</label>
-                <div className="flex-1 flex items-center justify-between">
-                  {summary?.sender ? (
-                    <Button
-                      variant="ghost"
-                      className="p-0 h-auto text-blue-600 hover:text-blue-800 hover:bg-transparent text-sm font-medium gap-1 flex items-center justify-start"
-                      onClick={() => setSenderModalOpen(true)}
-                    >
-                      <span>{summary.sender}</span>
-                      <span className="text-xs font-normal text-slate-400 ml-1">
-                        ({senderCountInGroup} sender{senderCountInGroup !== 1 ? "s" : ""})
-                      </span>
-                      <span className="text-slate-400 font-normal">▾</span>
-                    </Button>
-                  ) : (
-                    <Button
-                      variant="ghost"
-                      className="p-0 h-auto text-blue-600 hover:text-blue-800 hover:bg-transparent text-sm font-semibold gap-1 flex items-center justify-start"
-                      onClick={() => setSenderModalOpen(true)}
-                    >
-                      No sender connected. Click to Connect ▾
-                    </Button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={handleSave}
-                    disabled={isSaving}
-                    className="p-1.5 hover:bg-slate-200/60 rounded text-slate-400 hover:text-slate-600 transition-colors cursor-pointer shrink-0"
-                    title="Save draft"
-                  >
-                    <Save className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-
-              {/* To Row */}
-              <div className="flex items-center gap-4">
-                <label className="w-16 text-sm font-semibold text-slate-500">To</label>
-                <div className="flex-1">
-                  <Button
-                    className="bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 rounded-full py-0.5 px-3.5 h-7 text-xs font-semibold"
-                    onClick={() => setRecipientsModalOpen(true)}
-                  >
-                    {summary?.recipients ? `${summary.recipients} recipients` : "Select recipients"}
-                  </Button>
-                </div>
-              </div>
-
-              {/* Subject Row */}
-              <div className="flex items-center gap-4 border-t border-slate-100 pt-3">
-                <label className="w-16 text-sm font-semibold text-slate-500">Subject</label>
-                <input
-                  type="text"
-                  value={subject}
-                  onChange={(e) => setSubject(e.target.value)}
-                  placeholder="Enter email subject template"
-                  className="flex-1 text-slate-900 border-none outline-none focus:ring-0 placeholder-slate-400 py-1 bg-transparent text-sm font-medium"
-                />
-              </div>
-            </div>
-
-            {/* 2. Editor Body Card with Rich Text Editor */}
-            <div className="bg-white border border-t-0 border-slate-200 rounded-b-xl overflow-hidden focus-within:border-blue-400 focus-within:ring-2 focus-within:ring-blue-100/50 transition-all flex flex-col">
-              {/* Actions Toolbar */}
-              <div className="flex items-center justify-between px-4 py-2 border-b border-slate-100 bg-slate-50/50 select-none">
-                <div className="flex items-center gap-2">
-                  {/* Add Attachment Button */}
-                  <button
-                    type="button"
-                    className="p-1.5 hover:bg-slate-200/60 rounded text-slate-500 hover:text-slate-800 transition-colors flex items-center gap-1"
-                    onClick={() => setAttachmentModalOpen(true)}
-                    title="Add attachment"
-                  >
-                    <Paperclip className="w-4 h-4" />
-                    <span className="text-xs font-semibold">Attach</span>
-                  </button>
-
-                  {/* Use Template Button */}
-                  <button
-                    type="button"
-                    className="p-1.5 hover:bg-slate-200/60 rounded text-slate-500 hover:text-slate-800 transition-colors flex items-center gap-1"
-                    onClick={() => setTemplateModalOpen(true)}
-                    title="Select template"
-                  >
-                    <ClipboardList className="w-4 h-4" />
-                    <span className="text-xs font-semibold">Template</span>
-                  </button>
-                </div>
-
-                {/* Variable Insertion dropdown */}
-                <Popover>
-                  <PopoverTrigger className="p-1.5 hover:bg-slate-200/60 rounded text-slate-600 hover:text-slate-900 transition-colors flex items-center gap-1 cursor-pointer h-7" title="Insert variables">
-                    <Braces className="w-4 h-4" />
-                    <span className="text-[10px] font-bold uppercase tracking-wider">Variables</span>
-                  </PopoverTrigger>
-                  <PopoverContent align="end" className="w-48 max-h-64 overflow-y-auto p-1">
-                    {activeVariables.length === 0 ? (
-                      <p className="px-3 py-2 text-xs text-slate-400">Import contacts first</p>
+          <TabsContent value="composer" className="flex-1 mt-4 overflow-y-auto">
+            <div className="space-y-4">
+              <div className="bg-slate-50/70 border border-slate-200/80 rounded-t-xl p-5 space-y-4">
+                <div className="flex items-start gap-4">
+                  <label className="w-16 text-sm font-semibold text-slate-500 mt-1.5">From</label>
+                  <div className="flex-1 flex items-center justify-between">
+                    {summary?.sender ? (
+                      <Button
+                        variant="ghost"
+                        className="p-0 h-auto text-blue-600 hover:text-blue-800 hover:bg-transparent text-sm font-medium gap-1 flex items-center justify-start"
+                        onClick={() => setSenderModalOpen(true)}
+                      >
+                        <span>{summary.sender}</span>
+                        <span className="text-xs font-normal text-slate-400 ml-1">
+                          ({senderCountInGroup} sender{senderCountInGroup !== 1 ? "s" : ""})
+                        </span>
+                        <span className="text-slate-400 font-normal">▾</span>
+                      </Button>
                     ) : (
-                      activeVariables.map((v) => (
-                        <button
-                          key={v}
-                          onClick={() => insertVariable(v)}
-                          className="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 rounded transition-colors text-slate-700 cursor-pointer"
-                        >
-                          {v}
-                        </button>
-                      ))
+                      <Button
+                        variant="ghost"
+                        className="p-0 h-auto text-blue-600 hover:text-blue-800 hover:bg-transparent text-sm font-semibold gap-1 flex items-center justify-start"
+                        onClick={() => setSenderModalOpen(true)}
+                      >
+                        No sender connected. Click to Connect ▾
+                      </Button>
                     )}
-                  </PopoverContent>
-                </Popover>
+                    <button
+                      type="button"
+                      onClick={handleSave}
+                      disabled={isSaving}
+                      className="p-1.5 hover:bg-slate-200/60 rounded text-slate-400 hover:text-slate-600 transition-colors cursor-pointer shrink-0"
+                      title="Save draft"
+                    >
+                      <Save className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-4">
+                  <label className="w-16 text-sm font-semibold text-slate-500">To</label>
+                  <div className="flex-1">
+                    <Button
+                      className="bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 rounded-full py-0.5 px-3.5 h-7 text-xs font-semibold"
+                      onClick={() => setRecipientsModalOpen(true)}
+                    >
+                      {summary?.recipients ? `${summary.recipients} recipients` : "Select recipients"}
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-4 border-t border-slate-100 pt-3">
+                  <label className="w-16 text-sm font-semibold text-slate-500">Subject</label>
+                  <input
+                    type="text"
+                    value={subject}
+                    onChange={(e) => setSubject(e.target.value)}
+                    placeholder="Enter email subject template"
+                    className="flex-1 text-slate-900 border-none outline-none focus:ring-0 placeholder-slate-400 py-1 bg-transparent text-sm font-medium"
+                  />
+                </div>
               </div>
 
-              {/* TipTap Rich Text Editor */}
-              <RichTextEditor
-                content={body}
-                onChange={setBody}
-                placeholder="Compose your email or select a template..."
-                onEditorReady={(editor) => { tiptapEditorRef.current = editor; }}
-              />
-
-      {/* Unknown variable warnings Removed */}
-
-              {/* Bottom attachment display chip */}
-              {summary?.attachment && summary.attachment !== "none" && (
-                <div className="mx-4 mb-4 p-2 bg-slate-50 border border-slate-100 rounded-lg flex items-center justify-between max-w-xs shadow-sm">
-                  <div className="flex items-center gap-2 text-xs font-semibold text-slate-600 truncate">
-                    <Paperclip className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-                    <span className="truncate">{summary.attachment}</span>
+              <div className="bg-white border border-t-0 border-slate-200 rounded-b-xl overflow-hidden focus-within:border-blue-400 focus-within:ring-2 focus-within:ring-blue-100/50 transition-all flex flex-col">
+                <div className="flex items-center justify-between px-4 py-2 border-b border-slate-100 bg-slate-50/50 select-none">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      className="p-1.5 hover:bg-slate-200/60 rounded text-slate-500 hover:text-slate-800 transition-colors flex items-center gap-1"
+                      onClick={() => setAttachmentModalOpen(true)}
+                      title="Add attachment"
+                    >
+                      <Paperclip className="w-4 h-4" />
+                      <span className="text-xs font-semibold">Attach</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="p-1.5 hover:bg-slate-200/60 rounded text-slate-500 hover:text-slate-800 transition-colors flex items-center gap-1"
+                      onClick={() => setTemplateModalOpen(true)}
+                      title="Select template"
+                    >
+                      <ClipboardList className="w-4 h-4" />
+                      <span className="text-xs font-semibold">Template</span>
+                    </button>
                   </div>
-                  <button
-                    onClick={async () => {
-                      await authFetch(`${API_URL}/api/campaigns/${campaignId}/attachment`, { method: "DELETE" });
-                      mutateSummary();
-                    }}
-                    className="text-slate-400 hover:text-red-600 transition-colors p-1"
-                    title="Remove attachment"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
+
+                  <Popover>
+                    <PopoverTrigger className="p-1.5 hover:bg-slate-200/60 rounded text-slate-600 hover:text-slate-900 transition-colors flex items-center gap-1 cursor-pointer h-7" title="Insert variables">
+                      <Braces className="w-4 h-4" />
+                      <span className="text-[10px] font-bold uppercase tracking-wider">Variables</span>
+                    </PopoverTrigger>
+                    <PopoverContent align="end" className="w-48 max-h-64 overflow-y-auto p-1">
+                      {activeVariables.length === 0 ? (
+                        <p className="px-3 py-2 text-xs text-slate-400">Import contacts first</p>
+                      ) : (
+                        activeVariables.map((v) => (
+                          <button
+                            key={v}
+                            onClick={() => insertVariable(v)}
+                            className="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 rounded transition-colors text-slate-700 cursor-pointer"
+                          >
+                            {v}
+                          </button>
+                        ))
+                      )}
+                    </PopoverContent>
+                  </Popover>
                 </div>
-              )}
 
+                <RichTextEditor
+                  content={body}
+                  onChange={setBody}
+                  placeholder="Compose your email or select a template..."
+                  validVariables={activeVariables}
+                  onEditorReady={handleEditorReady}
+                />
+
+                {unknownVariables.length > 0 && (
+                  <div className="mx-4 mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                    Unknown variable{unknownVariables.length !== 1 ? "s" : ""}:{" "}
+                    <span className="font-semibold">
+                      {unknownVariables.map((variable) => `{{ ${variable} }}`).join(", ")}
+                    </span>
+                  </div>
+                )}
+
+                {summary?.attachment && summary.attachment !== "none" && (
+                  <div className="mx-4 mb-4 p-2 bg-slate-50 border border-slate-100 rounded-lg flex items-center justify-between max-w-xs shadow-sm">
+                    <div className="flex items-center gap-2 text-xs font-semibold text-slate-600 truncate">
+                      <Paperclip className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                      <span className="truncate">{summary.attachment}</span>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        await authFetch(`${API_URL}/api/campaigns/${campaignId}/attachment`, { method: "DELETE" });
+                        mutateSummary();
+                      }}
+                      className="text-slate-400 hover:text-red-600 transition-colors p-1"
+                      title="Remove attachment"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
+          </TabsContent>
 
-          </div>
-        </div>
+          <TabsContent value="progress" className="flex-1 mt-4">
+            <ProgressSection campaignId={campaignId as string} />
+          </TabsContent>
 
+          <TabsContent value="logs" className="flex-1 mt-4">
+            <LogsSection campaignId={campaignId as string} />
+          </TabsContent>
+        </Tabs>
       </div>
 
       {/* ----------------------------------------------------
@@ -631,10 +653,10 @@ export default function CampaignEditorPage() {
       <SenderSelectionDialog
         isOpen={senderModalOpen}
         onClose={() => setSenderModalOpen(false)}
-        senders={senders || []}
-        selectedEmail={summary?.sender_email || ""}
-        onSelect={async (senderId) => {
-          await handleSelectSender(senderId);
+        senderGroups={senderGroups || []}
+        selectedGroupId={summary?.sender_group_id || selectedSenderGroup?.id || null}
+        onSelect={async (senderGroupId) => {
+          await handleSelectSenderGroup(senderGroupId);
           setSenderModalOpen(false);
         }}
       />

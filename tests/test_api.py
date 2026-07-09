@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from fastapi.testclient import TestClient
 
-from api.main import app, get_db
+from api.main import app
 
 client = TestClient(app)
 AUTH_HEADERS = {"Authorization": "Bearer mock_test_user"}

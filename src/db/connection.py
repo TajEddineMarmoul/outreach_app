@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-import sqlite3
+import re
 from pathlib import Path
 from typing import Any
 
@@ -10,7 +10,9 @@ from psycopg2.extras import RealDictCursor
 
 
 def _convert_placeholders(sql: str) -> str:
-    return sql.replace("?", "%s")
+    sql = sql.replace("?", "%s")
+    sql = re.sub(r':([a-zA-Z_][a-zA-Z0-9_]*)', r'%(\1)s', sql)
+    return sql
 
 
 class PGRow(dict):
@@ -43,6 +45,10 @@ class PGCursor:
     @lastrowid.setter
     def lastrowid(self, value):
         self._lastrowid = value
+
+    @property
+    def rowcount(self) -> int:
+        return self._cur.rowcount
 
     def fetchall(self):
         return [PGRow(r) for r in self._cur.fetchall()]
@@ -91,15 +97,8 @@ class PGConnection:
             self.conn.close()
 
 
-def get_connection(db_path: str | Path | None = None) -> PGConnection | sqlite3.Connection:
+def get_connection() -> PGConnection:
     dsn = os.getenv("DATABASE_URL")
-    if dsn:
-        return PGConnection(dsn)
-    from src.db.core import DEFAULT_DB_PATH
-    path = db_path or os.getenv("OUTREACH_DB_PATH") or DEFAULT_DB_PATH
-    p = Path(path) if isinstance(path, str) else path
-    p.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(p), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+    if not dsn:
+        raise RuntimeError("DATABASE_URL is required")
+    return PGConnection(dsn)

@@ -16,8 +16,14 @@ def get_templates(conn=Depends(get_db), user_id: str = Depends(get_current_user_
 
 @router.post("/api/templates")
 def create_template(req: TemplateCreate, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
-    db.create_template(conn, user_id, req.title, req.subject, req.body)
-    return {"status": "success"}
+    template_id = db.create_template(conn, user_id, req.title, req.subject, req.body)
+    return {
+        "id": template_id,
+        "title": req.title,
+        "subject": req.subject,
+        "body": req.body,
+        "status": "success",
+    }
 
 @router.delete("/api/templates/{template_id}")
 def delete_template(template_id: int, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
@@ -28,4 +34,3 @@ def delete_template(template_id: int, conn=Depends(get_db), user_id: str = Depen
 # ----------------------------------------------------
 # 4. Recipients Endpoints
 # ----------------------------------------------------
-
