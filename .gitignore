@@ -12,6 +12,7 @@ sheets_token.json
 tokens/*.json
 
 data/outreach.db
+src/data/
 data/uploads/*
 !data/uploads/.gitkeep
 data/logs/*
