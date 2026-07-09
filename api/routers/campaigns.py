@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Q
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
-from api.deps import PROJECT_ROOT, db, get_db_path, config_path, get_db
+from api.deps import PROJECT_ROOT, db, get_db_path, config_path, get_db, get_current_user_id
 from api.schemas import (
     CampaignCreate,
     CampaignUpdate,
@@ -44,8 +44,8 @@ router = APIRouter()
 # ----------------------------------------------------
 
 @router.get("/api/campaigns")
-def list_campaigns(conn=Depends(get_db)):
-    campaigns = db.list_campaigns(conn)
+def list_campaigns(conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    campaigns = db.list_campaigns(conn, user_id)
     result = []
     for row in campaigns:
         d = dict(row)
@@ -58,15 +58,15 @@ def list_campaigns(conn=Depends(get_db)):
     return result
 
 @router.post("/api/campaigns")
-def create_campaign(req: CampaignCreate, conn=Depends(get_db)):
+def create_campaign(req: CampaignCreate, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
     if not req.name.strip():
         raise HTTPException(status_code=400, detail="Campaign name cannot be empty")
-    campaign_id = db.create_campaign(conn, req.name.strip())
+    campaign_id = db.create_campaign(conn, user_id, req.name.strip())
     return {"id": campaign_id, "name": req.name}
 
 @router.get("/api/campaigns/{campaign_id}")
-def get_campaign(campaign_id: int, conn=Depends(get_db)):
-    campaign = db.get_campaign(conn, campaign_id)
+def get_campaign(campaign_id: int, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    campaign = db.get_campaign(conn, campaign_id, user_id)
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
     res = dict(campaign)
@@ -76,8 +76,8 @@ def get_campaign(campaign_id: int, conn=Depends(get_db)):
     return res
 
 @router.patch("/api/campaigns/{campaign_id}")
-def update_campaign(campaign_id: int, req: CampaignUpdate, conn=Depends(get_db)):
-    campaign = db.get_campaign(conn, campaign_id)
+def update_campaign(campaign_id: int, req: CampaignUpdate, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    campaign = db.get_campaign(conn, campaign_id, user_id)
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
     
@@ -87,24 +87,24 @@ def update_campaign(campaign_id: int, req: CampaignUpdate, conn=Depends(get_db))
     fallback = req.fallback_body_template if req.fallback_body_template is not None else str(campaign["fallback_body_template"])
     attachment = req.attachment_path if req.attachment_path is not None else str(campaign["attachment_path"] or "")
 
-    db.update_campaign_name(conn, campaign_id, name)
-    db.update_campaign(conn, campaign_id, subject, body, fallback, attachment)
+    db.update_campaign_name(conn, campaign_id, user_id, name)
+    db.update_campaign(conn, campaign_id, user_id, subject, body, fallback, attachment)
     
     if req.require_attachment is not None:
-        db.set_setting(conn, f"campaign_{campaign_id}_require_attachment", "true" if req.require_attachment else "false")
+        db.set_setting(conn, f"campaign_{campaign_id}_require_attachment", "true" if req.require_attachment else "false", user_id)
     if req.tracking_enabled is not None:
-        db.set_setting(conn, f"campaign_{campaign_id}_tracking_enabled", "true" if req.tracking_enabled else "false")
+        db.set_setting(conn, f"campaign_{campaign_id}_tracking_enabled", "true" if req.tracking_enabled else "false", user_id)
     if req.unsubscribe_link is not None:
-        db.set_setting(conn, f"campaign_{campaign_id}_unsubscribe_link", "true" if req.unsubscribe_link else "false")
+        db.set_setting(conn, f"campaign_{campaign_id}_unsubscribe_link", "true" if req.unsubscribe_link else "false", user_id)
         
     return {"status": "success"}
 
 @router.delete("/api/campaigns/{campaign_id}")
-def delete_campaign(campaign_id: int, conn=Depends(get_db)):
-    campaign = db.get_campaign(conn, campaign_id)
+def delete_campaign(campaign_id: int, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    campaign = db.get_campaign(conn, campaign_id, user_id)
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
-    db.delete_campaign(conn, campaign_id)
+    db.delete_campaign(conn, campaign_id, user_id)
     return {"status": "success"}
 
 
@@ -113,13 +113,13 @@ def delete_campaign(campaign_id: int, conn=Depends(get_db)):
 # ----------------------------------------------------
 
 @router.get("/api/campaigns/{campaign_id}/summary")
-def get_campaign_summary(campaign_id: int, conn=Depends(get_db)):
-    campaign = db.get_campaign(conn, campaign_id)
+def get_campaign_summary(campaign_id: int, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    campaign = db.get_campaign(conn, campaign_id, user_id)
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
     
     config = load_config(config_path())
-    selected_sender = db.get_campaign_sender(conn, campaign_id)
+    selected_sender = db.get_campaign_sender(conn, campaign_id, user_id)
     sender_group = str(selected_sender["group_name"]) if (selected_sender and selected_sender["group_name"]) else None
     sender_email = str(selected_sender["email"]) if selected_sender else None
     
@@ -136,9 +136,9 @@ def get_campaign_summary(campaign_id: int, conn=Depends(get_db)):
         days_short = ", ".join(d[:3].title() for d in config.sending.days)
         schedule_label = f"{days_short} {config.sending.start_time}-{config.sending.end_time}"
         
-    require_attachment = db.get_setting(conn, f"campaign_{campaign_id}_require_attachment", "false") == "true"
-    tracking_enabled = db.get_setting(conn, f"campaign_{campaign_id}_tracking_enabled", "true") == "true"
-    unsubscribe_link = db.get_setting(conn, f"campaign_{campaign_id}_unsubscribe_link", "true") == "true"
+    require_attachment = db.get_setting(conn, f"campaign_{campaign_id}_require_attachment", "false", user_id) == "true"
+    tracking_enabled = db.get_setting(conn, f"campaign_{campaign_id}_tracking_enabled", "true", user_id) == "true"
+    unsubscribe_link = db.get_setting(conn, f"campaign_{campaign_id}_unsubscribe_link", "true", user_id) == "true"
 
     sheet_contacts = conn.execute(
         "SELECT COUNT(*) AS cnt FROM contacts c INNER JOIN campaign_recipients cr ON cr.contact_id = c.id WHERE cr.campaign_id = ? AND c.source_type = 'google_sheet'",
@@ -161,23 +161,24 @@ def get_campaign_summary(campaign_id: int, conn=Depends(get_db)):
     }
 
 @router.patch("/api/campaigns/{campaign_id}/composer")
-def patch_composer(campaign_id: int, req: ComposerUpdate, conn=Depends(get_db)):
-    campaign = db.get_campaign(conn, campaign_id)
+def patch_composer(campaign_id: int, req: ComposerUpdate, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    campaign = db.get_campaign(conn, campaign_id, user_id)
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
     
     db.update_campaign(
         conn,
         campaign_id,
+        user_id,
         req.subject_template,
         req.body_template,
         req.fallback_body_template,
         str(campaign["attachment_path"] or ""),
     )
-    db.clear_campaign_previews(conn, campaign_id)
-    db.set_setting(conn, f"campaign_{campaign_id}_template_saved", True)
-    db.set_setting(conn, f"campaign_{campaign_id}_test_sent", False)
-    db.set_setting(conn, f"campaign_{campaign_id}_require_attachment", "true" if req.require_attachment else "false")
+    db.clear_campaign_previews(conn, campaign_id, user_id)
+    db.set_setting(conn, f"campaign_{campaign_id}_template_saved", True, user_id)
+    db.set_setting(conn, f"campaign_{campaign_id}_test_sent", False, user_id)
+    db.set_setting(conn, f"campaign_{campaign_id}_require_attachment", "true" if req.require_attachment else "false", user_id)
     
     config = load_config(config_path())
     config.campaign.attachment_path = str(campaign["attachment_path"] or "")
@@ -186,7 +187,7 @@ def patch_composer(campaign_id: int, req: ComposerUpdate, conn=Depends(get_db)):
     return {"status": "success"}
 
 @router.patch("/api/campaigns/{campaign_id}/send-settings")
-def patch_send_settings(campaign_id: int, req: SendSettingsUpdate, conn=Depends(get_db)):
+def patch_send_settings(campaign_id: int, req: SendSettingsUpdate, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
     config = load_config(config_path())
     config.sending.days = req.days
     config.sending.start_time = req.start_time
@@ -195,15 +196,15 @@ def patch_send_settings(campaign_id: int, req: SendSettingsUpdate, conn=Depends(
     config.sending.delay_minutes = req.delay_minutes
     save_config(config, config_path())
     
-    selected_sender = db.get_campaign_sender(conn, campaign_id)
+    selected_sender = db.get_campaign_sender(conn, campaign_id, user_id)
     if selected_sender and req.sender_daily_cap is not None:
-        db.update_sender_daily_cap(conn, int(selected_sender["id"]), req.sender_daily_cap)
+        db.update_sender_daily_cap(conn, int(selected_sender["id"]), req.sender_daily_cap, user_id)
         
     return {"status": "success"}
 
 @router.post("/api/campaigns/{campaign_id}/attachment")
-async def post_attachment(campaign_id: int, file: UploadFile = File(...), conn=Depends(get_db)):
-    campaign = db.get_campaign(conn, campaign_id)
+async def post_attachment(campaign_id: int, file: UploadFile = File(...), conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    campaign = db.get_campaign(conn, campaign_id, user_id)
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
         
@@ -218,6 +219,7 @@ async def post_attachment(campaign_id: int, file: UploadFile = File(...), conn=D
     db.update_campaign(
         conn,
         campaign_id,
+        user_id,
         str(campaign["subject_template"]),
         str(campaign["body_template"]),
         str(campaign["fallback_body_template"]),
@@ -227,14 +229,15 @@ async def post_attachment(campaign_id: int, file: UploadFile = File(...), conn=D
     return {"filename": file.filename, "path": relative_path}
 
 @router.delete("/api/campaigns/{campaign_id}/attachment")
-def delete_attachment(campaign_id: int, conn=Depends(get_db)):
-    campaign = db.get_campaign(conn, campaign_id)
+def delete_attachment(campaign_id: int, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    campaign = db.get_campaign(conn, campaign_id, user_id)
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
         
     db.update_campaign(
         conn,
         campaign_id,
+        user_id,
         str(campaign["subject_template"]),
         str(campaign["body_template"]),
         str(campaign["fallback_body_template"]),
@@ -248,23 +251,24 @@ def delete_attachment(campaign_id: int, conn=Depends(get_db)):
 # ----------------------------------------------------
 
 @router.patch("/api/campaigns/{campaign_id}/sender")
-def patch_campaign_sender(campaign_id: int, req: SenderSelect, conn=Depends(get_db)):
-    campaign = db.get_campaign(conn, campaign_id)
+def patch_campaign_sender(campaign_id: int, req: SenderSelect, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    campaign = db.get_campaign(conn, campaign_id, user_id)
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
-    db.set_campaign_sender(conn, campaign_id, req.sender_id)
+    db.set_campaign_sender(conn, campaign_id, req.sender_id, user_id)
     return {"status": "success"}
 
 
 @router.get("/api/campaigns/{campaign_id}/recipients")
-def get_campaign_recipients(campaign_id: int, conn=Depends(get_db)):
-    contacts = db.campaign_contacts(conn, campaign_id)
+def get_campaign_recipients(campaign_id: int, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    contacts = db.campaign_contacts(conn, campaign_id, user_id)
     return [dict(contact) for contact in contacts]
 
-def import_and_attach_df(conn, campaign_id: int, df: pd.DataFrame, mapping: dict, source_type: str, url: str = ""):
+def import_and_attach_df(conn, campaign_id: int, df: pd.DataFrame, mapping: dict, source_type: str, url: str = "", user_id: str = "default_user"):
     result = import_dataframe(
         df,
         conn,
+        user_id=user_id,
         column_mapping=mapping,
         source_type=source_type,
         source_url=url,
@@ -274,7 +278,7 @@ def import_and_attach_df(conn, campaign_id: int, df: pd.DataFrame, mapping: dict
     emails = []
     if email_column and email_column in df.columns:
         emails = [normalize_email(val) for val in df[email_column].tolist() if normalize_email(val)]
-    attached = db.add_campaign_recipients_by_emails(conn, campaign_id, emails)
+    attached = db.add_campaign_recipients_by_emails(conn, campaign_id, emails, user_id)
     return {"imported": result.imported, "attached": attached}
 
 @router.post("/api/campaigns/{campaign_id}/recipients/csv")
@@ -282,9 +286,10 @@ async def post_recipients_csv(
     campaign_id: int,
     file: UploadFile = File(...),
     mapping_json: str = Form(...),
-    conn=Depends(get_db)
+    conn=Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
 ):
-    campaign = db.get_campaign(conn, campaign_id)
+    campaign = db.get_campaign(conn, campaign_id, user_id)
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
         
@@ -292,23 +297,23 @@ async def post_recipients_csv(
     content = await file.read()
     df = pd.read_csv(StringIO(content.decode("utf-8")))
     
-    res = import_and_attach_df(conn, campaign_id, df, mapping, "csv", file.filename)
+    res = import_and_attach_df(conn, campaign_id, df, mapping, "csv", file.filename, user_id)
     return res
 
 @router.post("/api/campaigns/{campaign_id}/recipients/paste")
-def post_recipients_paste(campaign_id: int, req: RecipientsPaste, conn=Depends(get_db)):
-    campaign = db.get_campaign(conn, campaign_id)
+def post_recipients_paste(campaign_id: int, req: RecipientsPaste, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    campaign = db.get_campaign(conn, campaign_id, user_id)
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
         
     df = pd.read_csv(StringIO(req.raw))
     mapping = detect_columns(list(df.columns))
-    res = import_and_attach_df(conn, campaign_id, df, mapping, "paste")
+    res = import_and_attach_df(conn, campaign_id, df, mapping, "paste", user_id=user_id)
     return res
 
 @router.post("/api/campaigns/{campaign_id}/recipients/google-sheet")
-def post_recipients_sheet(campaign_id: int, req: RecipientsGoogleSheet, conn=Depends(get_db)):
-    campaign = db.get_campaign(conn, campaign_id)
+def post_recipients_sheet(campaign_id: int, req: RecipientsGoogleSheet, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    campaign = db.get_campaign(conn, campaign_id, user_id)
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
         
@@ -332,12 +337,12 @@ def post_recipients_sheet(campaign_id: int, req: RecipientsGoogleSheet, conn=Dep
             sheet_name=tab_name.strip() or None,
         )
             
-    res = import_and_attach_df(conn, campaign_id, df, mapping, "google_sheet", sheet_url)
+    res = import_and_attach_df(conn, campaign_id, df, mapping, "google_sheet", sheet_url, user_id)
     return res
 
 @router.post("/api/campaigns/{campaign_id}/recipients/select-existing")
-def post_recipients_select_existing(campaign_id: int, req: RecipientsSelectExisting, conn=Depends(get_db)):
-    campaign = db.get_campaign(conn, campaign_id)
+def post_recipients_select_existing(campaign_id: int, req: RecipientsSelectExisting, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    campaign = db.get_campaign(conn, campaign_id, user_id)
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
     
@@ -359,12 +364,12 @@ def post_recipients_select_existing(campaign_id: int, req: RecipientsSelectExist
 
 
 @router.get("/api/campaigns/{campaign_id}/validation-summary")
-def get_campaign_validation_summary(campaign_id: int, conn=Depends(get_db)):
-    campaign = db.get_campaign(conn, campaign_id)
+def get_campaign_validation_summary(campaign_id: int, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    campaign = db.get_campaign(conn, campaign_id, user_id)
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
         
-    contacts = db.campaign_contacts(conn, campaign_id)
+    contacts = db.campaign_contacts(conn, campaign_id, user_id)
     total_contacts = len(contacts)
     
     if total_contacts == 0:
@@ -437,14 +442,14 @@ def get_campaign_validation_summary(campaign_id: int, conn=Depends(get_db)):
 # ----------------------------------------------------
 
 @router.get("/api/campaigns/{campaign_id}/preview")
-def get_campaign_preview(campaign_id: int, limit: int = 1000, conn=Depends(get_db)):
-    campaign = db.get_campaign(conn, campaign_id)
+def get_campaign_preview(campaign_id: int, limit: int = 1000, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    campaign = db.get_campaign(conn, campaign_id, user_id)
     att_name = ""
     if campaign and campaign["attachment_path"]:
         from pathlib import Path
         att_name = Path(str(campaign["attachment_path"])).name
 
-    contacts = db.campaign_contacts(conn, campaign_id, limit=limit)
+    contacts = db.campaign_contacts(conn, campaign_id, user_id, limit=limit)
     res = []
     for c in contacts:
         res.append({
@@ -459,9 +464,9 @@ def get_campaign_preview(campaign_id: int, limit: int = 1000, conn=Depends(get_d
     return res
 
 @router.post("/api/campaigns/{campaign_id}/preview/generate")
-def post_generate_previews(campaign_id: int, limit: Optional[int] = None, conn=Depends(get_db)):
+def post_generate_previews(campaign_id: int, limit: Optional[int] = None, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
     from src.preview import generate_preview
-    contacts = db.campaign_contacts(conn, campaign_id, limit=limit)
+    contacts = db.campaign_contacts(conn, campaign_id, user_id, limit=limit)
     count = 0
     now = db.utcnow_iso()
     first_body = None
@@ -493,13 +498,13 @@ class ApproveRecipientsRequest(BaseModel):
     contact_ids: Optional[list[int]] = None
 
 @router.post("/api/campaigns/{campaign_id}/recipients/approve")
-def post_approve_recipients(campaign_id: int, req: ApproveRecipientsRequest, conn=Depends(get_db)):
+def post_approve_recipients(campaign_id: int, req: ApproveRecipientsRequest, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
     from src.preview import approve_contacts
     if req.contact_ids is not None:
         approved = approve_contacts(conn, req.contact_ids)
     else:
         pending = [
-            row["id"] for row in db.campaign_contacts(conn, campaign_id, statuses=("pending",))
+            row["id"] for row in db.campaign_contacts(conn, campaign_id, user_id, statuses=("pending",))
             if row["preview_generated_at"] is not None
         ]
         approved = approve_contacts(conn, pending)
@@ -509,19 +514,19 @@ class RejectRecipientsRequest(BaseModel):
     contact_ids: list[int]
 
 @router.post("/api/campaigns/{campaign_id}/recipients/reject")
-def post_reject_recipients(campaign_id: int, req: RejectRecipientsRequest, conn=Depends(get_db)):
+def post_reject_recipients(campaign_id: int, req: RejectRecipientsRequest, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
     from src.preview import reject_contacts
     rejected = reject_contacts(conn, req.contact_ids)
     return {"rejected": rejected}
 
 @router.post("/api/campaigns/{campaign_id}/test-send")
-def post_test_send(campaign_id: int, req: TestSendRequest, conn=Depends(get_db)):
-    campaign = db.get_campaign(conn, campaign_id)
+def post_test_send(campaign_id: int, req: TestSendRequest, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    campaign = db.get_campaign(conn, campaign_id, user_id)
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
     contact_id = req.preview_contact_id
     if contact_id is None:
-        contact = next(iter(db.campaign_contacts(conn, campaign_id, limit=1)), None)
+        contact = next(iter(db.campaign_contacts(conn, campaign_id, user_id, limit=1)), None)
         if not contact:
             raise HTTPException(status_code=400, detail="No campaign preview contact found")
         contact_id = int(contact["id"])
@@ -542,7 +547,7 @@ def post_test_send(campaign_id: int, req: TestSendRequest, conn=Depends(get_db))
     if not success:
         raise HTTPException(status_code=400, detail=msg)
     
-    db.set_setting(conn, f"campaign_{campaign_id}_test_sent", True)
+    db.set_setting(conn, f"campaign_{campaign_id}_test_sent", True, user_id)
     return {"status": "success", "detail": msg}
 
 
@@ -550,8 +555,8 @@ def post_test_send(campaign_id: int, req: TestSendRequest, conn=Depends(get_db))
 # 6. Sending Flow Endpoints
 # ----------------------------------------------------
 
-def run_preflight(conn, config, campaign):
-    selected_sender = db.get_campaign_sender(conn, int(campaign["id"]))
+def run_preflight(conn, config, campaign, user_id="default_user"):
+    selected_sender = db.get_campaign_sender(conn, int(campaign["id"]), user_id)
     sender_status = (
         gmail_connection_status(token_path=selected_sender["token_path"])
         if selected_sender
@@ -590,17 +595,17 @@ class AutopilotStartRequest(BaseModel):
     scheduled_at: str = ""  # ISO datetime
 
 @router.post("/api/campaigns/{campaign_id}/send-now")
-def post_send_now(campaign_id: int, req: BulkSendRequest = BulkSendRequest(), conn=Depends(get_db)):
+def post_send_now(campaign_id: int, req: BulkSendRequest = BulkSendRequest(), conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
     import threading
 
-    campaign = db.get_campaign(conn, campaign_id)
+    campaign = db.get_campaign(conn, campaign_id, user_id)
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
 
     config = load_config(config_path())
-    run_preflight(conn, config, campaign)
+    run_preflight(conn, config, campaign, user_id)
 
-    db.set_campaign_status(conn, "sending", campaign_id)
+    db.set_campaign_status(conn, "sending", campaign_id, user_id)
 
     def _run():
         c = db.init_db(get_db_path())
@@ -612,18 +617,18 @@ def post_send_now(campaign_id: int, req: BulkSendRequest = BulkSendRequest(), co
     return {"status": "success", "mode": "bulk_sending"}
 
 @router.post("/api/campaigns/{campaign_id}/schedule")
-def post_schedule(campaign_id: int, req: BulkScheduleRequest = BulkScheduleRequest(), conn=Depends(get_db)):
+def post_schedule(campaign_id: int, req: BulkScheduleRequest = BulkScheduleRequest(), conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
     import threading
     from datetime import datetime, timezone
 
-    campaign = db.get_campaign(conn, campaign_id)
+    campaign = db.get_campaign(conn, campaign_id, user_id)
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
 
     config = load_config(config_path())
-    run_preflight(conn, config, campaign)
+    run_preflight(conn, config, campaign, user_id)
 
-    db.set_campaign_status(conn, "scheduled", campaign_id)
+    db.set_campaign_status(conn, "scheduled", campaign_id, user_id)
 
     scheduled_dt = None
     if req.scheduled_at:
@@ -655,13 +660,13 @@ def post_schedule(campaign_id: int, req: BulkScheduleRequest = BulkScheduleReque
     return {"status": "success", "mode": "scheduled"}
 
 @router.post("/api/campaigns/{campaign_id}/autopilot/start")
-def post_autopilot_start(campaign_id: int, req: AutopilotStartRequest = AutopilotStartRequest(), conn=Depends(get_db)):
-    campaign = db.get_campaign(conn, campaign_id)
+def post_autopilot_start(campaign_id: int, req: AutopilotStartRequest = AutopilotStartRequest(), conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    campaign = db.get_campaign(conn, campaign_id, user_id)
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
 
     config = load_config(config_path())
-    run_preflight(conn, config, campaign)
+    run_preflight(conn, config, campaign, user_id)
 
     if req.days is not None:
         config.sending.days = req.days
@@ -672,40 +677,40 @@ def post_autopilot_start(campaign_id: int, req: AutopilotStartRequest = Autopilo
     save_config(config, config_path())
 
     if req.scheduled_at:
-        db.set_campaign_status(conn, "scheduled", campaign_id)
-        db.set_setting(conn, f"campaign_{campaign_id}_autopilot_start_at", req.scheduled_at)
+        db.set_campaign_status(conn, "scheduled", campaign_id, user_id)
+        db.set_setting(conn, f"campaign_{campaign_id}_autopilot_start_at", req.scheduled_at, user_id)
     else:
-        db.set_campaign_status(conn, "active", campaign_id)
+        db.set_campaign_status(conn, "active", campaign_id, user_id)
 
     start_background_autopilot(get_db_path(), config_path())
     return {"status": "success", "mode": "autopilot"}
 
 @router.post("/api/campaigns/{campaign_id}/pause")
-def post_pause(campaign_id: int, conn=Depends(get_db)):
-    campaign = db.get_campaign(conn, campaign_id)
+def post_pause(campaign_id: int, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    campaign = db.get_campaign(conn, campaign_id, user_id)
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
-    db.set_campaign_status(conn, "paused", campaign_id)
+    db.set_campaign_status(conn, "paused", campaign_id, user_id)
     return {"status": "success"}
 
 @router.post("/api/campaigns/{campaign_id}/resume")
-def post_resume(campaign_id: int, conn=Depends(get_db)):
-    campaign = db.get_campaign(conn, campaign_id)
+def post_resume(campaign_id: int, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    campaign = db.get_campaign(conn, campaign_id, user_id)
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
     
     # If it was scheduled before, keep scheduled; else autopilot/sending
     prev_status = str(campaign["status"])
     new_status = "sending" if prev_status == "paused" else prev_status
-    db.set_campaign_status(conn, new_status, campaign_id)
+    db.set_campaign_status(conn, new_status, campaign_id, user_id)
     return {"status": "success", "mode": new_status}
 
 @router.post("/api/campaigns/{campaign_id}/stop")
-def post_stop(campaign_id: int, conn=Depends(get_db)):
-    campaign = db.get_campaign(conn, campaign_id)
+def post_stop(campaign_id: int, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    campaign = db.get_campaign(conn, campaign_id, user_id)
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
-    db.set_campaign_status(conn, "stopped", campaign_id)
+    db.set_campaign_status(conn, "stopped", campaign_id, user_id)
     return {"status": "success"}
 
 
@@ -714,13 +719,13 @@ def post_stop(campaign_id: int, conn=Depends(get_db)):
 # ----------------------------------------------------
 
 @router.get("/api/campaigns/{campaign_id}/logs")
-def get_campaign_logs(campaign_id: int, conn=Depends(get_db)):
-    log = send_log_dataframe(conn, campaign_id=campaign_id)
+def get_campaign_logs(campaign_id: int, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    log = send_log_dataframe(conn, user_id=user_id, campaign_id=campaign_id)
     return log.to_dict(orient="records")
 
 @router.get("/api/campaigns/{campaign_id}/logs/export")
-def get_logs_export(campaign_id: int, conn=Depends(get_db)):
-    log = send_log_dataframe(conn, campaign_id=campaign_id)
+def get_logs_export(campaign_id: int, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    log = send_log_dataframe(conn, user_id=user_id, campaign_id=campaign_id)
     temp_file = PROJECT_ROOT / "data" / f"campaign_{campaign_id}_log.csv"
     log.to_csv(temp_file, index=False)
     return FileResponse(path=str(temp_file), filename=f"campaign_{campaign_id}_send_log.csv", media_type="text/csv")
@@ -738,7 +743,7 @@ def get_public_google_sheet_tabs(url: str = Query(...)):
         raise HTTPException(status_code=400, detail=f"Could not load public sheet tabs: {str(exc)}")
 
 @router.get("/api/logs")
-def get_global_logs(conn=Depends(get_db)):
-    log = send_log_dataframe(conn)
+def get_global_logs(conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    log = send_log_dataframe(conn, user_id=user_id)
     return log.fillna('').to_dict(orient="records")
 

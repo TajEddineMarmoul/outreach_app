@@ -22,19 +22,17 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { useApiClient } from "@/lib/api";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
-const fetcher = (url: string) => fetch(url).then((r) => {
-  if (!r.ok) throw new Error("API call failed");
-  return r.json();
-});
 
 export default function CampaignsPage() {
-  const { data: campaigns, error, isLoading } = useSWR(`${API_URL}/api/campaigns`, fetcher);
+  const { data: campaigns, error, isLoading } = useSWR(`${API_URL}/api/campaigns`);
   const [isOpen, setIsOpen] = useState(false);
   const [campaignName, setCampaignName] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [subError, setSubError] = useState("");
+  const { authFetch } = useApiClient();
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,7 +40,7 @@ export default function CampaignsPage() {
     setIsSubmitting(true);
     setSubError("");
     try {
-      const res = await fetch(`${API_URL}/api/campaigns`, {
+      const res = await authFetch(`${API_URL}/api/campaigns`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: campaignName.trim() }),

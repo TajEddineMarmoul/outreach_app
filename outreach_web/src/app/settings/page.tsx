@@ -6,16 +6,14 @@ import { Settings, ShieldAlert, Key, CheckCircle, AlertTriangle, Loader2, Upload
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger } from "@/components/ui/dialog";
+import { useApiClient } from "@/lib/api";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
-const fetcher = (url: string) => fetch(url).then((r) => {
-  if (!r.ok) throw new Error("API call failed");
-  return r.json();
-});
 
 export default function SettingsPage() {
-  const { data: settings, isLoading: settingsLoading } = useSWR(`${API_URL}/api/settings`, fetcher);
-  const { data: oauth, isLoading: oauthLoading, mutate: mutateOauth } = useSWR(`${API_URL}/api/oauth/status`, fetcher);
+  const { data: settings, isLoading: settingsLoading } = useSWR(`${API_URL}/api/settings`);
+  const { data: oauth, isLoading: oauthLoading, mutate: mutateOauth } = useSWR(`${API_URL}/api/oauth/status`);
+  const { authFetch } = useApiClient();
 
   // Form states
   const [timezone, setTimezone] = useState("UTC");
@@ -45,7 +43,7 @@ export default function SettingsPage() {
     e.preventDefault();
     setSavingSettings(true);
     try {
-      const res = await fetch(`${API_URL}/api/settings`, {
+      const res = await authFetch(`${API_URL}/api/settings`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -109,7 +107,7 @@ export default function SettingsPage() {
 
     setSavingCreds(true);
     try {
-      const res = await fetch(`${API_URL}/api/oauth/save-credentials-json`, {
+      const res = await authFetch(`${API_URL}/api/oauth/save-credentials-json`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content: bodyContent }),

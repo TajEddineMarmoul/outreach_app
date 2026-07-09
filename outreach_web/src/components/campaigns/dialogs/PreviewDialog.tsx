@@ -5,12 +5,9 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { ChevronLeft, ChevronRight, Paperclip } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useApiClient } from "@/lib/api";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
-const fetcher = (url: string) => fetch(url).then((r) => {
-  if (!r.ok) throw new Error("API call failed");
-  return r.json();
-});
 
 export default function PreviewDialog({
   isOpen,
@@ -22,9 +19,9 @@ export default function PreviewDialog({
   campaignId: string;
 }) {
   const { data: previews, mutate: mutatePreviews } = useSWR(
-    isOpen ? `${API_URL}/api/campaigns/${campaignId}/preview` : null,
-    fetcher
+    isOpen ? `${API_URL}/api/campaigns/${campaignId}/preview` : null
   );
+  const { authFetch } = useApiClient();
   
   const [testEmail, setTestEmail] = useState("");
   const [testSending, setTestSending] = useState(false);
@@ -41,7 +38,7 @@ export default function PreviewDialog({
   }, [isOpen, previewRows.length]);
 
   const handleGenerate = async () => {
-    await fetch(`${API_URL}/api/campaigns/${campaignId}/preview/generate`, { method: "POST" });
+    await authFetch(`${API_URL}/api/campaigns/${campaignId}/preview/generate`, { method: "POST" });
     mutatePreviews();
   };
 
@@ -50,7 +47,7 @@ export default function PreviewDialog({
     setTestSending(true);
     setTestResult(null);
     try {
-      const res = await fetch(`${API_URL}/api/campaigns/${campaignId}/test-send`, {
+      const res = await authFetch(`${API_URL}/api/campaigns/${campaignId}/test-send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

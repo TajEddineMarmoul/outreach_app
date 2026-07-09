@@ -6,8 +6,8 @@ from typing import Any, Iterable
 
 from .core import *
 
-def seed_default_campaign(conn: sqlite3.Connection) -> None:
-    exists = conn.execute("SELECT id FROM campaigns ORDER BY id LIMIT 1").fetchone()
+def seed_default_campaign(conn: sqlite3.Connection, user_id: str = "default_user") -> None:
+    exists = conn.execute("SELECT id FROM campaigns WHERE user_id = ? ORDER BY id LIMIT 1", (user_id,)).fetchone()
     if exists:
         return
     now = utcnow_iso()
@@ -15,8 +15,8 @@ def seed_default_campaign(conn: sqlite3.Connection) -> None:
         """
         INSERT INTO campaigns
             (name, subject_template, body_template, fallback_body_template,
-             attachment_path, status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, 'draft', ?, ?)
+             attachment_path, status, created_at, updated_at, user_id)
+        VALUES (?, ?, ?, ?, ?, 'draft', ?, ?, ?)
         """,
         (
             "Test Campaign",
@@ -26,49 +26,52 @@ def seed_default_campaign(conn: sqlite3.Connection) -> None:
             "data/uploads/resume.pdf",
             now,
             now,
+            user_id,
         ),
     )
     conn.commit()
 
 
-def get_default_campaign(conn: sqlite3.Connection) -> sqlite3.Row:
-    return conn.execute("SELECT * FROM campaigns ORDER BY id LIMIT 1").fetchone()
+def get_default_campaign(conn: sqlite3.Connection, user_id: str = "default_user") -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM campaigns WHERE user_id = ? ORDER BY id LIMIT 1", (user_id,)).fetchone()
 
 
-def create_campaign(conn: sqlite3.Connection, name: str = "Untitled campaign") -> int:
+def create_campaign(conn: sqlite3.Connection, user_id: str = "default_user", name: str = "Untitled campaign") -> int:
     now = utcnow_iso()
     cursor = conn.execute(
         """
         INSERT INTO campaigns
             (name, subject_template, body_template, fallback_body_template,
-             attachment_path, selected_sender_id, status, created_at, updated_at)
-        VALUES (?, '', '', '', '', NULL, 'draft', ?, ?)
+             attachment_path, selected_sender_id, status, created_at, updated_at, user_id)
+        VALUES (?, '', '', '', '', NULL, 'draft', ?, ?, ?)
         """,
         (
             name,
             now,
             now,
+            user_id,
         ),
     )
     conn.commit()
     return int(cursor.lastrowid)
 
 
-def get_campaign(conn: sqlite3.Connection, campaign_id: int) -> sqlite3.Row | None:
-    return conn.execute("SELECT * FROM campaigns WHERE id = ?", (campaign_id,)).fetchone()
+def get_campaign(conn: sqlite3.Connection, campaign_id: int, user_id: str = "default_user") -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM campaigns WHERE id = ? AND user_id = ?", (campaign_id, user_id)).fetchone()
 
 
-def list_campaigns(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    return list(conn.execute("SELECT * FROM campaigns ORDER BY created_at DESC, id DESC").fetchall())
+def list_campaigns(conn: sqlite3.Connection, user_id: str = "default_user") -> list[sqlite3.Row]:
+    return list(conn.execute("SELECT * FROM campaigns WHERE user_id = ? ORDER BY created_at DESC, id DESC", (user_id,)).fetchall())
 
 
 def update_campaign(
     conn: sqlite3.Connection,
     campaign_id: int,
-    subject_template: str,
-    body_template: str,
-    fallback_body_template: str,
-    attachment_path: str,
+    user_id: str = "default_user",
+    subject_template: str = "",
+    body_template: str = "",
+    fallback_body_template: str = "",
+    attachment_path: str = "",
 ) -> None:
     now = utcnow_iso()
     conn.execute(
@@ -76,7 +79,7 @@ def update_campaign(
         UPDATE campaigns
         SET subject_template = ?, body_template = ?, fallback_body_template = ?,
             attachment_path = ?, updated_at = ?
-        WHERE id = ?
+        WHERE id = ? AND user_id = ?
         """,
         (
             subject_template,
@@ -85,55 +88,61 @@ def update_campaign(
             attachment_path,
             now,
             campaign_id,
+            user_id,
         ),
     )
     conn.commit()
 
 
-def update_campaign_name(conn: sqlite3.Connection, campaign_id: int, name: str) -> None:
+def update_campaign_name(conn: sqlite3.Connection, campaign_id: int, user_id: str = "default_user", name: str = "") -> None:
     conn.execute(
-        "UPDATE campaigns SET name = ?, updated_at = ? WHERE id = ?",
-        (name, utcnow_iso(), campaign_id),
+        "UPDATE campaigns SET name = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+        (name, utcnow_iso(), campaign_id, user_id),
     )
     conn.commit()
 
 
-def set_campaign_status(conn: sqlite3.Connection, status: str, campaign_id: int | None = None) -> None:
-    campaign = get_default_campaign(conn) if campaign_id is None else None
-    final_id = campaign_id or int(campaign["id"])
-    conn.execute(
-        "UPDATE campaigns SET status = ?, updated_at = ? WHERE id = ?",
-        (status, utcnow_iso(), final_id),
-    )
-    conn.commit()
-
-
-def get_campaign_status(conn: sqlite3.Connection, campaign_id: int | None = None) -> str:
+def set_campaign_status(conn: sqlite3.Connection, status: str, campaign_id: int | None = None, user_id: str = "default_user") -> None:
     if campaign_id is None:
-        return str(get_default_campaign(conn)["status"])
-    row = conn.execute("SELECT status FROM campaigns WHERE id = ?", (campaign_id,)).fetchone()
+        campaign = get_default_campaign(conn, user_id)
+        if not campaign:
+            return
+        final_id = int(campaign["id"])
+    else:
+        final_id = campaign_id
+    conn.execute(
+        "UPDATE campaigns SET status = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+        (status, utcnow_iso(), final_id, user_id),
+    )
+    conn.commit()
+
+
+def get_campaign_status(conn: sqlite3.Connection, campaign_id: int | None = None, user_id: str = "default_user") -> str:
+    if campaign_id is None:
+        campaign = get_default_campaign(conn, user_id)
+        return str(campaign["status"]) if campaign else "stopped"
+    row = conn.execute("SELECT status FROM campaigns WHERE id = ? AND user_id = ?", (campaign_id, user_id)).fetchone()
     return str(row["status"]) if row else "stopped"
 
 
-def delete_campaign(conn: sqlite3.Connection, campaign_id: int) -> None:
-    conn.execute("DELETE FROM campaigns WHERE id = ?", (campaign_id,))
+def delete_campaign(conn: sqlite3.Connection, campaign_id: int, user_id: str = "default_user") -> None:
+    conn.execute("DELETE FROM campaigns WHERE id = ? AND user_id = ?", (campaign_id, user_id))
     conn.commit()
 
 
 # ── Templates ──
 
-def get_templates(conn: sqlite3.Connection) -> list[sqlite3.Row]:
-    return list(conn.execute("SELECT * FROM templates ORDER BY id").fetchall())
+def get_templates(conn: sqlite3.Connection, user_id: str = "default_user") -> list[sqlite3.Row]:
+    return list(conn.execute("SELECT * FROM templates WHERE user_id = ? ORDER BY id", (user_id,)).fetchall())
 
-def create_template(conn: sqlite3.Connection, title: str, subject: str, body: str) -> int:
+def create_template(conn: sqlite3.Connection, user_id: str = "default_user", title: str = "", subject: str = "", body: str = "") -> int:
     conn.execute(
-        "INSERT INTO templates (title, subject, body) VALUES (?, ?, ?)",
-        (title, subject, body),
+        "INSERT INTO templates (title, subject, body, user_id) VALUES (?, ?, ?, ?)",
+        (title, subject, body, user_id),
     )
     conn.commit()
     return conn.execute("SELECT last_insert_rowid()").fetchone()[0]
 
-def delete_template(conn: sqlite3.Connection, template_id: int) -> None:
-    conn.execute("DELETE FROM templates WHERE id = ?", (template_id,))
+def delete_template(conn: sqlite3.Connection, template_id: int, user_id: str = "default_user") -> None:
+    conn.execute("DELETE FROM templates WHERE id = ? AND user_id = ?", (template_id, user_id))
     conn.commit()
-

@@ -48,38 +48,33 @@ import ScheduleDialog from "@/components/campaigns/dialogs/ScheduleDialog";
 import SenderSelectionDialog from "@/components/campaigns/dialogs/SenderSelectionDialog";
 import PreviewDialog from "@/components/campaigns/dialogs/PreviewDialog";
 import AttachmentDialog from "@/components/campaigns/dialogs/AttachmentDialog";
+import { useApiClient } from "@/lib/api";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
-const fetcher = (url: string) => fetch(url).then((r) => {
-  if (!r.ok) throw new Error("API call failed");
-  return r.json();
-});
 
 export default function CampaignEditorPage() {
   const params = useParams();
   const router = useRouter();
   const campaignId = params.id;
+  const { authFetch } = useApiClient();
 
   // ----------------------------------------------------
   // SWR Hooks for Data Fetching
   // ----------------------------------------------------
   const { data: campaign, error: campError, isLoading: campLoading } = useSWR(
-    campaignId ? `${API_URL}/api/campaigns/${campaignId}` : null,
-    fetcher
+    campaignId ? `${API_URL}/api/campaigns/${campaignId}` : null
   );
   
   const { data: summary, mutate: mutateSummary } = useSWR(
-    campaignId ? `${API_URL}/api/campaigns/${campaignId}/summary` : null,
-    fetcher
+    campaignId ? `${API_URL}/api/campaigns/${campaignId}/summary` : null
   );
 
   const { data: valSummary, mutate: mutateValSummary } = useSWR(
-    campaignId ? `${API_URL}/api/campaigns/${campaignId}/validation-summary` : null,
-    fetcher
+    campaignId ? `${API_URL}/api/campaigns/${campaignId}/validation-summary` : null
   );
 
-  const { data: senders, mutate: mutateSenders } = useSWR(`${API_URL}/api/senders`, fetcher);
-  const { data: oauthStatus } = useSWR(`${API_URL}/api/oauth/status`, fetcher);
+  const { data: senders, mutate: mutateSenders } = useSWR(`${API_URL}/api/senders`);
+  const { data: oauthStatus } = useSWR(`${API_URL}/api/oauth/status`);
 
   const senderCountInGroup = useMemo(() => {
     if (!summary?.sender || !senders) return 0;
@@ -157,7 +152,7 @@ export default function CampaignEditorPage() {
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      const res = await fetch(`${API_URL}/api/campaigns/${campaignId}/composer`, {
+      const res = await authFetch(`${API_URL}/api/campaigns/${campaignId}/composer`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -182,7 +177,7 @@ export default function CampaignEditorPage() {
     setIsPreviewLoading(true);
     try {
       // 1. Save draft
-      const saveRes = await fetch(`${API_URL}/api/campaigns/${campaignId}/composer`, {
+      const saveRes = await authFetch(`${API_URL}/api/campaigns/${campaignId}/composer`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -195,7 +190,7 @@ export default function CampaignEditorPage() {
       if (!saveRes.ok) throw new Error("Failed to save draft");
 
       // 2. Generate previews
-      const genRes = await fetch(`${API_URL}/api/campaigns/${campaignId}/preview/generate`, {
+      const genRes = await authFetch(`${API_URL}/api/campaigns/${campaignId}/preview/generate`, {
         method: "POST",
       });
       if (!genRes.ok) throw new Error("Failed to compile previews");
@@ -219,7 +214,7 @@ export default function CampaignEditorPage() {
     setName(newName);
     if (!newName.trim() || newName === campaign?.name) return;
     try {
-      await fetch(`${API_URL}/api/campaigns/${campaignId}`, {
+      await authFetch(`${API_URL}/api/campaigns/${campaignId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: newName }),
@@ -233,7 +228,7 @@ export default function CampaignEditorPage() {
   const handleToggleTracking = async (checked: boolean) => {
     setTrackingEnabled(checked);
     try {
-      await fetch(`${API_URL}/api/campaigns/${campaignId}`, {
+      await authFetch(`${API_URL}/api/campaigns/${campaignId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tracking_enabled: checked }),
@@ -248,7 +243,7 @@ export default function CampaignEditorPage() {
   const handleToggleUnsubscribe = async (checked: boolean) => {
     setUnsubscribeLink(checked);
     try {
-      await fetch(`${API_URL}/api/campaigns/${campaignId}`, {
+      await authFetch(`${API_URL}/api/campaigns/${campaignId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ unsubscribe_link: checked }),
@@ -263,7 +258,7 @@ export default function CampaignEditorPage() {
   const handleDeleteCampaign = async () => {
     if (!confirm("Are you sure you want to delete this campaign? This cannot be undone.")) return;
     try {
-      await fetch(`${API_URL}/api/campaigns/${campaignId}`, { method: "DELETE" });
+      await authFetch(`${API_URL}/api/campaigns/${campaignId}`, { method: "DELETE" });
       router.push("/campaigns");
     } catch (err) {
       alert("Failed to delete campaign");
@@ -274,7 +269,7 @@ export default function CampaignEditorPage() {
 
   const handleSelectSender = async (senderId: number) => {
     try {
-      const res = await fetch(`${API_URL}/api/campaigns/${campaignId}/sender`, {
+      const res = await authFetch(`${API_URL}/api/campaigns/${campaignId}/sender`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sender_id: senderId }),
@@ -289,13 +284,13 @@ export default function CampaignEditorPage() {
   const handleConnectSender = async () => {
     setConnectingSender(true);
     try {
-      const res = await fetch(`${API_URL}/api/senders/connect`, { method: "POST" });
+      const res = await authFetch(`${API_URL}/api/senders/connect`, { method: "POST" });
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.detail || "Failed to connect new sender");
       }
       const data = await res.json();
-      await fetch(`${API_URL}/api/campaigns/${campaignId}/sender`, {
+      await authFetch(`${API_URL}/api/campaigns/${campaignId}/sender`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sender_id: data.id }),
@@ -312,7 +307,7 @@ export default function CampaignEditorPage() {
 
   const handleCampaignAction = async (action: string) => {
     try {
-      const res = await fetch(`${API_URL}/api/campaigns/${campaignId}/${action}`, { method: "POST" });
+      const res = await authFetch(`${API_URL}/api/campaigns/${campaignId}/${action}`, { method: "POST" });
       if (!res.ok) throw new Error(`Action ${action} failed`);
       mutate(`${API_URL}/api/campaigns/${campaignId}`);
       mutateSummary();
@@ -598,7 +593,7 @@ export default function CampaignEditorPage() {
                   </div>
                   <button
                     onClick={async () => {
-                      await fetch(`${API_URL}/api/campaigns/${campaignId}/attachment`, { method: "DELETE" });
+                      await authFetch(`${API_URL}/api/campaigns/${campaignId}/attachment`, { method: "DELETE" });
                       mutateSummary();
                     }}
                     className="text-slate-400 hover:text-red-600 transition-colors p-1"
@@ -709,6 +704,7 @@ function RecipientsDialog({
   const [tabsError, setTabsError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [csvFile, setCsvFile] = useState<File | null>(null);
+  const { authFetch } = useApiClient();
 
   useEffect(() => {
     const trimmedUrl = sheetUrl.trim();
@@ -723,7 +719,7 @@ function RecipientsDialog({
       setTabsLoading(true);
       setTabsError("");
       try {
-        const res = await fetch(`${API_URL}/api/google-sheets/public-tabs?url=${encodeURIComponent(trimmedUrl)}`);
+        const res = await authFetch(`${API_URL}/api/google-sheets/public-tabs?url=${encodeURIComponent(trimmedUrl)}`);
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
           throw new Error(data.detail || "Could not load tabs");
@@ -750,7 +746,7 @@ function RecipientsDialog({
     console.log("[paste] raw text:", rawPaste.slice(0, 200));
     setIsSubmitting(true);
     try {
-      const res = await fetch(`${API_URL}/api/campaigns/${campaignId}/recipients/paste`, {
+      const res = await authFetch(`${API_URL}/api/campaigns/${campaignId}/recipients/paste`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ raw: rawPaste }),
@@ -778,7 +774,7 @@ function RecipientsDialog({
       formData.append("file", csvFile);
       formData.append("mapping_json", JSON.stringify({}));
       
-      const res = await fetch(`${API_URL}/api/campaigns/${campaignId}/recipients/csv`, {
+      const res = await authFetch(`${API_URL}/api/campaigns/${campaignId}/recipients/csv`, {
         method: "POST",
         body: formData,
       });
@@ -801,7 +797,7 @@ function RecipientsDialog({
     console.log("[sheet] url:", sheetUrl, "tab:", tabName);
     setIsSubmitting(true);
     try {
-      const res = await fetch(`${API_URL}/api/campaigns/${campaignId}/recipients/google-sheet`, {
+      const res = await authFetch(`${API_URL}/api/campaigns/${campaignId}/recipients/google-sheet`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -953,8 +949,7 @@ function TemplateDialog({
   onSelect: (subject: string, body: string) => void;
 }) {
   const { data: templates } = useSWR(
-    isOpen ? `${API_URL}/api/templates` : null,
-    fetcher
+    isOpen ? `${API_URL}/api/templates` : null
   );
   const list = Array.isArray(templates) ? templates : [];
 

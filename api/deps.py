@@ -11,6 +11,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src import db
+from api.auth import get_current_user_id
 
 
 def get_db_path() -> Path:

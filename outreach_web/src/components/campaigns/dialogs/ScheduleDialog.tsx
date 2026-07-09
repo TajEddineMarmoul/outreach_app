@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useApiClient } from "@/lib/api";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
@@ -22,6 +23,7 @@ export default function ScheduleDialog({
   openRecipients: () => void;
 }) {
   const [activeTab, setActiveTab] = useState(defaultTab);
+  const { authFetch } = useApiClient();
 
   // Send now / Schedule fields
   const [bulkDelay, setBulkDelay] = useState(5);
@@ -49,7 +51,7 @@ export default function ScheduleDialog({
       if (mode === "schedule" && scheduledAt) {
         body.scheduled_at = new Date(scheduledAt).toISOString();
       }
-      const res = await fetch(`${API_URL}/api/campaigns/${campaignId}/${endpoint}`, {
+      const res = await authFetch(`${API_URL}/api/campaigns/${campaignId}/${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -80,7 +82,7 @@ export default function ScheduleDialog({
       if (autoStartAt) {
         body.scheduled_at = new Date(autoStartAt).toISOString();
       }
-      const res = await fetch(`${API_URL}/api/campaigns/${campaignId}/autopilot/start`, {
+      const res = await authFetch(`${API_URL}/api/campaigns/${campaignId}/autopilot/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),

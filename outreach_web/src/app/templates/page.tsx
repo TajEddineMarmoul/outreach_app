@@ -8,9 +8,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import useSWR from "swr";
+import { useApiClient } from "@/lib/api";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
-const fetcher = (url: string) => fetch(url).then((r) => { if (!r.ok) throw new Error("API call failed"); return r.json(); });
 
 interface Template {
   id: number;
@@ -20,15 +20,16 @@ interface Template {
 }
 
 export default function TemplatesPage() {
-  const { data: templates, mutate } = useSWR<Template[]>(`${API_URL}/api/templates`, fetcher);
+  const { data: templates, mutate } = useSWR<Template[]>(`${API_URL}/api/templates`);
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
+  const { authFetch } = useApiClient();
 
   const handleCreate = async () => {
     if (!title.trim() || !subject.trim() || !body.trim()) return;
-    await fetch(`${API_URL}/api/templates`, {
+    await authFetch(`${API_URL}/api/templates`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title: title.trim(), subject: subject.trim(), body }),
@@ -41,7 +42,7 @@ export default function TemplatesPage() {
   };
 
   const handleDelete = async (id: number) => {
-    await fetch(`${API_URL}/api/templates/${id}`, { method: "DELETE" });
+    await authFetch(`${API_URL}/api/templates/${id}`, { method: "DELETE" });
     mutate();
   };
 

@@ -67,8 +67,9 @@ def sanitize_email_for_path(email: str) -> str:
     return safe or "sender"
 
 
-def sender_token_path_for_email(email: str) -> Path:
-    return db.resolve_project_path(Path("tokens") / f"gmail_{sanitize_email_for_path(email)}.json")
+def sender_token_path_for_email(email: str, user_id: str) -> Path:
+    safe_user = re.sub(r"[^a-zA-Z0-9._-]+", "_", user_id)
+    return db.resolve_project_path(Path("tokens") / safe_user / f"gmail_{sanitize_email_for_path(email)}.json")
 
 
 def clear_gmail_token() -> None:
@@ -181,16 +182,21 @@ def connect_and_get_profile(
     )
 
 
-def connect_sender_account(force_reauth: bool = True) -> GmailConnectionStatus:
-    pending_path = db.resolve_project_path(Path("tokens") / "gmail_pending.json")
+def connect_sender_account(user_id: str, force_reauth: bool = True) -> GmailConnectionStatus:
+    safe_user = re.sub(r"[^a-zA-Z0-9._-]+", "_", user_id)
+    pending_path = db.resolve_project_path(Path("tokens") / safe_user / "gmail_pending.json")
     if pending_path.exists():
-        pending_path.unlink()
+        try:
+            pending_path.unlink()
+        except Exception:
+            pass
+    pending_path.parent.mkdir(parents=True, exist_ok=True)
     status = connect_and_get_profile(
         force_reauth=force_reauth,
         token_path=pending_path,
         prompt="select_account consent",
     )
-    final_path = sender_token_path_for_email(status.email)
+    final_path = sender_token_path_for_email(status.email, user_id)
     final_path.parent.mkdir(parents=True, exist_ok=True)
     if pending_path != final_path:
         shutil.move(str(pending_path), str(final_path))

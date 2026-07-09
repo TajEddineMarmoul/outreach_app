@@ -6,12 +6,9 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Loader2, Plus, CheckCircle, Trash2, FolderPlus, AtSign, Pencil, Check, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useApiClient } from "@/lib/api";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
-const fetcher = (url: string) => fetch(url).then((r) => {
-  if (!r.ok) throw new Error("API call failed");
-  return r.json();
-});
 
 // ── Inline editable text field for SenderDialog ──
 function InlineEditSender({
@@ -88,16 +85,15 @@ export default function SenderSelectionDialog({
 }) {
   const { data: sendersData, mutate: mutateSenders } = useSWR<any[]>(
     isOpen ? `${API_URL}/api/senders` : null,
-    fetcher,
     { fallbackData: initialSenders }
   );
   const senders = sendersData || initialSenders || [];
 
   const { data: groupsData, mutate: mutateGroups } = useSWR<string[]>(
-    isOpen ? `${API_URL}/api/groups` : null,
-    fetcher
+    isOpen ? `${API_URL}/api/groups` : null
   );
   const allGroups = groupsData || [];
+  const { authFetch } = useApiClient();
 
   const [newGroupName, setNewGroupName] = useState("");
   const [addingGroup, setAddingGroup] = useState(false);
@@ -130,7 +126,7 @@ export default function SenderSelectionDialog({
   const handlePatch = async (id: number, patch: Partial<any>) => {
     const current = senders.find((s) => s.id === id)!;
     const merged = { ...current, ...patch };
-    await fetch(`${API_URL}/api/senders/${id}`, {
+    await authFetch(`${API_URL}/api/senders/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -145,7 +141,7 @@ export default function SenderSelectionDialog({
 
   // ── delete sender ──
   const handleDelete = async (id: number) => {
-    await fetch(`${API_URL}/api/senders/${id}`, { method: "DELETE" });
+    await authFetch(`${API_URL}/api/senders/${id}`, { method: "DELETE" });
     mutateSenders(senders.filter((s) => s.id !== id), false);
     mutate(`${API_URL}/api/senders`); // sync global SWR cache
   };
@@ -178,7 +174,7 @@ export default function SenderSelectionDialog({
     setConnectingGroup(groupName);
     setConnectError("");
     try {
-      const r = await fetch(`${API_URL}/api/senders/connect`, { method: "POST" });
+      const r = await authFetch(`${API_URL}/api/senders/connect`, { method: "POST" });
       if (!r.ok) {
         const err = await r.json();
         setConnectError(err.detail ?? "Connection failed");
@@ -187,10 +183,10 @@ export default function SenderSelectionDialog({
       const { id } = await r.json();
       
       // Fetch latest and update group
-      const current = (await (await fetch(`${API_URL}/api/senders`)).json()) as any[];
+      const current = (await (await authFetch(`${API_URL}/api/senders`)).json()) as any[];
       const newSender = current.find((s) => s.id === id);
       if (newSender) {
-        await fetch(`${API_URL}/api/senders/${id}`, {
+        await authFetch(`${API_URL}/api/senders/${id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -220,7 +216,7 @@ export default function SenderSelectionDialog({
   const handleCreateGroup = async () => {
     const name = newGroupName.trim();
     if (!name || allGroups.includes(name)) return;
-    await fetch(`${API_URL}/api/groups`, {
+    await authFetch(`${API_URL}/api/groups`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name }),

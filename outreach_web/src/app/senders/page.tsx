@@ -17,9 +17,9 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { useApiClient } from "@/lib/api";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-const fetcher = (url: string) => fetch(url).then((r) => r.json());
 
 interface Sender {
   id: number;
@@ -253,10 +253,11 @@ function GroupCard({
 // Main page
 // ─────────────────────────────────────────────
 export default function SendersPage() {
-  const { data, mutate } = useSWR<Sender[]>(`${API_URL}/api/senders`, fetcher);
+  const { data, mutate } = useSWR<Sender[]>(`${API_URL}/api/senders`);
   const senders: Sender[] = data ?? [];
 
-  const { data: groupsData, mutate: mutateGroups } = useSWR<string[]>(`${API_URL}/api/groups`, fetcher);
+  const { data: groupsData, mutate: mutateGroups } = useSWR<string[]>(`${API_URL}/api/groups`);
+  const { authFetch } = useApiClient();
 
   const [newGroupName, setNewGroupName] = useState("");
   const [addingGroup, setAddingGroup] = useState(false);
@@ -292,7 +293,7 @@ export default function SendersPage() {
     async (id: number, patch: Partial<Sender>) => {
       const current = senders.find((s) => s.id === id)!;
       const merged = { ...current, ...patch };
-      await fetch(`${API_URL}/api/senders/${id}`, {
+      await authFetch(`${API_URL}/api/senders/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -308,7 +309,7 @@ export default function SendersPage() {
 
   // ── delete ──
   const handleDelete = async (id: number) => {
-    await fetch(`${API_URL}/api/senders/${id}`, { method: "DELETE" });
+    await authFetch(`${API_URL}/api/senders/${id}`, { method: "DELETE" });
     mutate(senders.filter((s) => s.id !== id), false);
   };
 
@@ -318,7 +319,7 @@ export default function SendersPage() {
     const affected = senders.filter((s) => s.group_name?.trim() === oldName);
     await Promise.all(
       affected.map((s) =>
-        fetch(`${API_URL}/api/senders/${s.id}`, {
+        authFetch(`${API_URL}/api/senders/${s.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ display_name: s.display_name, daily_cap: s.daily_cap, group_name: newName.trim() }),
@@ -339,7 +340,7 @@ export default function SendersPage() {
     setConnectingGroup(groupName);
     setConnectError("");
     try {
-      const r = await fetch(`${API_URL}/api/senders/connect`, { method: "POST" });
+      const r = await authFetch(`${API_URL}/api/senders/connect`, { method: "POST" });
       if (!r.ok) {
         const err = await r.json();
         setConnectError(err.detail ?? "Connection failed");
@@ -347,10 +348,10 @@ export default function SendersPage() {
       }
       const { id } = await r.json();
       // assign to this group
-      const current = (await (await fetch(`${API_URL}/api/senders`)).json()) as Sender[];
+      const current = (await (await authFetch(`${API_URL}/api/senders`)).json()) as Sender[];
       const newSender = current.find((s) => s.id === id);
       if (newSender) {
-        await fetch(`${API_URL}/api/senders/${id}`, {
+        await authFetch(`${API_URL}/api/senders/${id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ display_name: newSender.display_name, daily_cap: newSender.daily_cap, group_name: groupName }),
@@ -369,7 +370,7 @@ export default function SendersPage() {
   const handleCreateGroup = async () => {
     const name = newGroupName.trim();
     if (!name || allGroups.includes(name)) return;
-    await fetch(`${API_URL}/api/groups`, {
+    await authFetch(`${API_URL}/api/groups`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name }),

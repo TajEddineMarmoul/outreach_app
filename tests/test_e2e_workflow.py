@@ -6,20 +6,21 @@ from api.main import app
 from src import db
 
 client = TestClient(app)
+AUTH_HEADERS = {"Authorization": "Bearer mock_test_user"}
 
 def test_full_campaign_lifecycle(tmp_path):
     # 1. Create a campaign
-    res = client.post("/api/campaigns", json={"name": "E2E Campaign"})
+    res = client.post("/api/campaigns", json={"name": "E2E Campaign"}, headers=AUTH_HEADERS)
     assert res.status_code == 200
     campaign_id = res.json()["id"]
 
     # 2. Add recipients via CSV paste
     csv_data = "Email,First Name\ntest1@example.com,Test1\ntest2@example.com,Test2"
-    res = client.post(f"/api/campaigns/{campaign_id}/recipients/paste", json={"raw": csv_data})
+    res = client.post(f"/api/campaigns/{campaign_id}/recipients/paste", json={"raw": csv_data}, headers=AUTH_HEADERS)
     assert res.status_code == 200
 
     # 3. Get campaign contacts to verify they were added
-    res = client.get(f"/api/campaigns/{campaign_id}/recipients")
+    res = client.get(f"/api/campaigns/{campaign_id}/recipients", headers=AUTH_HEADERS)
     assert res.status_code == 200
     contacts = res.json()
     assert len(contacts) == 2
@@ -31,11 +32,11 @@ def test_full_campaign_lifecycle(tmp_path):
         "body_template": "E2E Body",
         "fallback_body_template": "E2E Fallback",
         "attachment_path": ""
-    })
+    }, headers=AUTH_HEADERS)
     assert res.status_code == 200
 
     # 5. Create a fake sender
-    res = client.post("/api/senders/connect", json={"email": "mock@sender.com"})
+    res = client.post("/api/senders/connect", json={"email": "mock@sender.com"}, headers=AUTH_HEADERS)
     # Wait, the connect endpoint expects an actual OAuth flow.
     # We can mock this by directly inserting a sender into the DB.
     db_path = db.get_db_path()
@@ -52,7 +53,7 @@ def test_full_campaign_lifecycle(tmp_path):
     res = client.post(f"/api/campaigns/{campaign_id}/test-send", json={
         "recipient_email": "target@example.com",
         "preview_contact_id": contacts[0]["id"]
-    })
+    }, headers=AUTH_HEADERS)
     # Depending on how the error is handled, it might return 500 or 400.
     # The important part is that the endpoint is reachable.
     assert res.status_code in (200, 400, 500)

@@ -14,16 +14,14 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useApiClient } from "@/lib/api";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
-const fetcher = (url: string) => fetch(url).then((r) => {
-  if (!r.ok) throw new Error("API call failed");
-  return r.json();
-});
 
 export default function ContactsPage() {
-  const { data: campaigns, isLoading: campaignsLoading } = useSWR(`${API_URL}/api/campaigns`, fetcher);
-  const { data: dncList, isLoading: dncLoading } = useSWR(`${API_URL}/api/contacts/dnc`, fetcher);
+  const { data: campaigns, isLoading: campaignsLoading } = useSWR(`${API_URL}/api/campaigns`);
+  const { data: dncList, isLoading: dncLoading } = useSWR(`${API_URL}/api/contacts/dnc`);
+  const { authFetch } = useApiClient();
 
   const [selectedCampaignId, setSelectedCampaignId] = useState<number | null>(null);
   
@@ -36,8 +34,7 @@ export default function ContactsPage() {
 
   // Fetch recipients for the selected campaign group
   const { data: groupContacts, isLoading: groupLoading } = useSWR(
-    selectedCampaignId ? `${API_URL}/api/campaigns/${selectedCampaignId}/recipients` : null,
-    fetcher
+    selectedCampaignId ? `${API_URL}/api/campaigns/${selectedCampaignId}/recipients` : null
   );
 
   const [dncEmail, setDncEmail] = useState("");
@@ -48,7 +45,7 @@ export default function ContactsPage() {
     if (!dncEmail.trim()) return;
     setSubmittingDnc(true);
     try {
-      const res = await fetch(`${API_URL}/api/contacts/dnc`, {
+      const res = await authFetch(`${API_URL}/api/contacts/dnc`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: dncEmail.trim() }),

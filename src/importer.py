@@ -74,6 +74,7 @@ def preview_csv(source: str | Path | BinaryIO) -> tuple[list[str], pd.DataFrame,
 def import_csv(
     source: str | Path | BinaryIO,
     conn,
+    user_id: str,
     column_mapping: dict[str, str] | None = None,
     source_type: str = "csv",
     source_url: str = "",
@@ -84,6 +85,7 @@ def import_csv(
     return import_dataframe(
         frame,
         conn,
+        user_id=user_id,
         column_mapping=column_mapping,
         source_type=source_type,
         source_url=source_url,
@@ -95,6 +97,7 @@ def import_csv(
 def import_dataframe(
     frame: pd.DataFrame,
     conn,
+    user_id: str,
     column_mapping: dict[str, str] | None = None,
     source_type: str = "csv",
     source_url: str = "",
@@ -137,7 +140,7 @@ def import_dataframe(
             keyword_1, keyword_2, keyword_3 = extract_keywords(keywords)
             
         status = ContactStatus.PENDING.value
-        if is_do_not_contact(conn, email):
+        if is_do_not_contact(conn, email, user_id):
             status = ContactStatus.DO_NOT_CONTACT.value
             result.do_not_contact += 1
 
@@ -148,7 +151,7 @@ def import_dataframe(
             row_dict[cleaned_key] = clean_cell(row.get(col))
         custom_fields_json = json.dumps(row_dict)
 
-        existing = db.fetch_contact_by_email(conn, email)
+        existing = db.fetch_contact_by_email(conn, email, user_id)
         if existing:
             last_name = clean_cell(row.get(detected.get("last_name"), ""))
             full_name = clean_cell(row.get(detected.get("full_name"), ""))
@@ -175,7 +178,7 @@ def import_dataframe(
                     country = ?, source_type = ?, source_url = ?, sheet_id = ?,
                     sheet_name = ?, preview_generated_at = ?, last_synced_at = ?,
                     custom_fields = ?, updated_at = ?
-                WHERE id = ?
+                WHERE id = ? AND user_id = ?
                 """,
                 (
                     first_name, last_name, full_name, company_name,
@@ -184,7 +187,7 @@ def import_dataframe(
                     country, source_type, source_url, sheet_id,
                     sheet_name, preview_gen,
                     db.utcnow_iso() if source_type == "google_sheet" else existing["last_synced_at"],
-                    custom_fields_json, db.utcnow_iso(), existing["id"]
+                    custom_fields_json, db.utcnow_iso(), existing["id"], user_id
                 )
             )
             result.imported += 1
@@ -215,6 +218,7 @@ def import_dataframe(
                 "custom_fields": custom_fields_json,
                 "status": status,
             },
+            user_id,
         )
         if inserted:
             result.imported += 1
@@ -224,9 +228,9 @@ def import_dataframe(
     return result
 
 
-def is_do_not_contact(conn, email: str) -> bool:
+def is_do_not_contact(conn, email: str, user_id: str) -> bool:
     row = conn.execute(
-        "SELECT 1 FROM do_not_contact WHERE email = ? LIMIT 1",
-        (normalize_email(email),),
+        "SELECT 1 FROM do_not_contact WHERE email = ? AND user_id = ? LIMIT 1",
+        (normalize_email(email), user_id),
     ).fetchone()
     return row is not None

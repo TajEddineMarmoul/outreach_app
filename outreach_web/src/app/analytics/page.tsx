@@ -13,13 +13,9 @@ import {
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
-const fetcher = (url: string) => fetch(url).then((r) => {
-  if (!r.ok) throw new Error("API call failed");
-  return r.json();
-});
 
 export default function AnalyticsPage() {
-  const { data: logs, error, isLoading } = useSWR(`${API_URL}/api/logs`, fetcher);
+  const { data: logs, error, isLoading } = useSWR(`${API_URL}/api/logs`);
 
   // Compute Stats
   const total = logs?.length || 0;

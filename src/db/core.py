@@ -60,7 +60,7 @@ def create_tables(conn: sqlite3.Connection) -> None:
             first_name TEXT NOT NULL,
             last_name TEXT DEFAULT '',
             full_name TEXT DEFAULT '',
-            email TEXT NOT NULL UNIQUE,
+            email TEXT NOT NULL,
             company_name TEXT NOT NULL,
             company_website TEXT DEFAULT '',
             linkedin TEXT DEFAULT '',
@@ -82,7 +82,9 @@ def create_tables(conn: sqlite3.Connection) -> None:
             last_preview_body TEXT,
             custom_fields TEXT DEFAULT '{{}}',
             created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
+            updated_at TEXT NOT NULL,
+            user_id TEXT,
+            UNIQUE(email, user_id)
         );
 
         CREATE TABLE IF NOT EXISTS campaigns (
@@ -96,26 +98,30 @@ def create_tables(conn: sqlite3.Connection) -> None:
             status TEXT NOT NULL DEFAULT 'stopped',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
+            user_id TEXT,
             FOREIGN KEY(selected_sender_id) REFERENCES senders(id)
         );
 
         CREATE TABLE IF NOT EXISTS senders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            email TEXT NOT NULL UNIQUE,
+            email TEXT NOT NULL,
             display_name TEXT DEFAULT '',
             token_path TEXT NOT NULL,
             connected_at TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'connected',
             daily_cap INTEGER NOT NULL DEFAULT 10,
             is_default INTEGER NOT NULL DEFAULT 0,
-            group_name TEXT NOT NULL DEFAULT ''
+            group_name TEXT NOT NULL DEFAULT '',
+            user_id TEXT,
+            UNIQUE(email, user_id)
         );
 
         CREATE TABLE IF NOT EXISTS templates (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
             subject TEXT NOT NULL,
-            body TEXT NOT NULL
+            body TEXT NOT NULL,
+            user_id TEXT
         );
 
         CREATE TABLE IF NOT EXISTS campaign_recipients (
@@ -144,6 +150,7 @@ def create_tables(conn: sqlite3.Connection) -> None:
             attachment_name TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
+            user_id TEXT,
             FOREIGN KEY(contact_id) REFERENCES contacts(id),
             FOREIGN KEY(campaign_id) REFERENCES campaigns(id),
             FOREIGN KEY(sender_id) REFERENCES senders(id)
@@ -157,14 +164,18 @@ def create_tables(conn: sqlite3.Connection) -> None:
             ON campaign_recipients(contact_id);
 
         CREATE TABLE IF NOT EXISTS do_not_contact (
-            email TEXT PRIMARY KEY,
+            email TEXT,
+            user_id TEXT,
             reason TEXT DEFAULT '',
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (email, user_id)
         );
 
         CREATE TABLE IF NOT EXISTS settings (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
+            key TEXT,
+            user_id TEXT,
+            value TEXT NOT NULL,
+            PRIMARY KEY (key, user_id)
         );
         """
     )
@@ -173,6 +184,7 @@ def create_tables(conn: sqlite3.Connection) -> None:
 
 
 def migrate_schema(conn: sqlite3.Connection) -> None:
+    # 1. Migrate contacts (handle user_id and email uniqueness change if needed)
     contact_columns = {row["name"] for row in conn.execute("PRAGMA table_info(contacts)").fetchall()}
     additions = {
         "source_type": "TEXT DEFAULT 'csv'",
@@ -181,43 +193,151 @@ def migrate_schema(conn: sqlite3.Connection) -> None:
         "sheet_name": "TEXT DEFAULT ''",
         "last_synced_at": "TEXT",
         "custom_fields": "TEXT DEFAULT '{}'",
+        "user_id": "TEXT",
     }
-    for column, definition in additions.items():
-        if column not in contact_columns:
-            conn.execute(f"ALTER TABLE contacts ADD COLUMN {column} {definition}")
+    
+    # If the old database doesn't have user_id, it means we need to migrate the uniqueness constraint as well
+    # Recreating the table is the cleanest way to do this in SQLite
+    if "user_id" not in contact_columns:
+        status_sql = "', '".join(STATUS_VALUES)
+        conn.executescript(
+            f"""
+            ALTER TABLE contacts RENAME TO contacts_old;
+            CREATE TABLE contacts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                first_name TEXT NOT NULL,
+                last_name TEXT DEFAULT '',
+                full_name TEXT DEFAULT '',
+                email TEXT NOT NULL,
+                company_name TEXT NOT NULL,
+                company_website TEXT DEFAULT '',
+                linkedin TEXT DEFAULT '',
+                title TEXT DEFAULT '',
+                industry TEXT DEFAULT '',
+                keywords TEXT DEFAULT '',
+                keyword_1 TEXT DEFAULT '',
+                keyword_2 TEXT DEFAULT '',
+                keyword_3 TEXT DEFAULT '',
+                country TEXT DEFAULT '',
+                source_type TEXT DEFAULT 'csv',
+                source_url TEXT DEFAULT '',
+                sheet_id TEXT DEFAULT '',
+                sheet_name TEXT DEFAULT '',
+                last_synced_at TEXT,
+                status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('{status_sql}')),
+                preview_generated_at TEXT,
+                last_preview_subject TEXT,
+                last_preview_body TEXT,
+                custom_fields TEXT DEFAULT '{{}}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                user_id TEXT,
+                UNIQUE(email, user_id)
+            );
+            INSERT OR IGNORE INTO contacts (id, first_name, last_name, full_name, email, company_name, company_website, linkedin, title, industry, keywords, keyword_1, keyword_2, keyword_3, country, source_type, source_url, sheet_id, sheet_name, last_synced_at, status, preview_generated_at, last_preview_subject, last_preview_body, custom_fields, created_at, updated_at, user_id)
+            SELECT id, first_name, last_name, full_name, email, company_name, company_website, linkedin, title, industry, keywords, keyword_1, keyword_2, keyword_3, country, source_type, source_url, sheet_id, sheet_name, last_synced_at, status, preview_generated_at, last_preview_subject, last_preview_body, custom_fields, created_at, updated_at, 'default_user' FROM contacts_old;
+            DROP TABLE contacts_old;
+            """
+        )
+    else:
+        for column, definition in additions.items():
+            if column not in contact_columns:
+                conn.execute(f"ALTER TABLE contacts ADD COLUMN {column} {definition}")
+                
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_contacts_user ON contacts(user_id);")
 
+    # 2. Migrate campaigns
     campaign_columns = {row["name"] for row in conn.execute("PRAGMA table_info(campaigns)").fetchall()}
     if "selected_sender_id" not in campaign_columns:
         conn.execute("ALTER TABLE campaigns ADD COLUMN selected_sender_id INTEGER")
+    if "user_id" not in campaign_columns:
+        conn.execute("ALTER TABLE campaigns ADD COLUMN user_id TEXT")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_campaigns_user ON campaigns(user_id);")
 
+    # 3. Migrate senders (handle user_id and email uniqueness change if needed)
+    sender_columns = {row["name"] for row in conn.execute("PRAGMA table_info(senders)").fetchall()}
+    if "user_id" not in sender_columns:
+        conn.executescript(
+            """
+            ALTER TABLE senders RENAME TO senders_old;
+            CREATE TABLE senders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT NOT NULL,
+                display_name TEXT DEFAULT '',
+                token_path TEXT NOT NULL,
+                connected_at TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'connected',
+                daily_cap INTEGER NOT NULL DEFAULT 10,
+                is_default INTEGER NOT NULL DEFAULT 0,
+                group_name TEXT NOT NULL DEFAULT '',
+                user_id TEXT,
+                UNIQUE(email, user_id)
+            );
+            INSERT OR IGNORE INTO senders (id, email, display_name, token_path, connected_at, status, daily_cap, is_default, group_name, user_id)
+            SELECT id, email, display_name, token_path, connected_at, status, daily_cap, is_default, group_name, 'default_user' FROM senders_old;
+            DROP TABLE senders_old;
+            """
+        )
+    else:
+        if "group_name" not in sender_columns:
+            conn.execute("ALTER TABLE senders ADD COLUMN group_name TEXT NOT NULL DEFAULT ''")
+            
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_senders_user ON senders(user_id);")
+
+    # 4. Migrate templates
+    template_columns = {row["name"] for row in conn.execute("PRAGMA table_info(templates)").fetchall()}
+    if "user_id" not in template_columns:
+        conn.execute("ALTER TABLE templates ADD COLUMN user_id TEXT")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_templates_user ON templates(user_id);")
+
+    # 5. Migrate settings
+    settings_columns = {row["name"] for row in conn.execute("PRAGMA table_info(settings)").fetchall()}
+    if "user_id" not in settings_columns:
+        conn.executescript(
+            """
+            ALTER TABLE settings RENAME TO settings_old;
+            CREATE TABLE settings (
+                key TEXT,
+                user_id TEXT,
+                value TEXT NOT NULL,
+                PRIMARY KEY (key, user_id)
+            );
+            INSERT OR IGNORE INTO settings (key, user_id, value)
+            SELECT key, 'default_user', value FROM settings_old;
+            DROP TABLE settings_old;
+            """
+        )
+
+    # 6. Migrate send_log
     send_log_columns = {row["name"] for row in conn.execute("PRAGMA table_info(send_log)").fetchall()}
     if "sender_id" not in send_log_columns:
         conn.execute("ALTER TABLE send_log ADD COLUMN sender_id INTEGER")
     if "sender_email" not in send_log_columns:
         conn.execute("ALTER TABLE send_log ADD COLUMN sender_email TEXT")
+    if "user_id" not in send_log_columns:
+        conn.execute("ALTER TABLE send_log ADD COLUMN user_id TEXT")
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_send_log_sender_status ON send_log(sender_id, status)"
     )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_send_log_user ON send_log(user_id)"
+    )
 
-    sender_columns = {row["name"] for row in conn.execute("PRAGMA table_info(senders)").fetchall()}
-    if "group_name" not in sender_columns:
-        conn.execute("ALTER TABLE senders ADD COLUMN group_name TEXT NOT NULL DEFAULT ''")
 
-
-def set_setting(conn: sqlite3.Connection, key: str, value: Any) -> None:
+def set_setting(conn: sqlite3.Connection, key: str, value: Any, user_id: str = "default_user") -> None:
     conn.execute(
         """
-        INSERT INTO settings(key, value)
-        VALUES(?, ?)
-        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        INSERT INTO settings(key, user_id, value)
+        VALUES(?, ?, ?)
+        ON CONFLICT(key, user_id) DO UPDATE SET value = excluded.value
         """,
-        (key, json.dumps(value)),
+        (key, user_id, json.dumps(value)),
     )
     conn.commit()
 
 
-def get_setting(conn: sqlite3.Connection, key: str, default: Any = None) -> Any:
-    row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+def get_setting(conn: sqlite3.Connection, key: str, default: Any = None, user_id: str = "default_user") -> Any:
+    row = conn.execute("SELECT value FROM settings WHERE key = ? AND user_id = ?", (key, user_id)).fetchone()
     if row is None:
         return default
     try:

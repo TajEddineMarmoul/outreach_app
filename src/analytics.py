@@ -24,13 +24,13 @@ def dashboard_metrics(conn, config, now=None) -> dict[str, object]:
     }
 
 
-def send_log_dataframe(conn, campaign_id: int | None = None) -> pd.DataFrame:
-    rows = [dict(row) for row in db.send_log_rows(conn, campaign_id=campaign_id)]
+def send_log_dataframe(conn, user_id: str = "default_user", campaign_id: int | None = None) -> pd.DataFrame:
+    rows = [dict(row) for row in db.send_log_rows(conn, user_id=user_id, campaign_id=campaign_id)]
     return pd.DataFrame(rows)
 
 
-def export_send_log(conn, path: str | Path, campaign_id: int | None = None) -> Path:
+def export_send_log(conn, path: str | Path, user_id: str = "default_user", campaign_id: int | None = None) -> Path:
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
-    send_log_dataframe(conn, campaign_id=campaign_id).to_csv(output, index=False)
+    send_log_dataframe(conn, user_id=user_id, campaign_id=campaign_id).to_csv(output, index=False)
     return output

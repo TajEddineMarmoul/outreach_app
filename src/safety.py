@@ -53,9 +53,9 @@ def is_allowed_send_time(config: AppConfig, now: datetime | None = None) -> bool
     return start <= current.time().replace(second=0, microsecond=0) <= end
 
 
-def warmup_daily_limit(conn, now: datetime | None, config: AppConfig) -> int:
+def warmup_daily_limit(conn, now: datetime | None, config: AppConfig, user_id: str) -> int:
     current = local_now(config, now=now)
-    first_sent = db.first_successful_send_date(conn)
+    first_sent = db.first_successful_send_date(conn, user_id)
     if not first_sent:
         campaign_day = 1
     else:
@@ -75,17 +75,17 @@ def warmup_daily_limit(conn, now: datetime | None, config: AppConfig) -> int:
     return 30
 
 
-def effective_daily_cap(conn, config: AppConfig, now: datetime | None = None) -> int:
+def effective_daily_cap(conn, config: AppConfig, user_id: str, now: datetime | None = None) -> int:
     return min(
         config.sending.daily_cap,
         config.sending.max_daily_cap_allowed_without_manual_override,
-        warmup_daily_limit(conn, now, config),
+        warmup_daily_limit(conn, now, config, user_id),
     )
 
 
-def sent_today_local(conn, config: AppConfig, now: datetime | None = None) -> int:
+def sent_today_local(conn, config: AppConfig, user_id: str, now: datetime | None = None) -> int:
     current = local_now(config, now=now)
-    rows = conn.execute("SELECT sent_at FROM send_log WHERE status = 'sent'").fetchall()
+    rows = conn.execute("SELECT sent_at FROM send_log WHERE status = 'sent' AND user_id = ?", (user_id,)).fetchall()
     count = 0
     for row in rows:
         if not row["sent_at"]:
@@ -98,11 +98,11 @@ def sent_today_local(conn, config: AppConfig, now: datetime | None = None) -> in
     return count
 
 
-def sent_today_for_sender(conn, sender_id: int, config: AppConfig, now: datetime | None = None) -> int:
+def sent_today_for_sender(conn, sender_id: int, config: AppConfig, user_id: str, now: datetime | None = None) -> int:
     current = local_now(config, now=now)
     rows = conn.execute(
-        "SELECT sent_at FROM send_log WHERE status = 'sent' AND sender_id = ?",
-        (sender_id,),
+        "SELECT sent_at FROM send_log WHERE status = 'sent' AND sender_id = ? AND user_id = ?",
+        (sender_id, user_id),
     ).fetchall()
     count = 0
     for row in rows:
@@ -116,20 +116,21 @@ def sent_today_for_sender(conn, sender_id: int, config: AppConfig, now: datetime
     return count
 
 
-def has_remaining_daily_capacity(conn, config: AppConfig, now: datetime | None = None) -> bool:
-    return sent_today_local(conn, config, now=now) < effective_daily_cap(conn, config, now=now)
+def has_remaining_daily_capacity(conn, config: AppConfig, user_id: str, now: datetime | None = None) -> bool:
+    return sent_today_local(conn, config, user_id, now=now) < effective_daily_cap(conn, config, user_id, now=now)
 
 
 def effective_sender_daily_cap(
     conn,
     config: AppConfig,
     sender_daily_cap: int,
+    user_id: str,
     now: datetime | None = None,
 ) -> int:
     return min(
         sender_daily_cap,
         config.sending.max_daily_cap_allowed_without_manual_override,
-        warmup_daily_limit(conn, now, config),
+        warmup_daily_limit(conn, now, config, user_id),
     )
 
 
@@ -138,14 +139,15 @@ def has_remaining_sender_capacity(
     config: AppConfig,
     sender_id: int,
     sender_daily_cap: int,
+    user_id: str,
     now: datetime | None = None,
 ) -> bool:
-    sent_today = sent_today_for_sender(conn, sender_id, config, now=now)
-    return sent_today < effective_sender_daily_cap(conn, config, sender_daily_cap, now=now)
+    sent_today = sent_today_for_sender(conn, sender_id, config, user_id, now=now)
+    return sent_today < effective_sender_daily_cap(conn, config, sender_daily_cap, user_id, now=now)
 
 
-def delay_elapsed(conn, config: AppConfig, now: datetime | None = None) -> bool:
-    last_sent = db.last_successful_send_at(conn)
+def delay_elapsed(conn, config: AppConfig, user_id: str, now: datetime | None = None) -> bool:
+    last_sent = db.last_successful_send_at(conn, user_id)
     if not last_sent:
         return True
     last_dt = datetime.fromisoformat(last_sent)
@@ -174,6 +176,7 @@ def pre_send_checks(
     contact,
     campaign,
     config: AppConfig,
+    user_id: str,
     now: datetime | None = None,
     enforce_time_window: bool = True,
     enforce_daily_cap: bool = True,
@@ -186,7 +189,7 @@ def pre_send_checks(
     email = str(contact["email"] or "").strip().lower()
     if not email:
         return SafetyResult(False, "Missing recipient email")
-    if is_blocked(conn, email):
+    if is_blocked(conn, email, user_id):
         return SafetyResult(False, "Recipient is on do-not-contact list")
     if str(contact["status"]) != ContactStatus.APPROVED.value:
         return SafetyResult(False, "Contact is not approved")
@@ -202,45 +205,45 @@ def pre_send_checks(
     if "[missing " in str(contact["last_preview_subject"]) or "[missing " in str(contact["last_preview_body"]):
         return SafetyResult(False, "Recipient has missing template variables")
     duplicate_count = conn.execute(
-        "SELECT COUNT(*) AS count FROM contacts WHERE email = ?",
-        (email,),
+        "SELECT COUNT(*) AS count FROM contacts WHERE email = ? AND user_id = ?",
+        (email, user_id),
     ).fetchone()["count"]
     if int(duplicate_count) > 1:
         return SafetyResult(False, "Duplicate recipient email exists")
-    if db.has_send_attempt(conn, int(contact["id"])):
+    if db.has_send_attempt(conn, int(contact["id"]), user_id):
         return SafetyResult(False, "Recipient already has a send attempt or sent log")
     attachment = attachment_check(config, campaign)
     if not attachment.allowed:
         return attachment
     if enforce_time_window and not is_allowed_send_time(config, now=now):
         return SafetyResult(False, "Outside allowed sending window")
-    if enforce_daily_cap and not has_remaining_daily_capacity(conn, config, now=now):
+    if enforce_daily_cap and not has_remaining_daily_capacity(conn, config, user_id, now=now):
         return SafetyResult(False, "Daily cap reached")
     if (
         enforce_daily_cap
         and sender_id is not None
         and sender_daily_cap is not None
-        and not has_remaining_sender_capacity(conn, config, sender_id, sender_daily_cap, now=now)
+        and not has_remaining_sender_capacity(conn, config, sender_id, sender_daily_cap, user_id, now=now)
     ):
         return SafetyResult(False, "Selected sender daily cap reached")
-    if enforce_daily_cap and not delay_elapsed(conn, config, now=now):
+    if enforce_daily_cap and not delay_elapsed(conn, config, user_id, now=now):
         return SafetyResult(False, "Delay between emails has not elapsed")
-    if too_many_consecutive_errors(conn, config.sending.max_consecutive_errors):
+    if too_many_consecutive_errors(conn, user_id, config.sending.max_consecutive_errors):
         return SafetyResult(False, "Too many consecutive errors")
-    if high_bounce_rate(conn, config.sending.bounce_rate_pause_threshold):
+    if high_bounce_rate(conn, user_id, config.sending.bounce_rate_pause_threshold):
         return SafetyResult(False, "Bounce rate threshold exceeded")
     return SafetyResult(True)
 
 
-def too_many_consecutive_errors(conn, max_errors: int) -> bool:
-    rows = db.recent_send_errors(conn, max_errors)
+def too_many_consecutive_errors(conn, user_id: str, max_errors: int) -> bool:
+    rows = db.recent_send_errors(conn, max_errors, user_id)
     if len(rows) < max_errors:
         return False
     return all(str(row["status"]) == "failed" for row in rows)
 
 
-def high_bounce_rate(conn, threshold_percent: float) -> bool:
-    return db.bounce_rate_percent(conn) > threshold_percent
+def high_bounce_rate(conn, user_id: str, threshold_percent: float) -> bool:
+    return db.bounce_rate_percent(conn, user_id) > threshold_percent
 
 
 def should_pause_for_error(error_message: str) -> bool:
@@ -248,12 +251,12 @@ def should_pause_for_error(error_message: str) -> bool:
     return any(marker.lower() in lowered for marker in PAUSE_ERROR_MARKERS)
 
 
-def should_pause_campaign(conn, config: AppConfig, last_error: str | None = None) -> SafetyResult:
+def should_pause_campaign(conn, config: AppConfig, user_id: str, last_error: str | None = None) -> SafetyResult:
     if last_error and should_pause_for_error(last_error):
         return SafetyResult(True, "Gmail returned a rate-limit, quota, or suspicious activity error")
-    if too_many_consecutive_errors(conn, config.sending.max_consecutive_errors):
+    if too_many_consecutive_errors(conn, user_id, config.sending.max_consecutive_errors):
         return SafetyResult(True, f"{config.sending.max_consecutive_errors} consecutive send errors")
-    if high_bounce_rate(conn, config.sending.bounce_rate_pause_threshold):
+    if high_bounce_rate(conn, user_id, config.sending.bounce_rate_pause_threshold):
         return SafetyResult(True, "Bounce rate threshold exceeded")
     return SafetyResult(False)
 
@@ -284,7 +287,7 @@ def attachment_name(config: AppConfig, campaign) -> str:
     return Path(attachment_path).name
 
 
-def campaign_checklist(conn, config: AppConfig, campaign, gmail_status) -> dict[str, bool]:
+def campaign_checklist(conn, config: AppConfig, campaign, gmail_status, user_id: str) -> dict[str, bool]:
     campaign_id = int(campaign["id"])
     recipient_count = db.campaign_contact_count(conn, campaign_id)
     preview_count = conn.execute(
@@ -292,13 +295,13 @@ def campaign_checklist(conn, config: AppConfig, campaign, gmail_status) -> dict[
         SELECT COUNT(*) AS count
         FROM contacts c
         INNER JOIN campaign_recipients cr ON cr.contact_id = c.id
-        WHERE cr.campaign_id = ? AND c.preview_generated_at IS NOT NULL
+        WHERE cr.campaign_id = ? AND c.user_id = ? AND c.preview_generated_at IS NOT NULL
         """,
-        (campaign_id,),
+        (campaign_id, user_id),
     ).fetchone()["count"]
-    approved_count = len(db.campaign_contacts(conn, campaign_id, statuses=(ContactStatus.APPROVED.value,)))
+    approved_count = len(db.campaign_contacts(conn, campaign_id, user_id, statuses=(ContactStatus.APPROVED.value,)))
     attachment = attachment_check(config, campaign)
-    test_sent = bool(db.get_setting(conn, f"campaign_{campaign_id}_test_sent", False))
+    test_sent = bool(db.get_setting(conn, f"campaign_{campaign_id}_test_sent", False, user_id))
     return {
         "Gmail connected": gmail_status.connected,
         "Recipients selected": recipient_count > 0,
@@ -307,4 +310,3 @@ def campaign_checklist(conn, config: AppConfig, campaign, gmail_status) -> dict[
         "Test sent": test_sent,
         "Approved recipients": approved_count > 0,
     }
-

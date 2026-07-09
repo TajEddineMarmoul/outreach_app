@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Paperclip } from "lucide-react";
+import { useApiClient } from "@/lib/api";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
@@ -18,6 +19,7 @@ export default function AttachmentDialog({
 }) {
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  const { authFetch } = useApiClient();
 
   const handleUpload = async () => {
     if (!file) return;
@@ -25,7 +27,7 @@ export default function AttachmentDialog({
     try {
       const formData = new FormData();
       formData.append("file", file);
-      const res = await fetch(`${API_URL}/api/campaigns/${campaignId}/attachment`, {
+      const res = await authFetch(`${API_URL}/api/campaigns/${campaignId}/attachment`, {
         method: "POST",
         body: formData,
       });

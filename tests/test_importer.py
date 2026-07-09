@@ -22,12 +22,12 @@ def test_csv_import_deduplicates_missing_email_and_extracts_keywords(tmp_path: P
         encoding="utf-8",
     )
 
-    result = import_csv(csv_path, conn)
+    result = import_csv(csv_path, conn, user_id="test_user")
 
     assert result.imported == 1
     assert result.skipped_missing_email == 1
     assert result.duplicates == 1
-    contact = db.fetch_contact_by_email(conn, "alice@example.com")
+    contact = db.fetch_contact_by_email(conn, "alice@example.com", user_id="test_user")
     assert contact is not None
     assert contact["email"] == "alice@example.com"
     assert contact["status"] == ContactStatus.PENDING.value
