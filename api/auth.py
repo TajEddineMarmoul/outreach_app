@@ -33,7 +33,7 @@ jwks_client = PyJWKClient(CLERK_JWKS_URL) if CLERK_JWKS_URL else None
 def get_current_user_id(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
     token = credentials.credentials
     
-    # Try production JWT verification if JWKS URL is available
+    # Production JWT verification via Clerk JWKS
     if jwks_client:
         try:
             signing_key = jwks_client.get_signing_key_from_jwt(token)
@@ -44,12 +44,20 @@ def get_current_user_id(credentials: HTTPAuthorizationCredentials = Depends(secu
                 options={"verify_aud": False}
             )
             user_id = payload.get("sub")
-            if user_id:
-                return str(user_id)
+            if not user_id:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Token is missing user ID (sub claim)"
+                )
+            return str(user_id)
         except jwt.PyJWTError as e:
-            logger.warning(f"JWT verification failed, falling back to dev decode: {e}")
+            logger.error(f"JWT verification failed: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Invalid or expired token: {str(e)}"
+            )
 
-    # Development/testing fallback
+    # Development/testing fallback (no JWKS URL configured)
     if token.startswith("mock_"):
         return token
     try:
