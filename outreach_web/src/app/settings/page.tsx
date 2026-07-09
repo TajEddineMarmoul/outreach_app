@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import useSWR, { mutate } from "swr";
+import { useUser } from "@clerk/nextjs";
 import { Settings, ShieldAlert, Key, CheckCircle, AlertTriangle, Loader2, Upload, HelpCircle, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,8 +13,23 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 export default function SettingsPage() {
   const { data: settings, isLoading: settingsLoading } = useSWR(`${API_URL}/api/settings`);
-  const { data: oauth, isLoading: oauthLoading, mutate: mutateOauth } = useSWR(`${API_URL}/api/oauth/status`);
+  const { user } = useUser();
   const { authFetch } = useApiClient();
+  const isAdmin = user?.emailAddresses?.[0]?.emailAddress === "tajdinetajdine1@gmail.com";
+
+  // GCP status state
+  const [oauthStatus, setOauthStatus] = useState<{ credentials_json_present?: boolean } | null>(null);
+  const [oauthLoading, setOauthLoading] = useState(true);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    setOauthLoading(true);
+    authFetch(`${API_URL}/api/oauth/status`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => setOauthStatus(data))
+      .catch(() => setOauthStatus(null))
+      .finally(() => setOauthLoading(false));
+  }, [isAdmin]);
 
   // Form states
   const [timezone, setTimezone] = useState("UTC");
@@ -113,7 +129,9 @@ export default function SettingsPage() {
         body: JSON.stringify({ content: bodyContent }),
       });
       if (!res.ok) throw new Error("Invalid credentials JSON structure");
-      mutateOauth();
+      // Re-fetch GCP status
+      const statusRes = await authFetch(`${API_URL}/api/oauth/status`);
+      setOauthStatus(statusRes.ok ? await statusRes.json() : null);
       setCredentialsJson("");
       setClientId("");
       setClientSecret("");
@@ -174,7 +192,8 @@ export default function SettingsPage() {
           )}
         </div>
 
-        {/* Right column: OAuth Credentials */}
+        {/* Right column: OAuth Credentials (admin only) */}
+        {isAdmin && (
         <div className="space-y-6">
           {/* Credentials Status */}
           <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm space-y-4">
@@ -247,7 +266,7 @@ export default function SettingsPage() {
                 {/* Google OAuth Client Row */}
                 <div className="flex items-center justify-between text-xs border-b border-slate-50 pb-3">
                   <span className="text-slate-500 font-medium">OAuth Desktop Client</span>
-                  {oauth?.credentials_json_present ? (
+                  {oauthStatus?.credentials_json_present ? (
                     <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-green-50 text-green-700 border border-green-200 inline-flex items-center gap-1">
                       <CheckCircle className="w-3.5 h-3.5" /> Configured
                     </span>
@@ -376,6 +395,7 @@ export default function SettingsPage() {
             </form>
           </div>
         </div>
+        )}
       </div>
     </div>
   );

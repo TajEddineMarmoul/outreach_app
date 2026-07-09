@@ -74,7 +74,6 @@ export default function CampaignEditorPage() {
   );
 
   const { data: senders, mutate: mutateSenders } = useSWR(`${API_URL}/api/senders`);
-  const { data: oauthStatus } = useSWR(`${API_URL}/api/oauth/status`);
 
   const senderCountInGroup = useMemo(() => {
     if (!summary?.sender || !senders) return 0;
