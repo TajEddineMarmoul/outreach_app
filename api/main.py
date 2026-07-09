@@ -15,6 +15,7 @@ _default_origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "https://outreach-web-mu.vercel.app",
+    "https://outreach-backend-166059707324.us-central1.run.app",
 ]
 _origins = os.getenv("CORS_ORIGINS", ",".join(_default_origins)).split(",")
 
