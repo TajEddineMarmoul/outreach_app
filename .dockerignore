@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+.git/
+.pytest_cache/
+.agents/
+.claude/
+Dockerfile
+README.md
+.gitignore
+*.md
+data/
+tokens/
+credentials.json
+token.json
