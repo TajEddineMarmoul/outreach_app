@@ -5,7 +5,8 @@ import os
 os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
 
 from pathlib import Path
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from api.deps import db, get_db, get_current_user_id, get_db_path, config_path
@@ -23,6 +24,9 @@ class CredentialsContent(BaseModel):
 
 class OAuthCode(BaseModel):
     code: str
+
+
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
 @router.get("/api/settings")
 def get_settings(conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
@@ -85,12 +89,38 @@ def start_oauth(user_id: str = Depends(get_current_user_id)):
         raise HTTPException(status_code=400, detail="Save credentials.json first")
 
     flow = InstalledAppFlow.from_client_secrets_file(str(path), SCOPES)
+    redirect_uri = f"{FRONTEND_URL}/oauth/callback"
     auth_url, _ = flow.authorization_url(
         access_type="offline",
         include_granted_scopes="true",
         prompt="consent",
+        redirect_uri=redirect_uri,
     )
     return {"auth_url": auth_url}
+
+
+@router.get("/api/oauth/callback")
+def oauth_callback_get(code: str, state: str | None = None, user_id: str = Depends(get_current_user_id)):
+    from src.gmail_sender import sender_token_path_for_email, get_connected_email
+
+    path = credentials_file_path()
+    if not path.exists():
+        return RedirectResponse(url=f"{FRONTEND_URL}/senders?oauth=error&message=credentials_missing")
+
+    try:
+        flow = InstalledAppFlow.from_client_secrets_file(str(path), SCOPES)
+        flow.fetch_token(code=code)
+
+        creds = flow.credentials
+        email = get_connected_email(creds)
+
+        token_path = sender_token_path_for_email(email, user_id)
+        token_path.parent.mkdir(parents=True, exist_ok=True)
+        token_path.write_text(creds.to_json(), encoding="utf-8")
+
+        return RedirectResponse(url=f"{FRONTEND_URL}/senders?oauth=success&email={email}")
+    except Exception as e:
+        return RedirectResponse(url=f"{FRONTEND_URL}/senders?oauth=error&message={str(e)}")
 
 
 @router.post("/api/oauth/callback")

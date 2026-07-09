@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, Suspense } from "react";
 import useSWR from "swr";
 import {
   AtSign,
@@ -17,11 +17,11 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { useApiClient } from "@/lib/api";
 import { isAdminUser } from "@/lib/auth";
 import { useUser } from "@clerk/nextjs";
+import { useSearchParams } from "next/navigation";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -256,11 +256,12 @@ function GroupCard({
 // ─────────────────────────────────────────────
 // Main page
 // ─────────────────────────────────────────────
-export default function SendersPage() {
+function SendersPageInner() {
   const { data, mutate } = useSWR<Sender[]>(`${API_URL}/api/senders`);
   const senders: Sender[] = data ?? [];
   const { user } = useUser();
   const isAdmin = isAdminUser(user);
+  const searchParams = useSearchParams();
 
   const { data: groupsData, mutate: mutateGroups } = useSWR<string[]>(`${API_URL}/api/groups`);
   const { authFetch } = useApiClient();
@@ -270,14 +271,16 @@ export default function SendersPage() {
   const [connectingGroup, setConnectingGroup] = useState<string | null>(null);
   const [connectError, setConnectError] = useState("");
 
-  // OAuth dialog state
-  const [showOAuthDialog, setShowOAuthDialog] = useState(false);
-  const [pendingGroup, setPendingGroup] = useState("");
-  const [oauthUrl, setOauthUrl] = useState("");
-  const [oauthCode, setOauthCode] = useState("");
-  const [startingOauth, setStartingOauth] = useState(false);
-  const [submittingCode, setSubmittingCode] = useState(false);
-  const [oauthError, setOauthError] = useState("");
+  // Auto-connect after OAuth success
+  useEffect(() => {
+    const oauthResult = searchParams.get("oauth");
+    if (oauthResult === "success") {
+      const firstGroup = allGroups[0];
+      if (firstGroup) {
+        handleConnectToGroup(firstGroup);
+      }
+    }
+  }, [searchParams]);
 
   const allGroups = groupsData ?? [];
 
@@ -357,15 +360,19 @@ export default function SendersPage() {
     const r = await authFetch(`${API_URL}/api/senders/connect`, { method: "POST" });
     if (!r.ok) {
       const err = await r.json();
-      // If no token, show OAuth dialog
+      // If no token, redirect to Google OAuth
       if (err.detail?.includes("No Gmail tokens found")) {
-        setPendingGroup(groupName);
-        setOauthUrl("");
-        setOauthCode("");
-        setOauthError("");
-        setShowOAuthDialog(true);
-        setConnectingGroup(null);
-        return;
+        try {
+          const res = await authFetch(`${API_URL}/api/oauth/start`, { method: "POST" });
+          if (!res.ok) throw new Error("Failed to start OAuth");
+          const { auth_url } = await res.json();
+          window.location.href = auth_url;
+          return;
+        } catch (e: any) {
+          setConnectError(e.message);
+          setConnectingGroup(null);
+          return;
+        }
       }
       setConnectError(err.detail ?? "Connection failed");
       setConnectingGroup(null);
@@ -498,96 +505,14 @@ export default function SendersPage() {
           Click any field to edit inline · Hover a row to see actions
         </p>
       )}
-
-      {/* OAuth Dialog — shown when no token exists */}
-      <Dialog open={showOAuthDialog} onOpenChange={(open) => { if (!open) setShowOAuthDialog(false); }}>
-        <DialogContent className="max-w-lg bg-white rounded-xl shadow-lg border border-slate-200 p-6">
-          <DialogHeader className="space-y-1 mb-4">
-            <DialogTitle className="text-base font-bold text-slate-900">Authorize Gmail Access</DialogTitle>
-            <DialogDescription className="text-xs text-slate-500">
-              No saved Gmail token was found. Complete the authorization to link a Gmail account.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            <Button
-              onClick={async () => {
-                setStartingOauth(true);
-                setOauthError("");
-                try {
-                  const res = await authFetch(`${API_URL}/api/oauth/start`, { method: "POST" });
-                  if (!res.ok) throw new Error((await res.json()).detail || "Failed to start OAuth");
-                  const data = await res.json();
-                  setOauthUrl(data.auth_url);
-                } catch (err: any) {
-                  setOauthError(err.message);
-                } finally {
-                  setStartingOauth(false);
-                }
-              }}
-              disabled={startingOauth}
-              className="bg-blue-600 hover:bg-blue-700 text-white w-full"
-            >
-              {startingOauth ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
-              {startingOauth ? "Preparing..." : "Start Gmail Authorization"}
-            </Button>
-
-            {oauthUrl && (
-              <>
-                <p className="text-xs text-slate-600">
-                  Open the link below in your browser, grant Gmail permission, then copy the code and paste it here:
-                </p>
-                <a
-                  href={oauthUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs text-blue-600 break-all hover:underline flex items-center gap-1"
-                >
-                  {oauthUrl} <ExternalLink className="w-3 h-3 shrink-0" />
-                </a>
-                <div className="flex gap-2">
-                  <Input
-                    placeholder="Paste authorization code"
-                    value={oauthCode}
-                    onChange={(e) => setOauthCode(e.target.value)}
-                  />
-                  <Button
-                    onClick={async () => {
-                      setSubmittingCode(true);
-                      setOauthError("");
-                      try {
-                        const res = await authFetch(`${API_URL}/api/oauth/callback`, {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ code: oauthCode }),
-                        });
-                        if (!res.ok) throw new Error((await res.json()).detail || "Failed to exchange code");
-                        setShowOAuthDialog(false);
-                        // Retry connecting with the newly saved token
-                        handleConnectToGroup(pendingGroup);
-                      } catch (err: any) {
-                        setOauthError(err.message);
-                      } finally {
-                        setSubmittingCode(false);
-                      }
-                    }}
-                    disabled={submittingCode || !oauthCode.trim()}
-                    className="bg-slate-800 hover:bg-slate-900 text-white shrink-0"
-                  >
-                    {submittingCode ? <Loader2 className="w-4 h-4 animate-spin" /> : "Submit"}
-                  </Button>
-                </div>
-              </>
-            )}
-
-            {oauthError && (
-              <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-md p-3">
-                {oauthError}
-              </div>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
+  );
+}
+
+export default function SendrsPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-slate-500 text-sm">Loading...</div>}>
+      <SendersPageInner />
+    </Suspense>
   );
 }
