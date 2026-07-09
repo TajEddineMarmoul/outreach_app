@@ -200,6 +200,7 @@ def migrate_schema(conn: sqlite3.Connection) -> None:
     # Recreating the table is the cleanest way to do this in SQLite
     if "user_id" not in contact_columns:
         status_sql = "', '".join(STATUS_VALUES)
+        conn.execute("PRAGMA foreign_keys = OFF")
         conn.executescript(
             f"""
             ALTER TABLE contacts RENAME TO contacts_old;
@@ -239,6 +240,7 @@ def migrate_schema(conn: sqlite3.Connection) -> None:
             DROP TABLE contacts_old;
             """
         )
+        conn.execute("PRAGMA foreign_keys = ON")
     else:
         for column, definition in additions.items():
             if column not in contact_columns:
@@ -257,6 +259,7 @@ def migrate_schema(conn: sqlite3.Connection) -> None:
     # 3. Migrate senders (handle user_id and email uniqueness change if needed)
     sender_columns = {row["name"] for row in conn.execute("PRAGMA table_info(senders)").fetchall()}
     if "user_id" not in sender_columns:
+        conn.execute("PRAGMA foreign_keys = OFF")
         conn.executescript(
             """
             ALTER TABLE senders RENAME TO senders_old;
@@ -278,6 +281,7 @@ def migrate_schema(conn: sqlite3.Connection) -> None:
             DROP TABLE senders_old;
             """
         )
+        conn.execute("PRAGMA foreign_keys = ON")
     else:
         if "group_name" not in sender_columns:
             conn.execute("ALTER TABLE senders ADD COLUMN group_name TEXT NOT NULL DEFAULT ''")
@@ -293,6 +297,7 @@ def migrate_schema(conn: sqlite3.Connection) -> None:
     # 5. Migrate settings
     settings_columns = {row["name"] for row in conn.execute("PRAGMA table_info(settings)").fetchall()}
     if "user_id" not in settings_columns:
+        conn.execute("PRAGMA foreign_keys = OFF")
         conn.executescript(
             """
             ALTER TABLE settings RENAME TO settings_old;
@@ -307,6 +312,7 @@ def migrate_schema(conn: sqlite3.Connection) -> None:
             DROP TABLE settings_old;
             """
         )
+        conn.execute("PRAGMA foreign_keys = ON")
 
     # 6. Migrate send_log
     send_log_columns = {row["name"] for row in conn.execute("PRAGMA table_info(send_log)").fetchall()}
