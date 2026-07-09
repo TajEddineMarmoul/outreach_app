@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Mail, FileText, Users, BarChart2, Settings, Send, AtSign } from "lucide-react";
-import { UserButton } from "@clerk/nextjs";
+import { UserButton, useUser } from "@clerk/nextjs";
 import { cn } from "@/lib/utils";
 
 const menuItems = [
@@ -17,6 +17,7 @@ const menuItems = [
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const { user } = useUser();
 
   return (
     <aside className="w-72 border-r border-slate-200 bg-slate-50/80 backdrop-blur flex flex-col h-screen sticky top-0">
@@ -53,10 +54,18 @@ export default function Sidebar() {
       
       {/* Footer Info */}
       <div className="p-4 border-t border-slate-200">
-        <div className="flex items-center justify-center mb-3">
+        <div className="flex items-center gap-3">
           <UserButton />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-slate-900 truncate">
+              {user?.fullName || user?.primaryEmailAddress?.emailAddress || "User"}
+            </p>
+            <p className="text-xs text-slate-500 truncate">
+              {user?.primaryEmailAddress?.emailAddress || ""}
+            </p>
+          </div>
         </div>
-        <p className="text-sm text-slate-400 text-center mt-2">v1.0.0 &bull; Local Deployment</p>
+        <p className="text-xs text-slate-400 text-center mt-3">v1.0.0 &bull; Local Deployment</p>
       </div>
     </aside>
   );
