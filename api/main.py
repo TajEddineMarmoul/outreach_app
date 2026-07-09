@@ -11,12 +11,16 @@ from src.scheduler import start_background_autopilot
 
 app = FastAPI(title="Outreach App API", version="1.0.0")
 
+_default_origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "https://outreach-5x1gb66bd-crazytajdines-projects.vercel.app",
+]
+_origins = os.getenv("CORS_ORIGINS", ",".join(_default_origins)).split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=[o.strip() for o in _origins if o.strip()],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
