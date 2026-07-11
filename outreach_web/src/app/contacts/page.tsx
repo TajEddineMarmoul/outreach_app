@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useEffect, useCallback } from "react";
 import useSWR, { mutate } from "swr";
 import { Users, UserX, Loader2, Folder } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -19,14 +19,23 @@ import { useApiClient } from "@/lib/api";
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 export default function ContactsPage() {
-  const { data: campaigns, isLoading: campaignsLoading } = useSWR(`${API_URL}/api/campaigns`);
-  const { data: dncList, isLoading: dncLoading } = useSWR(`${API_URL}/api/contacts/dnc`);
   const { authFetch } = useApiClient();
+
+  const fetcher = useCallback(async (url: string) => {
+    const response = await authFetch(url);
+    if (!response.ok) {
+      throw new Error(`API request failed (${response.status})`);
+    }
+    return response.json();
+  }, [authFetch]);
+
+  const { data: campaigns, isLoading: campaignsLoading } = useSWR(`${API_URL}/api/campaigns`, fetcher);
+  const { data: dncList, isLoading: dncLoading } = useSWR(`${API_URL}/api/contacts/dnc`, fetcher);
 
   const [selectedCampaignId, setSelectedCampaignId] = useState<number | null>(null);
   
   // Auto-select first campaign when campaigns load
-  useMemo(() => {
+  useEffect(() => {
     if (campaigns && campaigns.length > 0 && selectedCampaignId === null) {
       setSelectedCampaignId(campaigns[0].id);
     }
@@ -34,7 +43,8 @@ export default function ContactsPage() {
 
   // Fetch recipients for the selected campaign group
   const { data: groupContacts, isLoading: groupLoading } = useSWR(
-    selectedCampaignId ? `${API_URL}/api/campaigns/${selectedCampaignId}/recipients` : null
+    selectedCampaignId ? `${API_URL}/api/campaigns/${selectedCampaignId}/recipients` : null,
+    fetcher
   );
 
   const [dncEmail, setDncEmail] = useState("");
