@@ -34,9 +34,20 @@ jobs:
 
       - name: Build and deploy API
         run: |
-          gcloud builds submit . \
+          build_id=$(gcloud builds submit . \
             --project="$PROJECT_ID" \
-            --tag="$BACKEND_IMAGE:${GITHUB_SHA}"
+            --tag="$BACKEND_IMAGE:${GITHUB_SHA}" \
+            --async \
+            --format='value(id)')
+          for attempt in {1..60}; do
+            status=$(gcloud builds describe "$build_id" --project="$PROJECT_ID" --format='value(status)')
+            case "$status" in
+              SUCCESS) break ;;
+              FAILURE|CANCELLED|TIMEOUT|INTERNAL_ERROR) echo "Cloud Build failed: $status"; exit 1 ;;
+            esac
+            sleep 10
+          done
+          test "$status" = SUCCESS
           gcloud run deploy "$BACKEND_SERVICE" \
             --project="$PROJECT_ID" \
             --region="$REGION" \
@@ -45,10 +56,21 @@ jobs:
 
       - name: Build and deploy frontend
         run: |
-          gcloud builds submit outreach_web \
+          build_id=$(gcloud builds submit outreach_web \
             --project="$PROJECT_ID" \
             --config=outreach_web/cloudbuild.yaml \
-            --substitutions="_NEXT_PUBLIC_API_URL=${{ secrets.BACKEND_URL }},_NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }},_IMAGE=${FRONTEND_IMAGE}:${GITHUB_SHA}"
+            --substitutions="_NEXT_PUBLIC_API_URL=${{ secrets.BACKEND_URL }},_NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }},_IMAGE=${FRONTEND_IMAGE}:${GITHUB_SHA}" \
+            --async \
+            --format='value(id)')
+          for attempt in {1..60}; do
+            status=$(gcloud builds describe "$build_id" --project="$PROJECT_ID" --format='value(status)')
+            case "$status" in
+              SUCCESS) break ;;
+              FAILURE|CANCELLED|TIMEOUT|INTERNAL_ERROR) echo "Cloud Build failed: $status"; exit 1 ;;
+            esac
+            sleep 10
+          done
+          test "$status" = SUCCESS
           gcloud run deploy "$FRONTEND_SERVICE" \
             --project="$PROJECT_ID" \
             --region="$REGION" \
