@@ -33,7 +33,7 @@ from src.gmail_sender import gmail_connection_status
 from src.google_sheets import get_public_sheet_csv, get_published_csv, list_public_sheet_tabs, parse_google_sheet_url_details
 from src.importer import import_dataframe, normalize_email, detect_columns
 from src.safety import campaign_checklist
-from src.scheduler import send_test_email, bulk_send_approved
+from src.scheduler import send_test_email
 from src.analytics import send_log_dataframe
 
 router = APIRouter()
@@ -119,10 +119,10 @@ def get_campaign_summary(campaign_id: int, conn=Depends(get_db), user_id: str = 
         raise HTTPException(status_code=404, detail="Campaign not found")
     
     config = load_config(config_path())
-    selected_sender = db.get_campaign_sender(conn, campaign_id, user_id)
-    sender_email = str(selected_sender["email"]) if selected_sender else None
+    sender_group_name = None
     sender_group_id = None
     sender_group_capacity = None
+    sender_emails: list[str] = []
     try:
         from sqlalchemy import select
         from sqlalchemy.exc import SQLAlchemyError
@@ -139,10 +139,13 @@ def get_campaign_summary(campaign_id: int, conn=Depends(get_db), user_id: str = 
                 group = require_group(platform_session, user_id, platform_campaign.selected_sender_group_id)
                 group_payload = serialize_group(platform_session, group)
                 sender_group_id = group.id
-                sender_group = group.name
+                sender_group_name = group.name
                 sender_group_capacity = group_payload
-                connected = [sender for sender in group.senders if sender.status == "connected"]
-                sender_email = connected[0].email if connected else None
+                sender_emails = [
+                    sender.email
+                    for sender in group.senders
+                    if sender.status == "connected" and sender.encrypted_oauth_credentials
+                ]
         finally:
             platform_session.close()
     except Exception:
@@ -172,10 +175,11 @@ def get_campaign_summary(campaign_id: int, conn=Depends(get_db), user_id: str = 
     sheet_synced = (sheet_contacts["cnt"] or 0) > 0
 
     return {
-        "sender": sender_email,
+        "sender": sender_group_name,
+        "sender_group_name": sender_group_name,
         "sender_group_id": sender_group_id,
         "sender_group_capacity": sender_group_capacity,
-        "sender_email": sender_email,
+        "sender_emails": sender_emails,
         "recipients": recipient_count,
         "mode": status,
         "attachment": att_label,
@@ -431,7 +435,7 @@ def get_campaign_validation_summary(campaign_id: int, conn=Depends(get_db), user
         c = dict(c)
         custom_str = c.get("custom_fields") or "{}"
         try:
-            custom_data = json.loads(custom_str)
+            custom_data = custom_str if isinstance(custom_str, dict) else json.loads(custom_str)
         except Exception:
             custom_data = {}
 
@@ -671,140 +675,6 @@ def run_preflight(conn, config, campaign, user_id="default_user"):
         
     if block_items:
         raise HTTPException(status_code=400, detail={"msg": "Preflight validation failed", "blocks": block_items})
-
-class BulkSendRequest(BaseModel):
-    delay_minutes: int = 5
-
-class BulkScheduleRequest(BaseModel):
-    delay_minutes: int = 5
-    scheduled_at: str = ""  # ISO datetime
-
-class AutopilotStartRequest(BaseModel):
-    days: Optional[List[str]] = None
-    start_time: str = "09:00"
-    end_time: str = "17:00"
-    daily_cap: int = 10
-    delay_minutes: int = 5
-    scheduled_at: str = ""  # ISO datetime
-
-@router.post("/api/campaigns/{campaign_id}/send-now")
-def post_send_now(campaign_id: int, req: BulkSendRequest = BulkSendRequest(), conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
-    import threading
-
-    campaign = db.get_campaign(conn, campaign_id, user_id)
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-
-    config = load_config(config_path())
-    run_preflight(conn, config, campaign, user_id)
-
-    db.set_campaign_status(conn, "sending", campaign_id, user_id)
-
-    def _run():
-        c = db.init_db()
-        cfg = load_config(config_path())
-        bulk_send_approved(c, campaign_id, cfg, req.delay_minutes, user_id=user_id)
-        c.close()
-
-    threading.Thread(target=_run, daemon=True).start()
-    return {"status": "success", "mode": "bulk_sending"}
-
-@router.post("/api/campaigns/{campaign_id}/schedule")
-def post_schedule(campaign_id: int, req: BulkScheduleRequest = BulkScheduleRequest(), conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
-    import threading
-    from datetime import datetime, timezone
-
-    campaign = db.get_campaign(conn, campaign_id, user_id)
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-
-    config = load_config(config_path())
-    run_preflight(conn, config, campaign, user_id)
-
-    db.set_campaign_status(conn, "scheduled", campaign_id, user_id)
-
-    scheduled_dt = None
-    if req.scheduled_at:
-        try:
-            scheduled_dt = datetime.fromisoformat(req.scheduled_at)
-        except (ValueError, TypeError):
-            raise HTTPException(status_code=400, detail="Invalid scheduled_at format, use ISO datetime")
-
-    def _run():
-        if scheduled_dt:
-            now = datetime.now(timezone.utc)
-            if scheduled_dt.tzinfo is None:
-                scheduled_dt_aware = scheduled_dt.replace(tzinfo=timezone.utc)
-            else:
-                scheduled_dt_aware = scheduled_dt
-            delay = (scheduled_dt_aware - now).total_seconds()
-            if delay > 0:
-                time.sleep(delay)
-        c = db.init_db()
-        camp = c.execute("SELECT status FROM campaigns WHERE id = ?", (campaign_id,)).fetchone()
-        if camp and camp["status"] not in ("scheduled",):
-            c.close()
-            return
-        cfg = load_config(config_path())
-        bulk_send_approved(c, campaign_id, cfg, req.delay_minutes, user_id=user_id)
-        c.close()
-
-    threading.Thread(target=_run, daemon=True).start()
-    return {"status": "success", "mode": "scheduled"}
-
-@router.post("/api/campaigns/{campaign_id}/autopilot/start")
-def post_autopilot_start(campaign_id: int, req: AutopilotStartRequest = AutopilotStartRequest(), conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
-    campaign = db.get_campaign(conn, campaign_id, user_id)
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-
-    config = load_config(config_path())
-    run_preflight(conn, config, campaign, user_id)
-
-    if req.days is not None:
-        config.sending.days = req.days
-    config.sending.start_time = req.start_time
-    config.sending.end_time = req.end_time
-    config.sending.daily_cap = req.daily_cap
-    config.sending.delay_minutes = req.delay_minutes
-    save_config(config, config_path())
-
-    if req.scheduled_at:
-        db.set_campaign_status(conn, "scheduled", campaign_id, user_id)
-        db.set_setting(conn, f"campaign_{campaign_id}_autopilot_start_at", req.scheduled_at, user_id)
-    else:
-        db.set_campaign_status(conn, "active", campaign_id, user_id)
-
-    return {"status": "success", "mode": "autopilot"}
-
-@router.post("/api/campaigns/{campaign_id}/pause")
-def post_pause(campaign_id: int, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
-    campaign = db.get_campaign(conn, campaign_id, user_id)
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-    db.set_campaign_status(conn, "paused", campaign_id, user_id)
-    return {"status": "success"}
-
-@router.post("/api/campaigns/{campaign_id}/resume")
-def post_resume(campaign_id: int, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
-    campaign = db.get_campaign(conn, campaign_id, user_id)
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-    
-    # If it was scheduled before, keep scheduled; else autopilot/sending
-    prev_status = str(campaign["status"])
-    new_status = "sending" if prev_status == "paused" else prev_status
-    db.set_campaign_status(conn, new_status, campaign_id, user_id)
-    return {"status": "success", "mode": new_status}
-
-@router.post("/api/campaigns/{campaign_id}/stop")
-def post_stop(campaign_id: int, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
-    campaign = db.get_campaign(conn, campaign_id, user_id)
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-    db.set_campaign_status(conn, "stopped", campaign_id, user_id)
-    return {"status": "success"}
-
 
 # ----------------------------------------------------
 # 7. Logs Endpoints

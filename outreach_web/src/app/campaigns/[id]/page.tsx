@@ -99,6 +99,11 @@ export default function CampaignEditorPage() {
   }, [senderGroups, summary]);
 
   const senderCountInGroup = selectedSenderGroup?.connected_sender_count ?? 0;
+  const senderEmails: string[] = selectedSenderGroup?.senders
+    ?.filter((sender: { status: string }) => sender.status === "connected")
+    .map((sender: { email: string }) => sender.email)
+    ?? summary?.sender_emails
+    ?? [];
 
   // ----------------------------------------------------
   // UI & Form States
@@ -480,17 +485,26 @@ export default function CampaignEditorPage() {
                 <div className="flex items-start gap-4">
                   <label className="w-16 text-sm font-semibold text-slate-500 mt-1.5">From</label>
                   <div className="flex-1 flex items-center justify-between">
-                    {summary?.sender ? (
+                    {summary?.sender_group_name || summary?.sender ? (
                       <Button
                         variant="ghost"
-                        className="p-0 h-auto text-blue-600 hover:text-blue-800 hover:bg-transparent text-sm font-medium gap-1 flex items-center justify-start"
+                        className="p-0 h-auto text-blue-600 hover:text-blue-800 hover:bg-transparent flex items-start justify-start"
                         onClick={() => setSenderModalOpen(true)}
                       >
-                        <span>{summary.sender}</span>
-                        <span className="text-xs font-normal text-slate-400 ml-1">
-                          ({senderCountInGroup} sender{senderCountInGroup !== 1 ? "s" : ""})
+                        <span className="flex flex-col items-start min-w-0">
+                          <span className="text-sm font-semibold">
+                            {summary.sender_group_name || summary.sender}
+                            <span className="text-xs font-normal text-slate-400 ml-1">
+                              ({senderCountInGroup || senderEmails.length} sender{(senderCountInGroup || senderEmails.length) !== 1 ? "s" : ""})
+                            </span>
+                            <span className="text-slate-400 font-normal ml-1">▾</span>
+                          </span>
+                          {senderEmails.length > 0 && (
+                            <span className="text-xs font-normal text-slate-400 truncate max-w-xl">
+                              {senderEmails.join(", ")}
+                            </span>
+                          )}
                         </span>
-                        <span className="text-slate-400 font-normal">▾</span>
                       </Button>
                     ) : (
                       <Button
@@ -638,6 +652,7 @@ export default function CampaignEditorPage() {
 
       {/* A. Send Campaign Modal */}
       <ScheduleDialog
+        key={sendTab}
         isOpen={sendModalOpen}
         onClose={() => setSendModalOpen(false)}
         campaignId={campaignId as string}
@@ -646,7 +661,6 @@ export default function CampaignEditorPage() {
           mutate(`${API_URL}/api/campaigns/${campaignId}`);
           mutateSummary();
         }}
-        openRecipients={() => setRecipientsModalOpen(true)}
       />
 
       {/* B. Select Sender Modal */}

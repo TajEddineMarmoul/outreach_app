@@ -4,6 +4,8 @@ import json
 import sqlite3
 from typing import Any, Iterable
 
+from src.models import ContactStatus
+
 from .core import *
 
 def insert_contact(conn: sqlite3.Connection, contact: dict[str, Any], user_id: str = "default_user") -> bool:
@@ -13,6 +15,7 @@ def insert_contact(conn: sqlite3.Connection, contact: dict[str, Any], user_id: s
         "last_name": "",
         "full_name": "",
         "email": "",
+        "email_normalized": "",
         "company_name": "",
         "company_website": "",
         "linkedin": "",
@@ -35,18 +38,19 @@ def insert_contact(conn: sqlite3.Connection, contact: dict[str, Any], user_id: s
         "created_at": now,
         "updated_at": now,
     }
+    data["email_normalized"] = str(data["email"]).strip().lower()
     try:
         conn.execute(
             """
             INSERT INTO contacts (
-                first_name, last_name, full_name, email, company_name,
+                first_name, last_name, full_name, email, email_normalized, company_name,
                 company_website, linkedin, title, industry, keywords,
                 keyword_1, keyword_2, keyword_3, country, source_type,
                 source_url, sheet_id, sheet_name, last_synced_at, status,
                 custom_fields, created_at, updated_at, user_id
             )
             VALUES (
-                :first_name, :last_name, :full_name, :email, :company_name,
+                :first_name, :last_name, :full_name, :email, :email_normalized, :company_name,
                 :company_website, :linkedin, :title, :industry, :keywords,
                 :keyword_1, :keyword_2, :keyword_3, :country, :source_type,
                 :source_url, :sheet_id, :sheet_name, :last_synced_at, :status,
@@ -258,7 +262,7 @@ def sent_today_count(conn: sqlite3.Connection, today_prefix: str, user_id: str =
         """
         SELECT COUNT(*) AS count
         FROM send_log
-        WHERE status = 'sent' AND sent_at LIKE ? AND user_id = ?
+        WHERE status = 'sent' AND CAST(sent_at AS TEXT) LIKE ? AND user_id = ?
         """,
         (f"{today_prefix}%", user_id),
     ).fetchone()

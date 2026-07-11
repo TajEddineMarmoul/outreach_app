@@ -8,7 +8,7 @@ import TextAlign from "@tiptap/extension-text-align";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { Bold, Italic, Underline as UnderlineIcon, AlignLeft, AlignCenter, AlignRight } from "lucide-react";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 
 interface RichTextEditorProps {
   content: string;
@@ -24,28 +24,25 @@ function normalizeTemplateVariable(variable: string): string {
   return variable.trim().replace(/\s+/g, "_");
 }
 
-const VariableValidation = Extension.create<{
-  getValidVariables: () => string[];
-}>({
+const variableValidationPluginKey = new PluginKey<Set<string>>("variableValidation");
+
+const VariableValidation = Extension.create({
   name: "variableValidation",
 
-  addOptions() {
-    return {
-      getValidVariables: () => [],
-    };
-  },
-
   addProseMirrorPlugins() {
-    const getValidVariables = this.options.getValidVariables;
-
     return [
       new Plugin({
-        key: new PluginKey("variableValidation"),
+        key: variableValidationPluginKey,
+        state: {
+          init: () => new Set<string>(),
+          apply(transaction, currentVariables) {
+            const nextVariables = transaction.getMeta(variableValidationPluginKey) as string[] | undefined;
+            return nextVariables ? new Set(nextVariables) : currentVariables;
+          },
+        },
         props: {
           decorations(state) {
-            const validVariables = new Set(
-              getValidVariables().map((variable) => normalizeTemplateVariable(variable))
-            );
+            const validVariables = variableValidationPluginKey.getState(state) ?? new Set<string>();
             const decorations: Decoration[] = [];
 
             state.doc.descendants((node, position) => {
@@ -86,16 +83,6 @@ function ensureHTML(content: string): string {
 
 export default function RichTextEditor({ content, onChange, placeholder, validVariables = [], onEditorReady }: RichTextEditorProps) {
   const isUpdatingRef = useRef(false);
-  const validVariablesRef = useRef(validVariables);
-  validVariablesRef.current = validVariables;
-
-  const variableValidationExtension = useMemo(
-    () =>
-      VariableValidation.configure({
-        getValidVariables: () => validVariablesRef.current,
-      }),
-    []
-  );
 
   const editor = useEditor({
     immediatelyRender: true,
@@ -113,7 +100,7 @@ export default function RichTextEditor({ content, onChange, placeholder, validVa
       TextAlign.configure({
         types: ["paragraph"],
       }),
-      variableValidationExtension,
+      VariableValidation,
     ],
     content: content ? ensureHTML(content) : "",
     onCreate: ({ editor }) => {
@@ -153,7 +140,12 @@ export default function RichTextEditor({ content, onChange, placeholder, validVa
 
   useEffect(() => {
     if (!editor || editor.isDestroyed) return;
-    editor.view.dispatch(editor.state.tr.setMeta("variableValidationRefresh", Date.now()));
+    editor.view.dispatch(
+      editor.state.tr.setMeta(
+        variableValidationPluginKey,
+        validVariables.map((variable) => normalizeTemplateVariable(variable))
+      )
+    );
   }, [editor, validVariables]);
 
   if (!editor) return null;

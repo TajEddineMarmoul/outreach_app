@@ -1,0 +1,19 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --build-arg
+      - NEXT_PUBLIC_API_URL=${_NEXT_PUBLIC_API_URL}
+      - --build-arg
+      - NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${_NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+      - -t
+      - ${_IMAGE}
+      - .
+images:
+  - ${_IMAGE}
+substitutions:
+  _NEXT_PUBLIC_API_URL: https://outreach-backend-bnjd5uovna-uc.a.run.app
+  _NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: replace-me
+  _IMAGE: gcr.io/mailsender-501713/outreach-frontend:latest
+options:
+  logging: CLOUD_LOGGING_ONLY

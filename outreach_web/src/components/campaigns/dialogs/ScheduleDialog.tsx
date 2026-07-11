@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -7,20 +7,22 @@ import { useApiClient } from "@/lib/api";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Request failed";
+}
+
 export default function ScheduleDialog({
   isOpen,
   onClose,
   campaignId,
   defaultTab,
   mutateAll,
-  openRecipients
 }: {
   isOpen: boolean;
   onClose: () => void;
   campaignId: string;
   defaultTab: string;
   mutateAll: () => void;
-  openRecipients: () => void;
 }) {
   const [activeTab, setActiveTab] = useState(defaultTab);
   const { authFetch } = useApiClient();
@@ -33,17 +35,16 @@ export default function ScheduleDialog({
   const [days, setDays] = useState<string[]>(["monday", "tuesday", "wednesday", "thursday", "friday"]);
   const [startTime, setStartTime] = useState("09:00");
   const [endTime, setEndTime] = useState("17:00");
-  const [dailyCap, setDailyCap] = useState(10);
   const [autoDelay, setAutoDelay] = useState(5);
   const [autoStartAt, setAutoStartAt] = useState("");
 
   const [sendingAction, setSendingAction] = useState(false);
 
-  useEffect(() => {
-    setActiveTab(defaultTab);
-  }, [defaultTab]);
-
   const handleBulkSend = async (mode: "send-now" | "schedule") => {
+    if (mode === "schedule" && !scheduledAt) {
+      alert("Choose a start date and time.");
+      return;
+    }
     setSendingAction(true);
     try {
       const endpoint = mode === "send-now" ? "send-now" : "schedule";
@@ -64,9 +65,9 @@ export default function ScheduleDialog({
       }
       mutateAll();
       onClose();
-    } catch (err: any) {
-      console.error("[Send] Error:", err.message);
-      alert(err.message);
+    } catch (error: unknown) {
+      console.error("[Send] Error:", errorMessage(error));
+      alert(errorMessage(error));
     } finally {
       setSendingAction(false);
     }
@@ -79,7 +80,6 @@ export default function ScheduleDialog({
         days,
         start_time: startTime,
         end_time: endTime,
-        daily_cap: dailyCap,
         delay_minutes: autoDelay,
       };
       if (autoStartAt) {
@@ -96,8 +96,8 @@ export default function ScheduleDialog({
       }
       mutateAll();
       onClose();
-    } catch (err: any) {
-      alert(err.message);
+    } catch (error: unknown) {
+      alert(errorMessage(error));
     } finally {
       setSendingAction(false);
     }
@@ -125,8 +125,7 @@ export default function ScheduleDialog({
           {/* 1. Send Now */}
           <TabsContent value="send-now" className="py-4 space-y-4">
             <p className="text-xs text-slate-500">
-              Sends all approved recipients immediately, one by one, with the delay below.
-              No caps, no warmup, no time windows.
+              Starts the next batch immediately using the connected senders in the selected group.
             </p>
             <div className="space-y-1">
               <label className="text-xs font-semibold text-slate-700">Delay between emails (min)</label>
@@ -155,7 +154,7 @@ export default function ScheduleDialog({
             </div>
             <DialogFooter className="pt-2">
               <Button variant="outline" onClick={onClose}>Cancel</Button>
-              <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={() => handleBulkSend("schedule")} disabled={sendingAction}>
+              <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={() => handleBulkSend("schedule")} disabled={sendingAction || !scheduledAt}>
                 {sendingAction ? "Scheduling..." : "Schedule"}
               </Button>
             </DialogFooter>
@@ -206,15 +205,9 @@ export default function ScheduleDialog({
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-700">Daily cap</label>
-                <Input type="number" min={1} value={dailyCap} onChange={(e) => setDailyCap(Number(e.target.value))} />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-700">Delay between emails (min)</label>
-                <Input type="number" min={0} value={autoDelay} onChange={(e) => setAutoDelay(Number(e.target.value))} />
-              </div>
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-slate-700">Delay between batches (min)</label>
+              <Input type="number" min={0} value={autoDelay} onChange={(e) => setAutoDelay(Number(e.target.value))} />
             </div>
 
             <div className="space-y-1">

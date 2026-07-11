@@ -96,8 +96,8 @@ def set_sender_default(
     if not sender or sender.status == "removed":
         raise HTTPException(status_code=404, detail="Sender not found")
     for s in session.scalars(select(Sender).where(Sender.user_id == user_id)):
-        s.is_default = False
-    sender.is_default = True
+        s.is_default = 0
+    sender.is_default = 1
     session.commit()
     return serialize_sender(session, sender)
 

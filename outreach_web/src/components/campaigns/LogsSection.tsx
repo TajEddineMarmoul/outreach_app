@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
-import { Loader2, RefreshCw } from "lucide-react";
+import { useState } from "react";
+import useSWR from "swr";
+import { ChevronLeft, ChevronRight, Clock, Loader2, PauseCircle, RefreshCw, Send } from "lucide-react";
 import { useApiClient } from "@/lib/api";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
@@ -17,32 +18,38 @@ interface LogEntry {
   created_at: string | null;
 }
 
+interface LogsResponse { items: LogEntry[]; total: number; page: number; page_size: number; pages: number; }
+interface CampaignState {
+  campaign_status: string;
+  is_sending: boolean;
+  is_waiting: boolean;
+  next_batch_at: string | null;
+  pause_reason: string | null;
+}
+
 export default function LogsSection({ campaignId }: { campaignId: string }) {
-  const [logs, setLogs] = useState<LogEntry[] | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const { data, isLoading, mutate } = useSWR<LogsResponse>(
+    `${API_URL}/api/campaigns/${campaignId}/send-logs?page=${page}&page_size=10`
+  );
+  const { data: state, mutate: mutateState } = useSWR<CampaignState>(
+    `${API_URL}/api/campaigns/${campaignId}/send-progress`,
+    { refreshInterval: 3000 }
+  );
   const { authFetch } = useApiClient();
-  const hasFetched = useRef(false);
 
-  const fetchLogs = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await authFetch(`${API_URL}/api/campaigns/${campaignId}/send-logs`);
-      if (res.ok) {
-        setLogs(await res.json());
-        hasFetched.current = true;
-      }
-    } catch {
-      // ignore
-    } finally {
-      setLoading(false);
-    }
-  }, [campaignId, authFetch]);
+  const exportLogs = async () => {
+    const response = await authFetch(`${API_URL}/api/campaigns/${campaignId}/logs/export`);
+    if (!response.ok) return;
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `campaign_${campaignId}_send_log.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
 
-  if (!hasFetched.current && !loading) {
-    fetchLogs();
-  }
-
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="flex items-center justify-center py-16 text-sm text-slate-400">
         <Loader2 className="w-4 h-4 animate-spin mr-2" />
@@ -51,12 +58,15 @@ export default function LogsSection({ campaignId }: { campaignId: string }) {
     );
   }
 
-  if (!logs || logs.length === 0) {
+  const logs = data?.items || [];
+  const refresh = () => Promise.all([mutate(), mutateState()]);
+
+  if (logs.length === 0 && !state?.is_waiting && !state?.is_sending && state?.campaign_status !== "paused") {
     return (
       <div className="text-center py-16">
         <p className="text-sm text-slate-400 mb-4">No send logs yet.</p>
         <button
-          onClick={() => { hasFetched.current = false; fetchLogs(); }}
+          onClick={() => void refresh()}
           className="text-xs text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1 mx-auto"
         >
           <RefreshCw className="w-3 h-3" />
@@ -68,18 +78,33 @@ export default function LogsSection({ campaignId }: { campaignId: string }) {
 
   return (
     <div>
+      {state && (state.is_sending || state.is_waiting || state.campaign_status === "paused") && (
+        <div className={`flex items-start gap-3 mb-4 px-4 py-3 border rounded-lg ${state.campaign_status === "paused" ? "border-amber-200 bg-amber-50 text-amber-800" : "border-blue-200 bg-blue-50 text-blue-800"}`}>
+          {state.is_sending ? <Send className="w-4 h-4 mt-0.5 shrink-0" /> : state.campaign_status === "paused" ? <PauseCircle className="w-4 h-4 mt-0.5 shrink-0" /> : <Clock className="w-4 h-4 mt-0.5 shrink-0" />}
+          <div>
+            <div className="text-sm font-semibold">
+              {state.is_sending ? "Sending a batch now" : state.campaign_status === "paused" ? "Campaign paused" : "Waiting for the next batch"}
+            </div>
+            <div className="text-xs mt-0.5 opacity-80">
+              {state.campaign_status === "paused"
+                ? state.pause_reason === "daily_caps_reached" ? "All senders reached today's daily cap." : "Sending will continue after the campaign is resumed."
+                : state.next_batch_at ? `Next batch: ${new Date(state.next_batch_at).toLocaleString()}` : "The worker is checking for due work."}
+            </div>
+          </div>
+        </div>
+      )}
       <div className="flex items-center justify-between mb-3">
-        <span className="text-xs text-slate-400">{logs.length} log entries</span>
+        <span className="text-xs text-slate-400">{data?.total || 0} delivery entries</span>
         <div className="flex gap-2">
           <button
-            onClick={() => { hasFetched.current = false; fetchLogs(); }}
+            onClick={() => void refresh()}
             className="text-xs text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1"
           >
             <RefreshCw className="w-3 h-3" />
             Refresh
           </button>
           <button
-            onClick={() => window.open(`${API_URL}/api/campaigns/${campaignId}/logs/export`, "_blank")}
+            onClick={() => void exportLogs()}
             className="text-xs text-blue-600 hover:text-blue-800 font-medium"
           >
             Export CSV
@@ -121,6 +146,17 @@ export default function LogsSection({ campaignId }: { campaignId: string }) {
           </tbody>
         </table>
       </div>
+      {(data?.pages || 1) > 1 && (
+        <div className="flex items-center justify-end gap-2 mt-3">
+          <button aria-label="Previous log page" title="Previous page" disabled={page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))} className="p-1.5 border border-slate-200 rounded-md disabled:opacity-40 hover:bg-slate-50">
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+          <span className="text-xs text-slate-500">Page {page} of {data?.pages || 1}</span>
+          <button aria-label="Next log page" title="Next page" disabled={page >= (data?.pages || 1)} onClick={() => setPage((value) => value + 1)} className="p-1.5 border border-slate-200 rounded-md disabled:opacity-40 hover:bg-slate-50">
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+      )}
     </div>
   );
 }

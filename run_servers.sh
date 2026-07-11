@@ -27,18 +27,22 @@ echo "Using Node.js version: $(node -v 2>/dev/null || echo 'Unknown')"
 echo ""
 
 
-echo "[1/2] Launching FastAPI Backend on Port 8000..."
+echo "[1/3] Launching FastAPI Backend on Port 8000..."
 ./.venv/bin/python -m uvicorn api.main:app --port 8000 --reload &
 
-echo "[2/2] Launching Next.js Frontend on Port 3000..."
+echo "[2/3] Launching independent delivery worker..."
+./.venv/bin/python -m src.platform.worker &
+
+echo "[3/3] Launching Next.js Frontend on Port 3000..."
 (cd outreach_web && npm run dev) &
 
 echo ""
 echo "========================================="
-echo "Both servers are launching!"
+echo "API, worker, and frontend are launching!"
 echo ""
 echo " - Backend API:  http://127.0.0.1:8000"
 echo " - Frontend Web: http://localhost:3000"
+echo " - Delivery worker: independent process"
 echo "========================================="
 echo ""
 echo "Press Ctrl+C to stop both servers."

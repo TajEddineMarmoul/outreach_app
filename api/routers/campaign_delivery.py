@@ -1,22 +1,37 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+import hmac
+import os
+from datetime import datetime, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from api.auth import get_current_user_id
 from src.platform.db import get_session
-from src.platform.jobs import create_send_jobs_for_next_batch, perform_send_job
+from src.platform.jobs import create_send_jobs_for_next_batch
 from src.platform.models import Campaign, CampaignRecipient, Contact, SendJob, SendLog, Sender
-from src.platform.services import ensure_user, require_group, serialize_group
+from src.platform.scheduler import next_autopilot_run
+from src.platform.services import connected_senders, ensure_user, require_group, serialize_group
+from src.platform.time import utcnow
+from src.platform.worker import recover_stale_jobs, run_worker_cycle
 
 
 router = APIRouter(tags=["campaign-delivery"])
+
+
+@router.post("/internal/worker/tick", tags=["worker"])
+def worker_tick(x_worker_token: str | None = Header(default=None)):
+    expected = os.getenv("WORKER_TICK_TOKEN")
+    if not expected or not x_worker_token or not hmac.compare_digest(x_worker_token, expected):
+        raise HTTPException(status_code=401, detail="Invalid worker token")
+    recovered = recover_stale_jobs(stale_after_minutes=10)
+    processed = run_worker_cycle(max_jobs=25)
+    return {"status": "ok", "recovered": recovered, "processed": processed}
 
 
 class CampaignSenderGroupSelect(BaseModel):
@@ -30,6 +45,37 @@ class SendNowRequest(BaseModel):
 class ScheduleRequest(BaseModel):
     scheduled_at: datetime
     delay_minutes: int = Field(default=5, ge=0, le=1440)
+
+
+class AutopilotRequest(BaseModel):
+    days: list[str] | None = None
+    start_time: str = "09:00"
+    end_time: str = "17:00"
+    delay_minutes: int = Field(default=5, ge=0, le=1440)
+    scheduled_at: datetime | None = None
+
+
+def require_campaign(session: Session, campaign_id: int, user_id: str) -> Campaign:
+    campaign = session.scalar(
+        select(Campaign).where(Campaign.id == campaign_id, Campaign.user_id == user_id)
+    )
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    return campaign
+
+
+def queued_job_ids(session: Session, campaign_id: int, user_id: str) -> list[int]:
+    return list(
+        session.scalars(
+            select(SendJob.id)
+            .where(
+                SendJob.campaign_id == campaign_id,
+                SendJob.user_id == user_id,
+                SendJob.status.in_(("queued", "retry")),
+            )
+            .order_by(SendJob.id)
+        )
+    )
 
 
 def ensure_campaign_shell(
@@ -102,30 +148,23 @@ def post_send_now(
 ):
     logger = logging.getLogger("outreach.send")
     logger.info("send-now start campaign=%s user=%s", campaign_id, user_id)
-    campaign = ensure_campaign_shell(session, campaign_id=campaign_id, user_id=user_id)
+    campaign = require_campaign(session, campaign_id, user_id)
+    previous_status = campaign.status
     logger.info("campaign id=%s status=%s sender_group_id=%s", campaign.id, campaign.status, campaign.selected_sender_group_id)
-    if campaign.status in {"draft", "stopped", "ended"}:
-        campaign.status = "sending"
-        session.commit()
-        logger.info("set campaign status to sending")
     try:
-        existing = list(session.scalars(
-            select(SendJob).where(
-                SendJob.campaign_id == campaign_id,
-                SendJob.status.in_(["queued", "retry"]),
-            ).order_by(SendJob.id)
-        ))
-        logger.info("existing queued/retry jobs count=%s", len(existing))
-        if existing:
-            logger.info("resuming %s existing jobs", len(existing))
+        campaign.status = "sending"
+        campaign.send_settings = {
+            **(campaign.send_settings or {}),
+            "mode": "send_now",
+            "delay_minutes": req.delay_minutes,
+            "pause_reason": None,
+        }
+        existing_ids = queued_job_ids(session, campaign_id, user_id)
+        logger.info("existing queued/retry jobs count=%s", len(existing_ids))
+        if existing_ids:
             session.commit()
-            import threading
-            def _run():
-                for job in existing:
-                    logger.info("processing existing job %s", job.id)
-                    perform_send_job(job.id)
-            threading.Thread(target=_run, daemon=True).start()
-            return {"status": "queued", "queued": len(existing), "mode": "resume"}
+            return {"status": "queued", "queued": len(existing_ids), "mode": "resume"}
+
         logger.info("creating new send jobs batch")
         result = create_send_jobs_for_next_batch(
             session,
@@ -134,24 +173,200 @@ def post_send_now(
             delay_minutes=req.delay_minutes,
         )
         logger.info("create_send_jobs result: %s", result)
+        if result.get("exhausted"):
+            campaign.status = "ended"
+            campaign.scheduled_at = None
+        elif result.get("reason_code") == "daily_caps_reached":
+            campaign.status = "paused"
+            campaign.scheduled_at = None
+            campaign.send_settings = {
+                **(campaign.send_settings or {}),
+                "pause_reason": "daily_caps_reached",
+            }
+        elif not result.get("job_ids"):
+            campaign.status = previous_status
         session.commit()
         job_ids = result.get("job_ids", [])
         if job_ids:
-            logger.info("spawning thread for %s jobs", len(job_ids))
-            import threading
-            def _run():
-                for jid in job_ids:
-                    logger.info("processing new job %s", jid)
-                    perform_send_job(jid)
-            threading.Thread(target=_run, daemon=True).start()
             result["queued"] = len(job_ids)
         else:
             logger.warning("no jobs created, reason: %s", result.get("reason", "unknown"))
+            raise HTTPException(
+                status_code=409,
+                detail=result.get("reason", "No email was queued"),
+            )
     except (LookupError, ValueError) as exc:
         logger.error("send-now error: %s", exc)
         session.rollback()
         raise HTTPException(status_code=400, detail=str(exc))
-    return {"status": "queued", **result}
+    return {"status": "queued" if result.get("queued") else campaign.status, **result}
+
+
+@router.post("/api/campaigns/{campaign_id}/schedule")
+def post_schedule(
+    campaign_id: int,
+    req: ScheduleRequest,
+    session: Session = Depends(get_session),
+    user_id: str = Depends(get_current_user_id),
+):
+    campaign = require_campaign(session, campaign_id, user_id)
+    if not campaign.selected_sender_group_id:
+        raise HTTPException(status_code=400, detail="Campaign does not have a sender group selected")
+    try:
+        group = require_group(session, user_id, campaign.selected_sender_group_id)
+    except LookupError:
+        raise HTTPException(status_code=400, detail="Selected sender group no longer exists")
+    if not connected_senders(group):
+        raise HTTPException(status_code=409, detail="Selected sender group has no connected senders")
+    approved_recipients = session.scalar(
+        select(func.count())
+        .select_from(CampaignRecipient)
+        .where(
+            CampaignRecipient.campaign_id == campaign_id,
+            CampaignRecipient.status == "approved",
+        )
+    ) or 0
+    if approved_recipients == 0:
+        raise HTTPException(status_code=409, detail="Campaign has no approved recipients")
+    scheduled_at = req.scheduled_at
+    if scheduled_at.tzinfo is None:
+        scheduled_at = scheduled_at.replace(tzinfo=timezone.utc)
+    campaign.status = "scheduled"
+    campaign.scheduled_at = scheduled_at.astimezone(timezone.utc)
+    campaign.send_settings = {
+        **(campaign.send_settings or {}),
+        "mode": "send_now",
+        "delay_minutes": req.delay_minutes,
+        "pause_reason": None,
+    }
+    session.commit()
+    return {"status": "scheduled", "scheduled_at": campaign.scheduled_at.isoformat()}
+
+
+@router.post("/api/campaigns/{campaign_id}/autopilot/start")
+def post_autopilot_start(
+    campaign_id: int,
+    req: AutopilotRequest = AutopilotRequest(),
+    session: Session = Depends(get_session),
+    user_id: str = Depends(get_current_user_id),
+):
+    campaign = require_campaign(session, campaign_id, user_id)
+    if not campaign.selected_sender_group_id:
+        raise HTTPException(status_code=400, detail="Campaign does not have a sender group selected")
+    try:
+        group = require_group(session, user_id, campaign.selected_sender_group_id)
+    except LookupError:
+        raise HTTPException(status_code=400, detail="Selected sender group no longer exists")
+    if not connected_senders(group):
+        raise HTTPException(status_code=409, detail="Selected sender group has no connected senders")
+    approved_recipients = session.scalar(
+        select(func.count())
+        .select_from(CampaignRecipient)
+        .where(
+            CampaignRecipient.campaign_id == campaign_id,
+            CampaignRecipient.status == "approved",
+        )
+    ) or 0
+    if approved_recipients == 0:
+        raise HTTPException(status_code=409, detail="Campaign has no approved recipients")
+
+    campaign.status = "autopilot"
+    campaign.send_settings = {
+        **(campaign.send_settings or {}),
+        "mode": "autopilot",
+        "days": req.days or ["monday", "tuesday", "wednesday", "thursday", "friday"],
+        "start_time": req.start_time,
+        "end_time": req.end_time,
+        "delay_minutes": req.delay_minutes,
+        "pause_reason": None,
+    }
+    scheduled_at = req.scheduled_at
+    if scheduled_at is not None:
+        if scheduled_at.tzinfo is None:
+            scheduled_at = scheduled_at.replace(tzinfo=timezone.utc)
+        campaign.scheduled_at = scheduled_at.astimezone(timezone.utc)
+    else:
+        campaign.scheduled_at = next_autopilot_run(session, campaign, now=utcnow())
+    session.commit()
+    return {"status": "autopilot", "scheduled_at": campaign.scheduled_at.isoformat()}
+
+
+@router.post("/api/campaigns/{campaign_id}/pause")
+def post_pause(
+    campaign_id: int,
+    session: Session = Depends(get_session),
+    user_id: str = Depends(get_current_user_id),
+):
+    campaign = require_campaign(session, campaign_id, user_id)
+    campaign.status = "paused"
+    session.commit()
+    return {"status": "paused"}
+
+
+@router.post("/api/campaigns/{campaign_id}/resume")
+def post_resume(
+    campaign_id: int,
+    session: Session = Depends(get_session),
+    user_id: str = Depends(get_current_user_id),
+):
+    campaign = require_campaign(session, campaign_id, user_id)
+    mode = (campaign.send_settings or {}).get("mode", "send_now")
+    campaign.status = "autopilot" if mode == "autopilot" else "sending"
+    job_ids = queued_job_ids(session, campaign_id, user_id)
+    result: dict = {}
+    if not job_ids:
+        try:
+            result = create_send_jobs_for_next_batch(
+                session,
+                user_id=user_id,
+                campaign_id=campaign_id,
+                delay_minutes=int((campaign.send_settings or {}).get("delay_minutes", 5)),
+            )
+        except (LookupError, ValueError) as exc:
+            session.rollback()
+            raise HTTPException(status_code=400, detail=str(exc))
+        job_ids = result.get("job_ids", [])
+        if result.get("exhausted"):
+            campaign.status = "ended"
+            campaign.scheduled_at = None
+        elif result.get("reason_code") == "daily_caps_reached":
+            if mode == "autopilot":
+                campaign.status = "autopilot"
+                campaign.scheduled_at = next_autopilot_run(session, campaign, now=utcnow(), force_next_day=True)
+            else:
+                campaign.status = "paused"
+                campaign.scheduled_at = None
+                campaign.send_settings = {
+                    **(campaign.send_settings or {}),
+                    "pause_reason": "daily_caps_reached",
+                }
+    session.commit()
+    if not job_ids:
+        if mode == "autopilot" and campaign.status == "autopilot":
+            return {
+                "status": "autopilot",
+                "queued": 0,
+                "reason": result.get("reason"),
+                "scheduled_at": campaign.scheduled_at.isoformat() if campaign.scheduled_at else None,
+            }
+        raise HTTPException(
+            status_code=409,
+            detail=result.get("reason", "No email was queued"),
+        )
+    return {"status": "sending", "queued": len(job_ids)}
+
+
+@router.post("/api/campaigns/{campaign_id}/stop")
+def post_stop(
+    campaign_id: int,
+    session: Session = Depends(get_session),
+    user_id: str = Depends(get_current_user_id),
+):
+    campaign = require_campaign(session, campaign_id, user_id)
+    campaign.status = "stopped"
+    campaign.scheduled_at = None
+    session.commit()
+    return {"status": "stopped"}
 
 
 @router.get("/api/campaigns/{campaign_id}/send-progress")
@@ -161,16 +376,17 @@ def get_campaign_send_progress(
     user_id: str = Depends(get_current_user_id),
 ):
     logger = logging.getLogger("outreach.send")
+    campaign = require_campaign(session, campaign_id, user_id)
     total = session.scalar(
         select(func.count()).select_from(CampaignRecipient)
         .where(CampaignRecipient.campaign_id == campaign_id)
     ) or 0
     sent = session.scalar(
-        select(func.count()).select_from(SendLog)
-        .where(SendLog.campaign_id == campaign_id, SendLog.user_id == user_id, SendLog.status.in_(["sent", "test_sent"]))
+        select(func.count(func.distinct(SendLog.recipient_id))).select_from(SendLog)
+        .where(SendLog.campaign_id == campaign_id, SendLog.user_id == user_id, SendLog.status == "sent")
     ) or 0
     failed = session.scalar(
-        select(func.count()).select_from(SendLog)
+        select(func.count(func.distinct(SendLog.recipient_id))).select_from(SendLog)
         .where(SendLog.campaign_id == campaign_id, SendLog.user_id == user_id, SendLog.status == "failed")
     ) or 0
     running_job = session.scalar(
@@ -178,28 +394,63 @@ def get_campaign_send_progress(
     )
     queued = session.scalar(
         select(func.count()).select_from(SendJob)
-        .where(SendJob.campaign_id == campaign_id, SendJob.status == "queued")
+        .where(SendJob.campaign_id == campaign_id, SendJob.status.in_(("queued", "retry")))
     ) or 0
     current_recipient = None
     if running_job:
         contact = session.get(Contact, running_job.recipient_id)
         if contact:
             current_recipient = contact.email_normalized
-    sender_breakdown = list(
+    campaign_sender_counts = dict(
         session.execute(
-            select(SendLog.sender_email, func.count().label("count"))
-            .where(SendLog.campaign_id == campaign_id, SendLog.user_id == user_id)
-            .group_by(SendLog.sender_email)
-        )
+            select(SendLog.sender_id, func.count(func.distinct(SendLog.recipient_id)).label("count"))
+            .where(SendLog.campaign_id == campaign_id, SendLog.user_id == user_id, SendLog.status == "sent")
+            .group_by(SendLog.sender_id)
+        ).all()
     )
+    sender_details = []
+    if campaign.selected_sender_group_id:
+        try:
+            group = require_group(session, user_id, campaign.selected_sender_group_id)
+            group_payload = serialize_group(session, group)
+            for sender in group_payload["senders"]:
+                daily_cap = sender["daily_cap"]
+                remaining = sender["daily_cap_remaining"]
+                warning_threshold = max(2, int(daily_cap * 0.2))
+                sender_details.append(
+                    {
+                        "id": sender["id"],
+                        "email": sender["email"],
+                        "status": sender["status"],
+                        "campaign_sent": campaign_sender_counts.get(sender["id"], 0),
+                        "sent_today": sender["sent_today"],
+                        "daily_cap": daily_cap,
+                        "remaining_today": remaining,
+                        "capacity_state": "exhausted" if remaining == 0 else "low" if remaining <= warning_threshold else "available",
+                        "last_error": sender["last_error"],
+                    }
+                )
+        except LookupError:
+            pass
+    is_running = running_job is not None
+    has_pending_work = sent + failed < total
+    worker_managed = campaign.status in {"sending", "scheduled", "autopilot"}
+    is_waiting = worker_managed and has_pending_work and not is_running and queued == 0
+    pause_reason = (campaign.send_settings or {}).get("pause_reason")
     result = {
+        "campaign_status": campaign.status,
         "total_recipients": total,
         "sent_count": sent,
         "failed_count": failed,
         "queued_count": queued,
-        "is_active": (queued > 0) or (running_job is not None),
+        "is_active": worker_managed and has_pending_work,
+        "is_sending": is_running,
+        "is_waiting": is_waiting,
         "current_recipient": current_recipient,
-        "senders": [{"email": row[0], "count": row[1]} for row in sender_breakdown],
+        "next_batch_at": campaign.scheduled_at.isoformat() if campaign.scheduled_at else None,
+        "delay_minutes": int((campaign.send_settings or {}).get("delay_minutes", 0)),
+        "pause_reason": pause_reason,
+        "senders": sender_details,
     }
     logger.info("send-progress campaign=%s %s", campaign_id, {k: v for k, v in result.items() if k != "senders"})
     return result
@@ -208,27 +459,43 @@ def get_campaign_send_progress(
 @router.get("/api/campaigns/{campaign_id}/send-logs")
 def get_campaign_send_logs(
     campaign_id: int,
+    page: int = 1,
+    page_size: int = 10,
     session: Session = Depends(get_session),
     user_id: str = Depends(get_current_user_id),
 ):
+    require_campaign(session, campaign_id, user_id)
+    page = max(page, 1)
+    page_size = min(max(page_size, 1), 50)
+    total = session.scalar(
+        select(func.count()).select_from(SendLog)
+        .where(SendLog.campaign_id == campaign_id, SendLog.user_id == user_id)
+    ) or 0
     logs = list(
         session.scalars(
             select(SendLog)
             .where(SendLog.campaign_id == campaign_id, SendLog.user_id == user_id)
             .order_by(SendLog.created_at.desc())
-            .limit(100)
+            .offset((page - 1) * page_size)
+            .limit(page_size)
         )
     )
-    return [
-        {
-            "id": log.id,
-            "recipient_email": log.recipient_email,
-            "sender_email": log.sender_email,
-            "subject": log.subject,
-            "status": log.status,
-            "error_message": log.error_message,
-            "sent_at": log.sent_at.isoformat() if log.sent_at else None,
-            "created_at": log.created_at.isoformat() if log.created_at else None,
-        }
-        for log in logs
-    ]
+    return {
+        "items": [
+            {
+                "id": log.id,
+                "recipient_email": log.recipient_email,
+                "sender_email": log.sender_email,
+                "subject": log.subject,
+                "status": log.status,
+                "error_message": log.error_message,
+                "sent_at": log.sent_at.isoformat() if log.sent_at else None,
+                "created_at": log.created_at.isoformat() if log.created_at else None,
+            }
+            for log in logs
+        ],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "pages": max(1, (total + page_size - 1) // page_size),
+    }

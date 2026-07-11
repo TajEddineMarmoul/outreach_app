@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.deps import db, config_path, get_db
+from src.platform.migrations import upgrade_database
 
 app = FastAPI(title="Outreach App API", version="1.0.0")
 
@@ -19,17 +20,13 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
-_scheduler = None
-
 @app.on_event("startup")
 def on_startup():
-    db.init_db()
+    conn = db.init_db()
+    conn.close()
+    upgrade_database()
 
-@app.on_event("shutdown")
-def on_shutdown():
-    pass
-
-from api.routers import campaign_delivery, campaigns, contacts, sender_groups, templates, settings
+from api.routers import campaign_delivery, campaigns, contacts, oauth, sender_groups, templates, settings
 
 app.include_router(sender_groups.router)
 app.include_router(sender_groups.senders_router)
@@ -38,6 +35,7 @@ app.include_router(campaigns.router)
 app.include_router(contacts.router)
 app.include_router(templates.router)
 app.include_router(settings.router)
+app.include_router(oauth.router)
 
 if __name__ == "__main__":
     import uvicorn

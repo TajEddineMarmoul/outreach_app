@@ -1,0 +1,14 @@
+.git/
+.venv/
+outreach_web/node_modules/
+outreach_web/.next/
+outreach_web/.env.local
+__pycache__/
+*.pyc
+.pytest_cache/
+data/
+.env
+credentials.json
+token.json
+tokens/
+*.log

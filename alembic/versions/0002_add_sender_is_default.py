@@ -11,8 +11,12 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("senders", sa.Column("is_default", sa.Integer(), server_default="0", nullable=False))
+    columns = {column["name"] for column in sa.inspect(op.get_bind()).get_columns("senders")}
+    if "is_default" not in columns:
+        op.add_column("senders", sa.Column("is_default", sa.Integer(), server_default="0", nullable=False))
 
 
 def downgrade() -> None:
-    op.drop_column("senders", "is_default")
+    columns = {column["name"] for column in sa.inspect(op.get_bind()).get_columns("senders")}
+    if "is_default" in columns:
+        op.drop_column("senders", "is_default")

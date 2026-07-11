@@ -47,7 +47,10 @@ def require_group(session: Session, user_id: str, group_id: int) -> SenderGroup:
 
 
 def connected_senders(group: SenderGroup) -> list[Sender]:
-    return [sender for sender in group.senders if sender.status == "connected" and sender.encrypted_oauth_credentials]
+    return sorted(
+        [sender for sender in group.senders if sender.status == "connected" and sender.encrypted_oauth_credentials],
+        key=lambda sender: sender.id,
+    )
 
 
 def sender_sent_count_today(session: Session, sender_id: int) -> int:
@@ -125,7 +128,7 @@ def upsert_connected_sender(
     sender = session.scalar(select(Sender).where(Sender.user_id == user_id, Sender.email == normalized))
     now = utcnow()
     existing_default = session.scalar(
-        select(Sender).where(Sender.user_id == user_id, Sender.is_default == True, Sender.status != "removed")
+        select(Sender).where(Sender.user_id == user_id, Sender.is_default == 1, Sender.status != "removed")
     )
     if sender:
         sender.group_id = group_id
@@ -139,7 +142,7 @@ def upsert_connected_sender(
         sender.last_error = None
         sender.recent_error_at = None
         if not existing_default:
-            sender.is_default = True
+            sender.is_default = 1
     else:
         sender = Sender(
             user_id=user_id,
@@ -151,7 +154,7 @@ def upsert_connected_sender(
             status="connected",
             daily_cap=10,
             connected_at=now,
-            is_default=existing_default is None,
+            is_default=1 if existing_default is None else 0,
         )
         session.add(sender)
     session.flush()
@@ -168,4 +171,3 @@ def mark_sender_removed(sender: Sender) -> None:
 
 def mark_oauth_state_used(state: OAuthState) -> None:
     state.used_at = utcnow()
-

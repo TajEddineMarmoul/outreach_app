@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.mutable import MutableDict, MutableList
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -58,7 +58,7 @@ class Sender(Base, TimestampMixin):
     email: Mapped[str] = mapped_column(String(320), nullable=False)
     display_name: Mapped[str] = mapped_column(String(200), default="", nullable=False)
     daily_cap: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
-    is_default: Mapped[bool] = mapped_column(Integer, default=False, nullable=False)
+    is_default: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     status: Mapped[str] = mapped_column(String(40), default="connected", index=True, nullable=False)
     encrypted_oauth_credentials: Mapped[str | None] = mapped_column(Text)
     scopes: Mapped[list[str]] = mapped_column(MutableList.as_mutable(json_type()), default=list, nullable=False)
@@ -83,6 +83,7 @@ class Campaign(Base, TimestampMixin):
     subject_template: Mapped[str] = mapped_column(Text, default="", nullable=False)
     body_template: Mapped[str] = mapped_column(Text, default="", nullable=False)
     fallback_body_template: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    attachment_path: Mapped[str] = mapped_column(Text, default="", nullable=False)
     status: Mapped[str] = mapped_column(String(40), default="draft", index=True, nullable=False)
     send_settings: Mapped[dict] = mapped_column(MutableDict.as_mutable(json_type()), default=dict, nullable=False)
     attachment_metadata: Mapped[dict] = mapped_column(MutableDict.as_mutable(json_type()), default=dict, nullable=False)
@@ -114,7 +115,12 @@ class CampaignRecipient(Base, TimestampMixin):
 
     campaign_id: Mapped[int] = mapped_column(ForeignKey("campaigns.id", ondelete="CASCADE"), primary_key=True)
     contact_id: Mapped[int] = mapped_column(ForeignKey("contacts.id", ondelete="CASCADE"), primary_key=True)
-    status: Mapped[str] = mapped_column(String(40), default="pending", nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(40),
+        default="approved",
+        server_default=text("'approved'"),
+        nullable=False,
+    )
 
 
 class SendJob(Base, TimestampMixin):
@@ -146,6 +152,7 @@ class SendLog(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
     campaign_id: Mapped[int | None] = mapped_column(ForeignKey("campaigns.id", ondelete="SET NULL"), index=True)
+    contact_id: Mapped[int | None] = mapped_column(Integer, index=True)
     recipient_id: Mapped[int | None] = mapped_column(ForeignKey("contacts.id", ondelete="SET NULL"), index=True)
     sender_id: Mapped[int | None] = mapped_column(ForeignKey("senders.id", ondelete="SET NULL"), index=True)
     recipient_email: Mapped[str] = mapped_column(String(320), nullable=False)

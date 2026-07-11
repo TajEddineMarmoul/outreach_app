@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import logging
-import os
+import json
 import secrets
 from datetime import datetime, timedelta
 
 from jinja2 import Environment
-from sqlalchemy import select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -14,7 +14,7 @@ from src.gmail_sender import send_email
 from src.platform.db import SessionLocal
 from src.platform.gmail import gmail_service_for_sender
 from src.platform.models import Campaign, CampaignRecipient, Contact, Sender, SendJob, SendLog
-from src.platform.services import eligible_senders, require_group
+from src.platform.services import connected_senders, eligible_senders, require_group, sender_sent_count_today
 from src.platform.time import utcnow
 
 
@@ -25,23 +25,23 @@ def _render(template: str, context: dict) -> str:
     return TEMPLATE_ENV.from_string(template or "").render(**context)
 
 
-def _rq_queue():
-    redis_url = os.getenv("REDIS_URL")
-    if not redis_url:
-        return None
-    from redis import Redis
-    from rq import Queue
-
-    return Queue("outreach-send", connection=Redis.from_url(redis_url))
-
-
-def enqueue_rq_jobs(job_ids: list[int]) -> int:
-    queue = _rq_queue()
-    if queue is None:
-        return 0
-    for job_id in job_ids:
-        queue.enqueue("src.platform.jobs.perform_send_job", job_id, job_timeout="10m")
-    return len(job_ids)
+def _schedule_after_finished_batch(session: Session, job: SendJob, finished_at: datetime) -> None:
+    session.flush()
+    active_in_batch = session.scalar(
+        select(func.count())
+        .select_from(SendJob)
+        .where(
+            SendJob.batch_id == job.batch_id,
+            SendJob.status.in_(("queued", "running", "retry")),
+        )
+    ) or 0
+    if active_in_batch:
+        return
+    campaign = session.get(Campaign, job.campaign_id)
+    if not campaign or campaign.status in {"paused", "stopped", "ended"}:
+        return
+    delay_minutes = int((campaign.send_settings or {}).get("delay_minutes", 5))
+    campaign.scheduled_at = finished_at + timedelta(minutes=delay_minutes)
 
 
 def create_send_jobs_for_next_batch(
@@ -61,49 +61,93 @@ def create_send_jobs_for_next_batch(
         raise ValueError("Campaign does not have a sender group selected")
 
     group = require_group(session, user_id, campaign.selected_sender_group_id)
+    connected = connected_senders(group)
     senders = eligible_senders(session, group)
     if not senders:
-        return {"created": 0, "queued": 0, "reason": "No eligible connected senders in selected group"}
+        if not connected:
+            reason_code = "no_connected_senders"
+            reason = "No eligible connected senders in selected group"
+        elif all(sender_sent_count_today(session, sender.id) >= sender.daily_cap for sender in connected):
+            reason_code = "daily_caps_reached"
+            reason = "All senders in the selected group reached their daily cap"
+        else:
+            reason_code = "senders_temporarily_unavailable"
+            reason = "Connected senders are temporarily unavailable"
+        return {"created": 0, "queued": 0, "reason_code": reason_code, "reason": reason}
 
+    session.execute(
+        update(CampaignRecipient)
+        .where(
+            CampaignRecipient.campaign_id == campaign_id,
+            or_(
+                CampaignRecipient.status.is_(None),
+                func.trim(CampaignRecipient.status) == "",
+            ),
+        )
+        .values(status="approved")
+    )
+    existing_job = (
+        select(SendJob.id)
+        .where(
+            SendJob.campaign_id == campaign_id,
+            SendJob.recipient_id == CampaignRecipient.contact_id,
+        )
+        .exists()
+    )
     recipients = list(
         session.scalars(
             select(CampaignRecipient)
-            .where(CampaignRecipient.campaign_id == campaign_id)
+            .where(
+                CampaignRecipient.campaign_id == campaign_id,
+                CampaignRecipient.status == "approved",
+                ~existing_job,
+            )
             .order_by(CampaignRecipient.created_at, CampaignRecipient.contact_id)
             .limit(len(senders))
         )
     )
     if not recipients:
-        return {"created": 0, "queued": 0, "reason": "No approved recipients are ready"}
+        return {
+            "created": 0,
+            "queued": 0,
+            "exhausted": True,
+            "reason": "No unsent approved recipients are ready",
+        }
 
     scheduled = scheduled_for or utcnow()
     batch_id = secrets.token_urlsafe(16)
     created_ids: list[int] = []
     for recipient, sender in zip(recipients, senders):
         idempotency_key = f"campaign:{campaign_id}:recipient:{recipient.contact_id}"
-        exists = session.scalar(select(SendJob.id).where(SendJob.idempotency_key == idempotency_key))
-        if exists:
-            continue
-        job = SendJob(
-            user_id=user_id,
-            campaign_id=campaign_id,
-            recipient_id=recipient.contact_id,
-            sender_id=sender.id,
-            status="queued",
-            scheduled_for=scheduled,
-            batch_id=batch_id,
-            idempotency_key=idempotency_key,
-        )
-        session.add(job)
-        recipient.status = "queued"
         try:
-            session.flush()
+            with session.begin_nested():
+                job = SendJob(
+                    user_id=user_id,
+                    campaign_id=campaign_id,
+                    recipient_id=recipient.contact_id,
+                    sender_id=sender.id,
+                    status="queued",
+                    scheduled_for=scheduled,
+                    batch_id=batch_id,
+                    idempotency_key=idempotency_key,
+                )
+                session.add(job)
+                recipient.status = "queued"
+                session.flush()
+                job_id = job.id
         except IntegrityError:
-            session.rollback()
             continue
-        created_ids.append(job.id)
+        created_ids.append(job_id)
 
-    if created_ids and campaign.status == "draft":
+    if not created_ids:
+        return {
+            "created": 0,
+            "queued": 0,
+            "exhausted": False,
+            "reason": "Recipients were queued by another request",
+        }
+
+    if created_ids and campaign.status in {"draft", "scheduled"}:
         campaign.status = "sending"
     if created_ids:
         campaign.scheduled_at = scheduled + timedelta(minutes=delay_minutes)
@@ -113,14 +157,16 @@ def create_send_jobs_for_next_batch(
         "queued": 0,
         "job_ids": created_ids,
         "batch_id": batch_id,
+        "exhausted": False,
         "next_batch_due_at": (scheduled + timedelta(minutes=delay_minutes)).isoformat(),
     }
 
 
-def perform_send_job(job_id: int) -> dict:
+def perform_send_job(job_id: int, *, claimed: bool = False) -> dict:
     logger = logging.getLogger("outreach.send")
     logger.info("perform_send_job start job_id=%s", job_id)
     session = SessionLocal()
+    attempt_log_id: int | None = None
     try:
         job = session.get(SendJob, job_id)
         if not job:
@@ -131,7 +177,8 @@ def perform_send_job(job_id: int) -> dict:
             return {"status": "missing"}
         if job.status == "sent":
             return {"status": "already_sent"}
-        if job.status not in {"queued", "retry"}:
+        allowed_statuses = {"queued", "retry", "running"} if claimed else {"queued", "retry"}
+        if job.status not in allowed_statuses:
             return {"status": job.status}
 
         campaign = session.get(Campaign, job.campaign_id)
@@ -148,21 +195,34 @@ def perform_send_job(job_id: int) -> dict:
         logger.info("job %s campaign_status=%s recipient_status=%s sender_status=%s has_creds=%s", job_id, campaign.status, recipient.status, sender.status, bool(sender.encrypted_oauth_credentials))
         if campaign.status in {"paused", "stopped", "ended"} or recipient.status not in {"queued", "approved"}:
             logger.info("job %s skipped: campaign=%s recipient=%s", job_id, campaign.status, recipient.status)
-            return {"status": "skipped"}
+            if campaign.status == "paused":
+                job.status = "queued"
+                job.locked_at = None
+                session.commit()
+                return {"status": "paused"}
+            job.status = "cancelled"
+            job.locked_at = None
+            session.commit()
+            return {"status": "cancelled"}
         if sender.status != "connected" or not sender.encrypted_oauth_credentials:
             logger.error("job %s sender not connected: status=%s has_creds=%s", job_id, sender.status, bool(sender.encrypted_oauth_credentials))
             raise RuntimeError("Sender is not connected.")
 
-        job.status = "running"
-        job.locked_at = utcnow()
+        if not claimed:
+            job.status = "running"
+            job.locked_at = utcnow()
         job.attempts += 1
-        context = dict(contact.custom_fields or {})
+        custom_fields = contact.custom_fields or {}
+        if isinstance(custom_fields, str):
+            custom_fields = json.loads(custom_fields)
+        context = dict(custom_fields)
         context.setdefault("email", contact.email_normalized)
         subject = _render(campaign.subject_template, context)
         body = _render(campaign.body_template or campaign.fallback_body_template, context)
         log = SendLog(
             user_id=job.user_id,
             campaign_id=job.campaign_id,
+            contact_id=job.recipient_id,
             recipient_id=job.recipient_id,
             sender_id=job.sender_id,
             recipient_email=contact.email_normalized,
@@ -173,6 +233,8 @@ def perform_send_job(job_id: int) -> dict:
         )
         session.add(log)
         session.flush()
+        attempt_log_id = log.id
+        session.commit()
 
         result = send_email(
             sender=sender.email,
@@ -190,6 +252,10 @@ def perform_send_job(job_id: int) -> dict:
         job.status = "sent"
         recipient.status = "sent"
         contact.status = "sent"
+        sender.status = "connected"
+        sender.last_error = None
+        sender.recent_error_at = None
+        _schedule_after_finished_batch(session, job, now)
         session.commit()
         logger.info("perform_send_job success job_id=%s gmail_id=%s", job_id, result.message_id)
         return {"status": "sent", "job_id": job_id}
@@ -200,11 +266,16 @@ def perform_send_job(job_id: int) -> dict:
         if job:
             job.status = "retry" if job.attempts < job.max_attempts else "failed"
             job.error_message = str(exc)
+            if attempt_log_id:
+                attempt_log = session.get(SendLog, attempt_log_id)
+                if attempt_log:
+                    attempt_log.status = "failed"
+                    attempt_log.error_message = str(exc)
             sender = session.get(Sender, job.sender_id)
             if sender:
-                sender.status = "error"
                 sender.last_error = str(exc)
                 sender.recent_error_at = utcnow()
+            _schedule_after_finished_batch(session, job, utcnow())
             session.commit()
         return {"status": "failed", "job_id": job_id, "error": str(exc)}
     finally:

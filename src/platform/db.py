@@ -4,12 +4,14 @@ import os
 from collections.abc import Generator
 from pathlib import Path
 
+from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(PROJECT_ROOT / ".env")
 DEFAULT_SQLITE_URL = f"sqlite:///{(PROJECT_ROOT / 'data' / 'outreach_app.db').as_posix()}"
 
 
@@ -27,14 +29,11 @@ def _normalize_database_url(raw_url: str) -> str:
 
 def get_database_url() -> str:
     env = (os.getenv("APP_ENV") or os.getenv("ENVIRONMENT") or "development").lower()
-    raw_url = os.getenv("APP_DATABASE_URL")
+    raw_url = os.getenv("APP_DATABASE_URL") or os.getenv("DATABASE_URL")
     if raw_url:
         return _normalize_database_url(raw_url)
 
     if env in {"production", "prod"}:
-        raw_url = os.getenv("DATABASE_URL")
-        if raw_url:
-            return _normalize_database_url(raw_url)
         raise RuntimeError("APP_DATABASE_URL or DATABASE_URL is required in production.")
 
     return DEFAULT_SQLITE_URL

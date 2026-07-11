@@ -63,7 +63,7 @@ def contact_context(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
     # Dynamically load all columns present in the imported sheet/CSV (no hardcoding)
     custom_str = contact.get("custom_fields") or "{}"
     try:
-        custom_data = json.loads(custom_str)
+        custom_data = custom_str if isinstance(custom_str, dict) else json.loads(custom_str)
         context.update(custom_data)
     except Exception:
         pass

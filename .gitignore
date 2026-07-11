@@ -6,6 +6,8 @@ __pycache__/
 .claude/skills/developing-with-streamlit/
 
 .env
+*.env.local
+outreach_web/.env.local
 credentials.json
 token.json
 sheets_token.json
