@@ -58,6 +58,18 @@ jobs:
             --region="$REGION" \
             --to-latest \
             --quiet
+          active_revision=$(gcloud run services describe "$BACKEND_SERVICE" \
+            --project="$PROJECT_ID" --region="$REGION" \
+            --format='value(status.traffic[0].revisionName)')
+          active_image=$(gcloud run revisions describe "$active_revision" \
+            --project="$PROJECT_ID" --region="$REGION" \
+            --format='value(spec.containers[0].image)')
+          expected_digest=$(gcloud container images describe "$BACKEND_IMAGE:${GITHUB_SHA}" \
+            --format='value(image_summary.digest)')
+          test "$active_image" = "$BACKEND_IMAGE@$expected_digest" || {
+            echo "Backend traffic verification failed: $active_revision serves $active_image, expected $BACKEND_IMAGE@$expected_digest"
+            exit 1
+          }
 
       - name: Build and deploy frontend
         run: |
@@ -91,6 +103,18 @@ jobs:
             --region="$REGION" \
             --to-latest \
             --quiet
+          active_revision=$(gcloud run services describe "$FRONTEND_SERVICE" \
+            --project="$PROJECT_ID" --region="$REGION" \
+            --format='value(status.traffic[0].revisionName)')
+          active_image=$(gcloud run revisions describe "$active_revision" \
+            --project="$PROJECT_ID" --region="$REGION" \
+            --format='value(spec.containers[0].image)')
+          expected_digest=$(gcloud container images describe "$FRONTEND_IMAGE:${GITHUB_SHA}" \
+            --format='value(image_summary.digest)')
+          test "$active_image" = "$FRONTEND_IMAGE@$expected_digest" || {
+            echo "Frontend traffic verification failed: $active_revision serves $active_image, expected $FRONTEND_IMAGE@$expected_digest"
+            exit 1
+          }
 
       - name: Update worker scheduler
         run: |
