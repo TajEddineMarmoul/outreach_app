@@ -4,6 +4,7 @@ import base64
 import mimetypes
 import os
 import re
+import secrets
 import shutil
 from dataclasses import dataclass
 from email.message import EmailMessage
@@ -258,4 +259,19 @@ def send_email(
     return GmailSendResult(
         message_id=sent["id"],
         thread_id=sent.get("threadId", ""),
+    )
+
+
+def fake_send_email(
+    sender: str,
+    recipient: str,
+    subject: str,
+    body: str,
+    attachment_path: str | Path | None = None,
+    token_path: str | Path | None = None,
+    service=None,
+) -> GmailSendResult:
+    return GmailSendResult(
+        message_id=f"fake_{secrets.token_hex(8)}",
+        thread_id=f"fake_thread_{secrets.token_hex(8)}",
     )

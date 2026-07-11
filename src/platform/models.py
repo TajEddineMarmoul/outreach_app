@@ -93,6 +93,21 @@ class Campaign(Base, TimestampMixin):
     selected_sender_group: Mapped[SenderGroup | None] = relationship(back_populates="campaigns")
 
 
+class AutopilotDaySchedule(Base):
+    __tablename__ = "autopilot_day_schedules"
+    __table_args__ = (
+        UniqueConstraint("campaign_id", "day_of_week", name="uq_autopilot_day_campaign_day"),
+        Index("ix_autopilot_day_schedules_campaign", "campaign_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    campaign_id: Mapped[int] = mapped_column(ForeignKey("campaigns.id", ondelete="CASCADE"), nullable=False)
+    day_of_week: Mapped[str] = mapped_column(String(10), nullable=False)
+    daily_cap: Mapped[int] = mapped_column(Integer, nullable=False)
+    start_time: Mapped[str] = mapped_column(String(5), default="09:00", nullable=False)
+    end_time: Mapped[str] = mapped_column(String(5), default="17:00", nullable=False)
+
+
 class Contact(Base, TimestampMixin):
     __tablename__ = "contacts"
     __table_args__ = (

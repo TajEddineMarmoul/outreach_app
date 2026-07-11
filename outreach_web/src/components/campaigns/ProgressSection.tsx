@@ -20,6 +20,10 @@ interface ProgressData {
   next_batch_at: string | null;
   delay_minutes: number;
   pause_reason: string | null;
+  campaign_daily_cap: number | null;
+  campaign_sent_today: number | null;
+  autopilot_schedule: { day: string; cap: number; start: string; end: string }[] | null;
+  dry_run: boolean;
   senders: {
     id: number;
     email: string;
@@ -91,6 +95,11 @@ export default function ProgressSection({ campaignId }: { campaignId: string }) 
         <div className="flex items-center justify-between mb-2">
           <span className="text-sm font-semibold text-slate-700">
             {stateLabel}
+            {data.dry_run && (
+              <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-purple-100 text-purple-700">
+                TEST MODE
+              </span>
+            )}
           </span>
           <span className="text-xs text-slate-500">{done} / {total} ({pct}%)</span>
         </div>
@@ -133,7 +142,44 @@ export default function ProgressSection({ campaignId }: { campaignId: string }) 
             <div className="text-xs text-amber-700 mt-0.5">
               {data.pause_reason === "daily_caps_reached"
                 ? "Every connected sender has reached today's limit."
-                : "Resume the campaign when you are ready to continue."}
+                : data.pause_reason === "campaign_daily_cap_reached"
+                  ? "Campaign reached its daily sending limit."
+                  : "Resume the campaign when you are ready to continue."}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {data.autopilot_schedule && data.autopilot_schedule.length > 0 && (
+        <div>
+          <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Autopilot schedule</h3>
+          <div className="space-y-1.5">
+            {data.campaign_daily_cap != null && (
+              <div className="flex items-center gap-3 px-3 py-2 bg-blue-50 rounded-lg mb-2">
+                <div className="flex-1">
+                  <div className="flex justify-between text-sm text-slate-700 mb-1">
+                    <span className="font-medium">Today</span>
+                    <span>{data.campaign_sent_today ?? 0} / {data.campaign_daily_cap} used</span>
+                  </div>
+                  <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
+                    <div
+                      className="h-full rounded-full transition-all duration-500 bg-blue-500"
+                      style={{ width: `${Math.min(((data.campaign_sent_today ?? 0) / data.campaign_daily_cap) * 100, 100)}%` }}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+            <div className="flex flex-wrap gap-1.5">
+              {data.autopilot_schedule.map((s) => (
+                <span
+                  key={s.day}
+                  className="text-xs px-2 py-1 rounded bg-slate-100 text-slate-600"
+                  title={`${s.day}: ${s.cap}/day, ${s.start}-${s.end}`}
+                >
+                  {s.day.slice(0, 3)} {s.cap}
+                </span>
+              ))}
             </div>
           </div>
         </div>

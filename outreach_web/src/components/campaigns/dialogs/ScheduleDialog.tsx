@@ -30,11 +30,18 @@ export default function ScheduleDialog({
   // Send now / Schedule fields
   const [bulkDelay, setBulkDelay] = useState(5);
   const [scheduledAt, setScheduledAt] = useState("");
+  const [dryRun, setDryRun] = useState(false);
 
   // Autopilot fields
-  const [days, setDays] = useState<string[]>(["monday", "tuesday", "wednesday", "thursday", "friday"]);
-  const [startTime, setStartTime] = useState("09:00");
-  const [endTime, setEndTime] = useState("17:00");
+  const [autoSchedule, setAutoSchedule] = useState<Record<string, { active: boolean; cap: string; start: string; end: string }>>({
+    monday: { active: true, cap: "10", start: "09:00", end: "17:00" },
+    tuesday: { active: true, cap: "10", start: "09:00", end: "17:00" },
+    wednesday: { active: true, cap: "10", start: "09:00", end: "17:00" },
+    thursday: { active: true, cap: "10", start: "09:00", end: "17:00" },
+    friday: { active: true, cap: "10", start: "09:00", end: "17:00" },
+    saturday: { active: false, cap: "10", start: "09:00", end: "17:00" },
+    sunday: { active: false, cap: "10", start: "09:00", end: "17:00" },
+  });
   const [autoDelay, setAutoDelay] = useState(5);
   const [autoStartAt, setAutoStartAt] = useState("");
 
@@ -48,7 +55,7 @@ export default function ScheduleDialog({
     setSendingAction(true);
     try {
       const endpoint = mode === "send-now" ? "send-now" : "schedule";
-      const body: Record<string, unknown> = { delay_minutes: bulkDelay };
+      const body: Record<string, unknown> = { delay_minutes: bulkDelay, dry_run: dryRun };
       if (mode === "schedule" && scheduledAt) {
         body.scheduled_at = new Date(scheduledAt).toISOString();
       }
@@ -76,11 +83,16 @@ export default function ScheduleDialog({
   const handleAutopilotStart = async () => {
     setSendingAction(true);
     try {
+      const scheduleBody: Record<string, { cap: number; start: string; end: string }> = {};
+      for (const [day, config] of Object.entries(autoSchedule)) {
+        if (config.active) {
+          scheduleBody[day] = { cap: Number(config.cap), start: config.start, end: config.end };
+        }
+      }
       const body: Record<string, unknown> = {
-        days,
-        start_time: startTime,
-        end_time: endTime,
+        schedule: scheduleBody,
         delay_minutes: autoDelay,
+        dry_run: dryRun,
       };
       if (autoStartAt) {
         body.scheduled_at = new Date(autoStartAt).toISOString();
@@ -101,11 +113,6 @@ export default function ScheduleDialog({
     } finally {
       setSendingAction(false);
     }
-  };
-
-  const dayTitles: Record<string, string> = {
-    monday: "M", tuesday: "T", wednesday: "W", thursday: "T",
-    friday: "F", saturday: "S", sunday: "S",
   };
 
   return (
@@ -131,6 +138,10 @@ export default function ScheduleDialog({
               <label className="text-xs font-semibold text-slate-700">Delay between emails (min)</label>
               <Input type="number" min={0} value={bulkDelay} onChange={(e) => setBulkDelay(Number(e.target.value))} />
             </div>
+            <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
+              <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} className="accent-purple-600" />
+              Test mode (no real emails sent)
+            </label>
             <DialogFooter className="pt-2">
               <Button variant="outline" onClick={onClose}>Cancel</Button>
               <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={() => handleBulkSend("send-now")} disabled={sendingAction}>
@@ -152,6 +163,10 @@ export default function ScheduleDialog({
               <label className="text-xs font-semibold text-slate-700">Start at</label>
               <Input type="datetime-local" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)} />
             </div>
+            <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
+              <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} className="accent-purple-600" />
+              Test mode (no real emails sent)
+            </label>
             <DialogFooter className="pt-2">
               <Button variant="outline" onClick={onClose}>Cancel</Button>
               <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={() => handleBulkSend("schedule")} disabled={sendingAction || !scheduledAt}>
@@ -163,46 +178,73 @@ export default function ScheduleDialog({
           {/* 3. Autopilot */}
           <TabsContent value="autopilot" className="py-4 space-y-4">
             <p className="text-xs text-slate-500">
-              Smart drip: respects warmup limits, daily caps, and sending windows.
-              Spreads sends across days intelligently.
+              Configure per-day sending limits and time windows.
+              Days with no checkmark are skipped.
             </p>
 
-            <div className="space-y-2">
-              <label className="text-xs font-semibold text-slate-700">Sending days</label>
-              <div className="flex gap-2">
-                {["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"].map((d) => {
-                  const active = days.includes(d);
-                  return (
-                    <button
-                      type="button"
-                      key={d}
-                      onClick={() => {
-                        if (active) setDays(days.filter((day) => day !== d));
-                        else setDays([...days, d]);
-                      }}
-                      title={d}
-                      className={`w-8 h-8 rounded text-xs font-bold transition-colors ${
-                        active
-                          ? "bg-blue-600 text-white"
-                          : "bg-slate-100 text-slate-500 hover:bg-slate-200"
-                      }`}
-                    >
-                      {dayTitles[d]}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-700">Sending window start</label>
-                <Input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-700">Sending window end</label>
-                <Input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
-              </div>
+            <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+              {["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"].map((d) => {
+                const entry = autoSchedule[d];
+                const dayLabel = d.charAt(0).toUpperCase() + d.slice(1, 3);
+                return (
+                  <div key={d} className="flex items-center gap-2 px-2 py-1.5 bg-slate-50 rounded-lg">
+                    <input
+                      type="checkbox"
+                      checked={entry.active}
+                      onChange={() =>
+                        setAutoSchedule({
+                          ...autoSchedule,
+                          [d]: { ...entry, active: !entry.active },
+                        })
+                      }
+                      className="w-4 h-4 shrink-0 accent-blue-600"
+                    />
+                    <span className="text-xs font-semibold text-slate-700 w-8 shrink-0">{dayLabel}</span>
+                    <div className={`flex items-center gap-1.5 flex-1 ${entry.active ? "" : "opacity-40"}`}>
+                      <Input
+                        type="number"
+                        min={1}
+                        value={entry.cap}
+                        onChange={(e) =>
+                          setAutoSchedule({
+                            ...autoSchedule,
+                            [d]: { ...entry, cap: e.target.value },
+                          })
+                        }
+                        disabled={!entry.active}
+                        className="h-7 w-16 text-xs"
+                        placeholder="Cap"
+                      />
+                      <span className="text-xs text-slate-400 shrink-0">from</span>
+                      <Input
+                        type="time"
+                        value={entry.start}
+                        onChange={(e) =>
+                          setAutoSchedule({
+                            ...autoSchedule,
+                            [d]: { ...entry, start: e.target.value },
+                          })
+                        }
+                        disabled={!entry.active}
+                        className="h-7 w-24 text-xs"
+                      />
+                      <span className="text-xs text-slate-400 shrink-0">to</span>
+                      <Input
+                        type="time"
+                        value={entry.end}
+                        onChange={(e) =>
+                          setAutoSchedule({
+                            ...autoSchedule,
+                            [d]: { ...entry, end: e.target.value },
+                          })
+                        }
+                        disabled={!entry.active}
+                        className="h-7 w-24 text-xs"
+                      />
+                    </div>
+                  </div>
+                );
+              })}
             </div>
 
             <div className="space-y-1">
@@ -214,6 +256,11 @@ export default function ScheduleDialog({
               <label className="text-xs font-semibold text-slate-700">Start at (optional, leave empty to start now)</label>
               <Input type="datetime-local" value={autoStartAt} onChange={(e) => setAutoStartAt(e.target.value)} />
             </div>
+
+            <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
+              <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} className="accent-purple-600" />
+              Test mode (no real emails sent)
+            </label>
 
             <DialogFooter className="pt-2">
               <Button variant="outline" onClick={onClose}>Cancel</Button>

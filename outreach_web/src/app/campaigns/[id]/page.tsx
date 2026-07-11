@@ -34,6 +34,7 @@ import {
   ChevronDown,
   FolderPlus,
   AtSign,
+  UserPlus,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -51,6 +52,7 @@ import PreviewDialog from "@/components/campaigns/dialogs/PreviewDialog";
 import AttachmentDialog from "@/components/campaigns/dialogs/AttachmentDialog";
 import LogsSection from "@/components/campaigns/LogsSection";
 import ProgressSection from "@/components/campaigns/ProgressSection";
+import RecipientsSection from "@/components/campaigns/RecipientsSection";
 import { useApiClient } from "@/lib/api";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
@@ -477,6 +479,10 @@ export default function CampaignEditorPage() {
               <ClipboardList className="w-4 h-4" />
               Logs
             </TabsTrigger>
+            <TabsTrigger value="recipients" className="gap-1.5">
+              <UserPlus className="w-4 h-4" />
+              Recipients
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="composer" className="flex-1 mt-4 overflow-y-auto">
@@ -642,6 +648,12 @@ export default function CampaignEditorPage() {
 
           <TabsContent value="logs" className="flex-1 mt-4">
             <LogsSection campaignId={campaignId as string} />
+          </TabsContent>
+          <TabsContent value="recipients" className="flex-1 mt-4">
+            <RecipientsSection
+              campaignId={campaignId as string}
+              onOpenImport={() => setRecipientsModalOpen(true)}
+            />
           </TabsContent>
         </Tabs>
       </div>

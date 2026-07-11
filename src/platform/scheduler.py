@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.platform.jobs import create_send_jobs_for_next_batch
-from src.platform.models import Campaign, SendJob, UserSettings
+from src.platform.models import AutopilotDaySchedule, Campaign, SendJob, UserSettings
 from src.platform.time import utcnow
 
 
@@ -19,6 +19,15 @@ def _clock(value: str, fallback: time) -> time:
         return time.fromisoformat(value)
     except (TypeError, ValueError):
         return fallback
+
+
+def _load_day_schedules(session: Session, campaign: Campaign) -> dict[str, AutopilotDaySchedule]:
+    schedules = list(
+        session.scalars(
+            select(AutopilotDaySchedule).where(AutopilotDaySchedule.campaign_id == campaign.id)
+        )
+    )
+    return {s.day_of_week: s for s in schedules}
 
 
 def next_autopilot_run(
@@ -36,15 +45,26 @@ def next_autopilot_run(
     except ZoneInfoNotFoundError:
         zone = ZoneInfo("UTC")
     local_now = current.astimezone(zone)
-    allowed_days = set(settings.get("days") or WEEKDAY_NAMES[:5])
-    start = _clock(str(settings.get("start_time", "09:00")), time(9, 0))
-    end = _clock(str(settings.get("end_time", "17:00")), time(17, 0))
+
+    schedules = _load_day_schedules(session, campaign)
+    if schedules:
+        allowed_days = set(schedules.keys())
+    else:
+        allowed_days = set(settings.get("days") or WEEKDAY_NAMES[:5])
 
     first_offset = 1 if force_next_day else 0
     for offset in range(first_offset, 9):
         candidate_date = local_now.date() + timedelta(days=offset)
-        if WEEKDAY_NAMES[candidate_date.weekday()] not in allowed_days:
+        day_name = WEEKDAY_NAMES[candidate_date.weekday()]
+        if day_name not in allowed_days:
             continue
+        if schedules and day_name in schedules:
+            s = schedules[day_name]
+            start = _clock(s.start_time, time(9, 0))
+            end = _clock(s.end_time, time(17, 0))
+        else:
+            start = _clock(str(settings.get("start_time", "09:00")), time(9, 0))
+            end = _clock(str(settings.get("end_time", "17:00")), time(17, 0))
         start_at = datetime.combine(candidate_date, start, tzinfo=zone)
         end_at = datetime.combine(candidate_date, end, tzinfo=zone)
         if offset == 0 and start_at <= local_now <= end_at:
@@ -94,7 +114,7 @@ def enqueue_due_campaign_batches(session: Session, *, limit: int = 25) -> list[d
         if result.get("exhausted"):
             campaign.status = "ended"
             campaign.scheduled_at = None
-        elif result.get("reason_code") == "daily_caps_reached":
+        elif result.get("reason_code") in ("daily_caps_reached", "campaign_daily_cap_reached"):
             if (campaign.send_settings or {}).get("mode") == "autopilot" or campaign.status == "autopilot":
                 campaign.status = "autopilot"
                 campaign.scheduled_at = next_autopilot_run(session, campaign, now=now, force_next_day=True)

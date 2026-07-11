@@ -69,6 +69,22 @@ def sender_sent_count_today(session: Session, sender_id: int) -> int:
     )
 
 
+def campaign_sent_today(session: Session, campaign_id: int) -> int:
+    start = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    return int(
+        session.scalar(
+            select(func.count())
+            .select_from(SendLog)
+            .where(
+                SendLog.campaign_id == campaign_id,
+                SendLog.status.in_(("sent", "test_sent")),
+                SendLog.sent_at >= start,
+            )
+        )
+        or 0
+    )
+
+
 def eligible_senders(session: Session, group: SenderGroup) -> list[Sender]:
     eligible: list[Sender] = []
     for sender in connected_senders(group):

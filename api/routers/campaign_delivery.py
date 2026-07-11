@@ -4,8 +4,9 @@ import logging
 import hmac
 import os
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -14,9 +15,9 @@ from pydantic import BaseModel, Field
 from api.auth import get_current_user_id
 from src.platform.db import get_session
 from src.platform.jobs import create_send_jobs_for_next_batch
-from src.platform.models import Campaign, CampaignRecipient, Contact, SendJob, SendLog, Sender
-from src.platform.scheduler import next_autopilot_run
-from src.platform.services import connected_senders, ensure_user, require_group, serialize_group
+from src.platform.models import AutopilotDaySchedule, Campaign, CampaignRecipient, Contact, SendJob, SendLog, Sender
+from src.platform.scheduler import WEEKDAY_NAMES, next_autopilot_run
+from src.platform.services import campaign_sent_today, connected_senders, ensure_user, require_group, serialize_group
 from src.platform.time import utcnow
 from src.platform.worker import recover_stale_jobs, run_worker_cycle
 
@@ -40,19 +41,26 @@ class CampaignSenderGroupSelect(BaseModel):
 
 class SendNowRequest(BaseModel):
     delay_minutes: int = Field(default=5, ge=0, le=1440)
+    dry_run: bool = False
 
 
 class ScheduleRequest(BaseModel):
     scheduled_at: datetime
     delay_minutes: int = Field(default=5, ge=0, le=1440)
+    dry_run: bool = False
+
+
+class DayScheduleEntry(BaseModel):
+    cap: int = Field(..., ge=1)
+    start: str = "09:00"
+    end: str = "17:00"
 
 
 class AutopilotRequest(BaseModel):
-    days: list[str] | None = None
-    start_time: str = "09:00"
-    end_time: str = "17:00"
+    schedule: dict[str, DayScheduleEntry] | None = None
     delay_minutes: int = Field(default=5, ge=0, le=1440)
     scheduled_at: datetime | None = None
+    dry_run: bool = False
 
 
 def require_campaign(session: Session, campaign_id: int, user_id: str) -> Campaign:
@@ -157,6 +165,7 @@ def post_send_now(
             **(campaign.send_settings or {}),
             "mode": "send_now",
             "delay_minutes": req.delay_minutes,
+            "dry_run": req.dry_run,
             "pause_reason": None,
         }
         existing_ids = queued_job_ids(session, campaign_id, user_id)
@@ -237,6 +246,7 @@ def post_schedule(
         **(campaign.send_settings or {}),
         "mode": "send_now",
         "delay_minutes": req.delay_minutes,
+        "dry_run": req.dry_run,
         "pause_reason": None,
     }
     session.commit()
@@ -274,12 +284,25 @@ def post_autopilot_start(
     campaign.send_settings = {
         **(campaign.send_settings or {}),
         "mode": "autopilot",
-        "days": req.days or ["monday", "tuesday", "wednesday", "thursday", "friday"],
-        "start_time": req.start_time,
-        "end_time": req.end_time,
         "delay_minutes": req.delay_minutes,
+        "dry_run": req.dry_run,
         "pause_reason": None,
     }
+
+    session.execute(
+        delete(AutopilotDaySchedule).where(AutopilotDaySchedule.campaign_id == campaign.id)
+    )
+    if req.schedule:
+        for day_name, entry in req.schedule.items():
+            session.add(
+                AutopilotDaySchedule(
+                    campaign_id=campaign.id,
+                    day_of_week=day_name,
+                    daily_cap=entry.cap,
+                    start_time=entry.start,
+                    end_time=entry.end,
+                )
+            )
     scheduled_at = req.scheduled_at
     if scheduled_at is not None:
         if scheduled_at.tzinfo is None:
@@ -329,7 +352,7 @@ def post_resume(
         if result.get("exhausted"):
             campaign.status = "ended"
             campaign.scheduled_at = None
-        elif result.get("reason_code") == "daily_caps_reached":
+        elif result.get("reason_code") in ("daily_caps_reached", "campaign_daily_cap_reached"):
             if mode == "autopilot":
                 campaign.status = "autopilot"
                 campaign.scheduled_at = next_autopilot_run(session, campaign, now=utcnow(), force_next_day=True)
@@ -338,7 +361,7 @@ def post_resume(
                 campaign.scheduled_at = None
                 campaign.send_settings = {
                     **(campaign.send_settings or {}),
-                    "pause_reason": "daily_caps_reached",
+                    "pause_reason": result.get("reason_code", "daily_caps_reached"),
                 }
     session.commit()
     if not job_ids:
@@ -437,6 +460,15 @@ def get_campaign_send_progress(
     worker_managed = campaign.status in {"sending", "scheduled", "autopilot"}
     is_waiting = worker_managed and has_pending_work and not is_running and queued == 0
     pause_reason = (campaign.send_settings or {}).get("pause_reason")
+    day_schedules = list(
+        session.scalars(
+            select(AutopilotDaySchedule).where(AutopilotDaySchedule.campaign_id == campaign.id)
+        )
+    )
+    today_schedule = next(
+        (s for s in day_schedules if s.day_of_week == WEEKDAY_NAMES[utcnow().astimezone(ZoneInfo("UTC")).weekday()]),
+        None,
+    )
     result = {
         "campaign_status": campaign.status,
         "total_recipients": total,
@@ -451,6 +483,13 @@ def get_campaign_send_progress(
         "delay_minutes": int((campaign.send_settings or {}).get("delay_minutes", 0)),
         "pause_reason": pause_reason,
         "senders": sender_details,
+        "autopilot_schedule": [
+            {"day": s.day_of_week, "cap": s.daily_cap, "start": s.start_time, "end": s.end_time}
+            for s in day_schedules
+        ],
+        "campaign_sent_today": campaign_sent_today(session, campaign.id) if today_schedule else None,
+        "campaign_daily_cap": today_schedule.daily_cap if today_schedule else None,
+        "dry_run": (campaign.send_settings or {}).get("dry_run", False),
     }
     logger.info("send-progress campaign=%s %s", campaign_id, {k: v for k, v in result.items() if k != "senders"})
     return result
@@ -499,3 +538,97 @@ def get_campaign_send_logs(
         "page_size": page_size,
         "pages": max(1, (total + page_size - 1) // page_size),
     }
+
+
+@router.get("/api/campaigns/{campaign_id}/recipients")
+def get_campaign_recipients(
+    campaign_id: int,
+    search: str = "",
+    page: int = 1,
+    page_size: int = 50,
+    session: Session = Depends(get_session),
+    user_id: str = Depends(get_current_user_id),
+):
+    require_campaign(session, campaign_id, user_id)
+    page = max(page, 1)
+    page_size = min(max(page_size, 1), 200)
+
+    base = (
+        select(CampaignRecipient, Contact)
+        .join(Contact, CampaignRecipient.contact_id == Contact.id)
+        .where(CampaignRecipient.campaign_id == campaign_id, Contact.user_id == user_id)
+    )
+    if search:
+        base = base.where(Contact.email_normalized.ilike(f"%{search.strip()}%"))
+
+    total = session.scalar(select(func.count()).select_from(base.subquery())) or 0
+    rows = list(
+        session.execute(
+            base.order_by(CampaignRecipient.created_at, Contact.id)
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+    )
+
+    return {
+        "items": [
+            {
+                "contact_id": cr.contact_id,
+                "email": c.email_normalized,
+                "custom_fields": c.custom_fields or {},
+                "status": cr.status,
+                "source_type": c.source_type,
+                "created_at": cr.created_at.isoformat() if cr.created_at else None,
+            }
+            for cr, c in rows
+        ],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "pages": max(1, (total + page_size - 1) // page_size),
+    }
+
+
+@router.patch("/api/campaigns/{campaign_id}/recipients/{contact_id}/reset")
+def patch_recipient_reset(
+    campaign_id: int,
+    contact_id: int,
+    session: Session = Depends(get_session),
+    user_id: str = Depends(get_current_user_id),
+):
+    require_campaign(session, campaign_id, user_id)
+    recipient = session.get(CampaignRecipient, {"campaign_id": campaign_id, "contact_id": contact_id})
+    if not recipient:
+        raise HTTPException(status_code=404, detail="Recipient not found in this campaign")
+    session.execute(
+        delete(SendJob).where(
+            SendJob.campaign_id == campaign_id,
+            SendJob.recipient_id == contact_id,
+            SendJob.status.in_(("queued", "retry", "running")),
+        )
+    )
+    recipient.status = "approved"
+    session.commit()
+    return {"status": "success"}
+
+
+@router.delete("/api/campaigns/{campaign_id}/recipients/{contact_id}")
+def delete_campaign_recipient(
+    campaign_id: int,
+    contact_id: int,
+    session: Session = Depends(get_session),
+    user_id: str = Depends(get_current_user_id),
+):
+    require_campaign(session, campaign_id, user_id)
+    recipient = session.get(CampaignRecipient, {"campaign_id": campaign_id, "contact_id": contact_id})
+    if not recipient:
+        raise HTTPException(status_code=404, detail="Recipient not found in this campaign")
+    session.execute(
+        delete(SendJob).where(
+            SendJob.campaign_id == campaign_id,
+            SendJob.recipient_id == contact_id,
+        )
+    )
+    session.delete(recipient)
+    session.commit()
+    return {"status": "success"}

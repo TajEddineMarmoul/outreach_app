@@ -4,17 +4,26 @@ import logging
 import json
 import secrets
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from jinja2 import Environment
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from src.gmail_sender import send_email
+from src.gmail_sender import fake_send_email, send_email
 from src.platform.db import SessionLocal
 from src.platform.gmail import gmail_service_for_sender
-from src.platform.models import Campaign, CampaignRecipient, Contact, Sender, SendJob, SendLog
-from src.platform.services import connected_senders, eligible_senders, require_group, sender_sent_count_today
+from src.platform.models import AutopilotDaySchedule, Campaign, CampaignRecipient, Contact, Sender, SendJob, SendLog, UserSettings
+
+WEEKDAY_NAMES = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+from src.platform.services import (
+    campaign_sent_today,
+    connected_senders,
+    eligible_senders,
+    require_group,
+    sender_sent_count_today,
+)
 from src.platform.time import utcnow
 
 
@@ -75,6 +84,33 @@ def create_send_jobs_for_next_batch(
             reason = "Connected senders are temporarily unavailable"
         return {"created": 0, "queued": 0, "reason_code": reason_code, "reason": reason}
 
+    max_to_send = len(senders)
+    is_autopilot = (campaign.send_settings or {}).get("mode") == "autopilot"
+    if is_autopilot:
+        user_settings = session.get(UserSettings, campaign.user_id)
+        try:
+            zone = ZoneInfo(user_settings.timezone if user_settings else "UTC")
+        except ZoneInfoNotFoundError:
+            zone = ZoneInfo("UTC")
+        today_name = WEEKDAY_NAMES[utcnow().astimezone(zone).weekday()]
+        day_schedule = session.scalar(
+            select(AutopilotDaySchedule).where(
+                AutopilotDaySchedule.campaign_id == campaign.id,
+                AutopilotDaySchedule.day_of_week == today_name,
+            )
+        )
+        if day_schedule:
+            sent_today = campaign_sent_today(session, campaign.id)
+            remaining_campaign = day_schedule.daily_cap - sent_today
+            if remaining_campaign <= 0:
+                return {
+                    "created": 0,
+                    "queued": 0,
+                    "reason_code": "campaign_daily_cap_reached",
+                    "reason": "Campaign reached its daily sending limit",
+                }
+            max_to_send = min(max_to_send, remaining_campaign)
+
     session.execute(
         update(CampaignRecipient)
         .where(
@@ -103,7 +139,7 @@ def create_send_jobs_for_next_batch(
                 ~existing_job,
             )
             .order_by(CampaignRecipient.created_at, CampaignRecipient.contact_id)
-            .limit(len(senders))
+            .limit(max_to_send)
         )
     )
     if not recipients:
@@ -236,7 +272,9 @@ def perform_send_job(job_id: int, *, claimed: bool = False) -> dict:
         attempt_log_id = log.id
         session.commit()
 
-        result = send_email(
+        dry_run = (campaign.send_settings or {}).get("dry_run", False)
+        send_fn = fake_send_email if dry_run else send_email
+        result = send_fn(
             sender=sender.email,
             recipient=contact.email_normalized,
             subject=subject,
