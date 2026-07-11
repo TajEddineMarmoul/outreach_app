@@ -153,7 +153,7 @@ export default function ContactsPage() {
                     <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
                     <span className="text-sm">Loading group contacts...</span>
                   </div>
-                ) : !groupContacts || groupContacts.length === 0 ? (
+                ) : !groupContacts?.items || groupContacts.items.length === 0 ? (
                   <div className="p-16 text-center space-y-3">
                     <div className="mx-auto w-12 h-12 bg-slate-50 border border-slate-200 rounded-full flex items-center justify-center text-slate-400">
                       <Users className="w-5 h-5" />
@@ -167,24 +167,24 @@ export default function ContactsPage() {
                   <div>
                     <div className="px-6 py-4 border-b border-slate-150 bg-slate-50 flex items-center justify-between">
                       <h4 className="font-bold text-slate-800 text-sm">
-                        Showing {groupContacts.length} contacts
+                        Showing {groupContacts.items.length} contacts
                       </h4>
                     </div>
                     <Table>
                       <TableHeader className="bg-slate-50">
                         <TableRow>
                           <TableHead className="font-semibold text-slate-700">Email</TableHead>
-                          <TableHead className="font-semibold text-slate-700">First Name</TableHead>
-                          <TableHead className="font-semibold text-slate-700">Company Name</TableHead>
+                          <TableHead className="font-semibold text-slate-700">Name</TableHead>
+                          <TableHead className="font-semibold text-slate-700">Company</TableHead>
                           <TableHead className="font-semibold text-slate-700">Status</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {groupContacts.map((c: any) => (
-                          <TableRow key={c.id}>
+                        {groupContacts.items.map((c: any) => (
+                          <TableRow key={c.contact_id}>
                             <TableCell className="font-semibold text-slate-900">{c.email}</TableCell>
-                            <TableCell className="text-slate-700">{c.first_name}</TableCell>
-                            <TableCell className="text-slate-700">{c.company_name || "Unknown"}</TableCell>
+                            <TableCell className="text-slate-700">{[c.custom_fields?.first_name, c.custom_fields?.last_name].filter(Boolean).join(" ") || "—"}</TableCell>
+                            <TableCell className="text-slate-700">{c.custom_fields?.company || "—"}</TableCell>
                             <TableCell>{getStatusBadge(c.status || "pending")}</TableCell>
                           </TableRow>
                         ))}

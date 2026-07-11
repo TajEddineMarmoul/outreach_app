@@ -305,11 +305,6 @@ def set_default_sender(sender_id: int, conn=Depends(get_db), user_id: str = Depe
     return {"status": "success"}
 
 
-@router.get("/api/campaigns/{campaign_id}/recipients")
-def get_campaign_recipients(campaign_id: int, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
-    contacts = db.campaign_contacts(conn, campaign_id, user_id)
-    return [dict(contact) for contact in contacts]
-
 def import_and_attach_df(conn, campaign_id: int, df: pd.DataFrame, mapping: dict, source_type: str, url: str = "", user_id: str = "default_user"):
     result = import_dataframe(
         df,
