@@ -90,6 +90,6 @@ jobs:
             --schedule='* * * * *' \
             --uri="${{ secrets.BACKEND_URL }}/internal/worker/tick" \
             --http-method=POST \
-            --headers="X-Worker-Token=${{ secrets.WORKER_TICK_TOKEN }}" \
+            --update-headers="X-Worker-Token=${{ secrets.WORKER_TICK_TOKEN }}" \
             --time-zone=UTC \
             --quiet
