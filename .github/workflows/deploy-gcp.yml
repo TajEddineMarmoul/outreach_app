@@ -53,6 +53,11 @@ jobs:
             --region="$REGION" \
             --image="$BACKEND_IMAGE:${GITHUB_SHA}" \
             --quiet
+          gcloud run services update-traffic "$BACKEND_SERVICE" \
+            --project="$PROJECT_ID" \
+            --region="$REGION" \
+            --to-latest \
+            --quiet
 
       - name: Build and deploy frontend
         run: |
@@ -80,6 +85,11 @@ jobs:
             --min=0 \
             --allow-unauthenticated \
             --update-env-vars="CLERK_SECRET_KEY=${{ secrets.CLERK_SECRET_KEY }}" \
+            --quiet
+          gcloud run services update-traffic "$FRONTEND_SERVICE" \
+            --project="$PROJECT_ID" \
+            --region="$REGION" \
+            --to-latest \
             --quiet
 
       - name: Update worker scheduler
