@@ -104,6 +104,38 @@ def delete_campaign(campaign_id: int, conn=Depends(get_db), user_id: str = Depen
     campaign = db.get_campaign(conn, campaign_id, user_id)
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
+    from sqlalchemy import delete as sa_delete, select
+    from src.platform.db import SessionLocal
+    from src.platform.models import (
+        AutopilotDaySchedule,
+        Campaign as PlatformCampaign,
+        CampaignRecipient as PlatformCampaignRecipient,
+        SendJob,
+        SendLog as PlatformSendLog,
+    )
+    platform_session = SessionLocal()
+    try:
+        platform_campaign = platform_session.scalar(
+            select(PlatformCampaign).where(
+                PlatformCampaign.id == campaign_id,
+                PlatformCampaign.user_id == user_id,
+            )
+        )
+        if platform_campaign:
+            platform_session.execute(sa_delete(SendJob).where(SendJob.campaign_id == campaign_id))
+            platform_session.execute(
+                sa_delete(AutopilotDaySchedule).where(AutopilotDaySchedule.campaign_id == campaign_id)
+            )
+            platform_session.execute(sa_delete(PlatformSendLog).where(PlatformSendLog.campaign_id == campaign_id))
+            platform_session.execute(
+                sa_delete(PlatformCampaignRecipient).where(
+                    PlatformCampaignRecipient.campaign_id == campaign_id
+                )
+            )
+            platform_session.delete(platform_campaign)
+            platform_session.commit()
+    finally:
+        platform_session.close()
     db.delete_campaign(conn, campaign_id, user_id)
     return {"status": "success"}
 
@@ -296,15 +328,6 @@ def list_senders(conn=Depends(get_db), user_id: str = Depends(get_current_user_i
     return [dict(s) for s in senders]
 
 
-@router.patch("/api/senders/{sender_id}/default")
-def set_default_sender(sender_id: int, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
-    sender = db.get_sender(conn, sender_id, user_id)
-    if not sender:
-        raise HTTPException(status_code=404, detail="Sender not found")
-    db.set_default_sender(conn, sender_id, user_id)
-    return {"status": "success"}
-
-
 def import_and_attach_df(conn, campaign_id: int, df: pd.DataFrame, mapping: dict, source_type: str, url: str = "", user_id: str = "default_user"):
     result = import_dataframe(
         df,
@@ -387,17 +410,32 @@ def post_recipients_select_existing(campaign_id: int, req: RecipientsSelectExist
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
     
+    requested_ids = [int(cid) for cid in req.contact_ids]
+    placeholders = ",".join("?" for _ in requested_ids)
+    valid_contact_ids = {
+        int(row["id"])
+        for row in conn.execute(
+            f"SELECT id FROM contacts WHERE user_id = ? AND id IN ({placeholders})",
+            [user_id, *requested_ids],
+        ).fetchall()
+    } if requested_ids else set()
     attached = 0
-    for cid in req.contact_ids:
+    for cid in valid_contact_ids:
         # Check if recipient already exists
         count = conn.execute(
             "SELECT COUNT(*) AS count FROM campaign_recipients WHERE campaign_id = ? AND contact_id = ?",
             (campaign_id, cid)
         ).fetchone()["count"]
         if count == 0:
+            contact = conn.execute(
+                "SELECT status FROM contacts WHERE id = ? AND user_id = ?",
+                (cid, user_id),
+            ).fetchone()
+            if not contact:
+                continue
             conn.execute(
-                "INSERT INTO campaign_recipients (campaign_id, contact_id, created_at) VALUES (?, ?, ?)",
-                (campaign_id, cid, db.utcnow_iso())
+                "INSERT INTO campaign_recipients (campaign_id, contact_id, status, created_at) VALUES (?, ?, ?, ?)",
+                (campaign_id, cid, contact["status"] or "pending", db.utcnow_iso())
             )
             attached += 1
     conn.commit()
@@ -507,32 +545,27 @@ def get_campaign_preview(campaign_id: int, limit: int = 1000, conn=Depends(get_d
 @router.post("/api/campaigns/{campaign_id}/preview/generate")
 def post_generate_previews(campaign_id: int, limit: Optional[int] = None, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
     from src.preview import generate_preview
+    campaign = db.get_campaign(conn, campaign_id, user_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
     contacts = db.campaign_contacts(conn, campaign_id, user_id, limit=limit)
     count = 0
     now = db.utcnow_iso()
-    first_body = None
-    first_subject = None
     for c in contacts:
         preview = generate_preview(conn, int(c["id"]), user_id, campaign_id=campaign_id, mark=False)
-        if count == 0:
-            first_body = preview.body
-            first_subject = preview.subject
-            print(f"DEBUG GENERATE ID 1: subject={preview.subject!r}, body_len={len(preview.body or '')}, body={preview.body!r}")
         conn.execute(
             """
             UPDATE contacts
             SET preview_generated_at = ?, last_preview_subject = ?, last_preview_body = ?,
                 updated_at = ?
-            WHERE id = ?
+            WHERE id = ? AND user_id = ?
             """,
-            (now, preview.subject, preview.body, now, int(c["id"])),
+            (now, preview.subject, preview.body, now, int(c["id"]), user_id),
         )
         count += 1
     conn.commit()
     return {
         "generated": count,
-        "debug_first_subject": first_subject,
-        "debug_first_body": first_body,
     }
 
 class ApproveRecipientsRequest(BaseModel):
@@ -541,14 +574,47 @@ class ApproveRecipientsRequest(BaseModel):
 @router.post("/api/campaigns/{campaign_id}/recipients/approve")
 def post_approve_recipients(campaign_id: int, req: ApproveRecipientsRequest, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
     from src.preview import approve_contacts
+    campaign = db.get_campaign(conn, campaign_id, user_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
     if req.contact_ids is not None:
-        approved = approve_contacts(conn, req.contact_ids, user_id)
+        requested_ids = [int(contact_id) for contact_id in req.contact_ids]
+        placeholders = ",".join("?" for _ in requested_ids)
+        attached_ids = {
+            int(row["contact_id"])
+            for row in conn.execute(
+                f"SELECT contact_id FROM campaign_recipients WHERE campaign_id = ? AND contact_id IN ({placeholders})",
+                [campaign_id, *requested_ids],
+            ).fetchall()
+        } if requested_ids else set()
+        approved = approve_contacts(conn, list(attached_ids), user_id)
+        approved_ids = {
+            int(row["id"])
+            for row in conn.execute(
+                f"SELECT id FROM contacts WHERE user_id = ? AND status = 'approved' AND id IN ({','.join('?' for _ in attached_ids)})",
+                [user_id, *attached_ids],
+            ).fetchall()
+        } if attached_ids else set()
     else:
         pending = [
             row["id"] for row in db.campaign_contacts(conn, campaign_id, user_id, statuses=("pending",))
             if row["preview_generated_at"] is not None
         ]
         approved = approve_contacts(conn, pending, user_id)
+        approved_ids = {
+            int(row["id"])
+            for row in conn.execute(
+                f"SELECT id FROM contacts WHERE user_id = ? AND status = 'approved' AND id IN ({','.join('?' for _ in pending)})",
+                [user_id, *pending],
+            ).fetchall()
+        } if pending else set()
+    if approved_ids:
+        placeholders = ",".join("?" for _ in approved_ids)
+        conn.execute(
+            f"UPDATE campaign_recipients SET status = 'approved' WHERE campaign_id = ? AND contact_id IN ({placeholders})",
+            [campaign_id, *approved_ids],
+        )
+        conn.commit()
     return {"approved": approved}
 
 class RejectRecipientsRequest(BaseModel):
@@ -557,7 +623,27 @@ class RejectRecipientsRequest(BaseModel):
 @router.post("/api/campaigns/{campaign_id}/recipients/reject")
 def post_reject_recipients(campaign_id: int, req: RejectRecipientsRequest, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
     from src.preview import reject_contacts
-    rejected = reject_contacts(conn, req.contact_ids, user_id)
+    campaign = db.get_campaign(conn, campaign_id, user_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    requested_ids = [int(contact_id) for contact_id in req.contact_ids]
+    placeholders = ",".join("?" for _ in requested_ids)
+    attached_ids = {
+        int(row["contact_id"])
+        for row in conn.execute(
+            f"SELECT contact_id FROM campaign_recipients WHERE campaign_id = ? AND contact_id IN ({placeholders})",
+            [campaign_id, *requested_ids],
+        ).fetchall()
+    } if requested_ids else set()
+    rejected = reject_contacts(conn, list(attached_ids), user_id)
+    db.set_contacts_status(conn, attached_ids, "rejected", user_id)
+    if attached_ids:
+        placeholders = ",".join("?" for _ in attached_ids)
+        conn.execute(
+            f"UPDATE campaign_recipients SET status = 'rejected' WHERE campaign_id = ? AND contact_id IN ({placeholders})",
+            [campaign_id, *attached_ids],
+        )
+        conn.commit()
     return {"rejected": rejected}
 
 @router.post("/api/campaigns/{campaign_id}/test-send")
@@ -597,9 +683,19 @@ def post_test_send(campaign_id: int, req: TestSendRequest, conn=Depends(get_db),
 
             platform_session = SessionLocal()
             try:
+                from src.platform.models import Campaign as PlatformCampaign
+                platform_campaign = platform_session.scalar(
+                    select(PlatformCampaign).where(
+                        PlatformCampaign.id == campaign_id,
+                        PlatformCampaign.user_id == user_id,
+                    )
+                )
+                if not platform_campaign or not platform_campaign.selected_sender_group_id:
+                    raise HTTPException(status_code=400, detail="Campaign has no sender group selected")
                 platform_sender = platform_session.scalar(
                     select(PlatformSender).where(
                         PlatformSender.user_id == user_id,
+                        PlatformSender.group_id == platform_campaign.selected_sender_group_id,
                         PlatformSender.status == "connected",
                     ).order_by(PlatformSender.is_default.desc(), PlatformSender.id).limit(1)
                 )

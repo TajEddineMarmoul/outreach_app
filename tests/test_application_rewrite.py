@@ -343,6 +343,97 @@ def test_next_batch_queues_one_email_per_connected_sender(tmp_path, monkeypatch)
     session.close()
 
 
+def test_next_batch_does_not_queue_pending_contact(tmp_path):
+    session_factory = make_session_factory(tmp_path)
+    session = session_factory()
+    ensure_user(session, USER_ID)
+    group = SenderGroup(user_id=USER_ID, name="Pending contacts")
+    session.add(group)
+    session.flush()
+    sender = Sender(
+        user_id=USER_ID,
+        group_id=group.id,
+        email="sender@example.com",
+        status="connected",
+        daily_cap=10,
+        encrypted_oauth_credentials="encrypted",
+    )
+    campaign = Campaign(
+        user_id=USER_ID,
+        selected_sender_group_id=group.id,
+        name="Pending contact test",
+        status="sending",
+    )
+    contact = Contact(user_id=USER_ID, email_normalized="pending@example.com", status="pending")
+    session.add_all([sender, campaign, contact])
+    session.flush()
+    session.add(CampaignRecipient(campaign_id=campaign.id, contact_id=contact.id, status="approved"))
+    session.commit()
+
+    result = create_send_jobs_for_next_batch(session, user_id=USER_ID, campaign_id=campaign.id)
+    assert result["created"] == 0
+    assert result["exhausted"] is True
+    assert session.scalar(select(SendJob.id)) is None
+    session.close()
+
+
+def test_reset_recipient_removes_terminal_job_and_starts_new_attempt_boundary(tmp_path):
+    session_factory = make_session_factory(tmp_path)
+    install_session_override(session_factory)
+    try:
+        session = session_factory()
+        ensure_user(session, USER_ID)
+        group = SenderGroup(user_id=USER_ID, name="Reset flow")
+        session.add(group)
+        session.flush()
+        sender = Sender(
+            user_id=USER_ID,
+            group_id=group.id,
+            email="sender@example.com",
+            status="connected",
+            daily_cap=10,
+            encrypted_oauth_credentials="encrypted",
+        )
+        campaign = Campaign(user_id=USER_ID, selected_sender_group_id=group.id, name="Reset flow", status="sending")
+        contact = Contact(user_id=USER_ID, email_normalized="sent@example.com", status="sent")
+        session.add_all([sender, campaign, contact])
+        session.flush()
+        recipient = CampaignRecipient(campaign_id=campaign.id, contact_id=contact.id, status="sent")
+        job = SendJob(
+            user_id=USER_ID,
+            campaign_id=campaign.id,
+            recipient_id=contact.id,
+            sender_id=sender.id,
+            status="sent",
+            scheduled_for=utcnow(),
+            batch_id="old-batch",
+            idempotency_key=f"campaign:{campaign.id}:recipient:{contact.id}",
+        )
+        session.add_all([recipient, job])
+        session.commit()
+        campaign_id = campaign.id
+        contact_id = contact.id
+        session.close()
+
+        response = TestClient(app).patch(
+            f"/api/campaigns/{campaign_id}/recipients/{contact_id}/reset",
+            headers=HEADERS,
+        )
+        assert response.status_code == 200
+
+        session = session_factory()
+        updated = session.get(CampaignRecipient, {"campaign_id": campaign_id, "contact_id": contact_id})
+        assert updated.status == "approved"
+        assert updated.reset_at is not None
+        assert session.get(Contact, contact_id).status == "approved"
+        assert session.scalar(select(SendJob.id)) is None
+        retry = create_send_jobs_for_next_batch(session, user_id=USER_ID, campaign_id=campaign_id)
+        assert retry["created"] == 1
+        session.close()
+    finally:
+        clear_session_override()
+
+
 def test_next_batch_skips_capped_senders_and_uses_remaining_sender(tmp_path):
     session_factory = make_session_factory(tmp_path)
     session = session_factory()

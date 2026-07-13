@@ -94,6 +94,13 @@ def add_campaign_recipients(
     attached = 0
     for contact_id in contact_ids:
         normalized_contact_id = int(contact_id)
+        contact = conn.execute(
+            "SELECT status FROM contacts WHERE id = ?",
+            (normalized_contact_id,),
+        ).fetchone()
+        if not contact:
+            continue
+        recipient_status = str(contact["status"] or ContactStatus.PENDING.value)
         existing = conn.execute(
             """
             SELECT 1
@@ -107,10 +114,10 @@ def add_campaign_recipients(
             continue
         conn.execute(
             """
-            INSERT INTO campaign_recipients(campaign_id, contact_id, created_at)
-            VALUES (?, ?, ?)
+            INSERT INTO campaign_recipients(campaign_id, contact_id, status, created_at)
+            VALUES (?, ?, ?, ?)
             """,
-            (campaign_id, normalized_contact_id, now),
+            (campaign_id, normalized_contact_id, recipient_status, now),
         )
         attached += 1
     conn.commit()

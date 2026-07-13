@@ -230,9 +230,11 @@ def post_schedule(
     approved_recipients = session.scalar(
         select(func.count())
         .select_from(CampaignRecipient)
+        .join(Contact, Contact.id == CampaignRecipient.contact_id)
         .where(
             CampaignRecipient.campaign_id == campaign_id,
             CampaignRecipient.status == "approved",
+            Contact.status == "approved",
         )
     ) or 0
     if approved_recipients == 0:
@@ -272,9 +274,11 @@ def post_autopilot_start(
     approved_recipients = session.scalar(
         select(func.count())
         .select_from(CampaignRecipient)
+        .join(Contact, Contact.id == CampaignRecipient.contact_id)
         .where(
             CampaignRecipient.campaign_id == campaign_id,
             CampaignRecipient.status == "approved",
+            Contact.status == "approved",
         )
     ) or 0
     if approved_recipients == 0:
@@ -386,10 +390,29 @@ def post_stop(
     user_id: str = Depends(get_current_user_id),
 ):
     campaign = require_campaign(session, campaign_id, user_id)
+    active_jobs = list(
+        session.scalars(
+            select(SendJob).where(
+                SendJob.campaign_id == campaign_id,
+                SendJob.status.in_(("queued", "retry", "running")),
+            )
+        )
+    )
+    for job in active_jobs:
+        recipient = session.get(
+            CampaignRecipient,
+            {"campaign_id": campaign_id, "contact_id": job.recipient_id},
+        )
+        if recipient and recipient.status == "queued":
+            recipient.status = "approved"
+        # Remove active attempts so a later resume can reuse the recipient's
+        # idempotency key. A worker that already claimed the job will observe
+        # the campaign's stopped status before sending.
+        session.delete(job)
     campaign.status = "stopped"
     campaign.scheduled_at = None
     session.commit()
-    return {"status": "stopped"}
+    return {"status": "stopped", "cancelled": len(active_jobs)}
 
 
 @router.get("/api/campaigns/{campaign_id}/send-progress")
@@ -608,7 +631,7 @@ def get_campaign_recipients(
                 "contact_id": cr.contact_id,
                 "email": c.email_normalized,
                 "custom_fields": c.custom_fields or {},
-                "status": cr.status,
+                "status": cr.status if c.status == "approved" else c.status,
                 "source_type": c.source_type,
                 "created_at": cr.created_at.isoformat() if cr.created_at else None,
             }
@@ -639,6 +662,9 @@ def patch_recipient_reset(
         )
     )
     recipient.status = "approved"
+    contact = session.get(Contact, contact_id)
+    if contact and contact.user_id == user_id and contact.status == "sent":
+        contact.status = "approved"
     recipient.reset_at = utcnow()
     session.commit()
     return {"status": "success", "reset_at": recipient.reset_at.isoformat()}

@@ -127,14 +127,18 @@ def create_send_jobs_for_next_batch(
         .where(
             SendJob.campaign_id == campaign_id,
             SendJob.recipient_id == CampaignRecipient.contact_id,
+            SendJob.status.in_(("queued", "running", "retry", "sent")),
         )
         .exists()
     )
     recipients = list(
         session.scalars(
             select(CampaignRecipient)
+            .join(Contact, Contact.id == CampaignRecipient.contact_id)
             .where(
                 CampaignRecipient.campaign_id == campaign_id,
+                Contact.user_id == user_id,
+                Contact.status == "approved",
                 CampaignRecipient.status == "approved",
                 ~existing_job,
             )
