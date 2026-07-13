@@ -405,12 +405,34 @@ def get_campaign_send_progress(
         .where(CampaignRecipient.campaign_id == campaign_id)
     ) or 0
     sent = session.scalar(
-        select(func.count(func.distinct(SendLog.recipient_id))).select_from(SendLog)
-        .where(SendLog.campaign_id == campaign_id, SendLog.user_id == user_id, SendLog.status == "sent")
+        select(func.count(func.distinct(SendLog.recipient_id)))
+        .select_from(SendLog)
+        .join(
+            CampaignRecipient,
+            (CampaignRecipient.campaign_id == SendLog.campaign_id)
+            & (CampaignRecipient.contact_id == SendLog.recipient_id),
+        )
+        .where(
+            SendLog.campaign_id == campaign_id,
+            SendLog.user_id == user_id,
+            SendLog.status == "sent",
+            (CampaignRecipient.reset_at.is_(None) | (SendLog.sent_at >= CampaignRecipient.reset_at)),
+        )
     ) or 0
     failed = session.scalar(
-        select(func.count(func.distinct(SendLog.recipient_id))).select_from(SendLog)
-        .where(SendLog.campaign_id == campaign_id, SendLog.user_id == user_id, SendLog.status == "failed")
+        select(func.count(func.distinct(SendLog.recipient_id)))
+        .select_from(SendLog)
+        .join(
+            CampaignRecipient,
+            (CampaignRecipient.campaign_id == SendLog.campaign_id)
+            & (CampaignRecipient.contact_id == SendLog.recipient_id),
+        )
+        .where(
+            SendLog.campaign_id == campaign_id,
+            SendLog.user_id == user_id,
+            SendLog.status == "failed",
+            (CampaignRecipient.reset_at.is_(None) | (SendLog.created_at >= CampaignRecipient.reset_at)),
+        )
     ) or 0
     running_job = session.scalar(
         select(SendJob).where(SendJob.campaign_id == campaign_id, SendJob.status == "running").limit(1)
@@ -427,7 +449,17 @@ def get_campaign_send_progress(
     campaign_sender_counts = dict(
         session.execute(
             select(SendLog.sender_id, func.count(func.distinct(SendLog.recipient_id)).label("count"))
-            .where(SendLog.campaign_id == campaign_id, SendLog.user_id == user_id, SendLog.status == "sent")
+            .join(
+                CampaignRecipient,
+                (CampaignRecipient.campaign_id == SendLog.campaign_id)
+                & (CampaignRecipient.contact_id == SendLog.recipient_id),
+            )
+            .where(
+                SendLog.campaign_id == campaign_id,
+                SendLog.user_id == user_id,
+                SendLog.status == "sent",
+                (CampaignRecipient.reset_at.is_(None) | (SendLog.sent_at >= CampaignRecipient.reset_at)),
+            )
             .group_by(SendLog.sender_id)
         ).all()
     )
@@ -604,12 +636,12 @@ def patch_recipient_reset(
         delete(SendJob).where(
             SendJob.campaign_id == campaign_id,
             SendJob.recipient_id == contact_id,
-            SendJob.status.in_(("queued", "retry", "running")),
         )
     )
     recipient.status = "approved"
+    recipient.reset_at = utcnow()
     session.commit()
-    return {"status": "success"}
+    return {"status": "success", "reset_at": recipient.reset_at.isoformat()}
 
 
 @router.delete("/api/campaigns/{campaign_id}/recipients/{contact_id}")

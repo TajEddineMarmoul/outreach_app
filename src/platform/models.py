@@ -136,6 +136,7 @@ class CampaignRecipient(Base, TimestampMixin):
         server_default=text("'approved'"),
         nullable=False,
     )
+    reset_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class SendJob(Base, TimestampMixin):
