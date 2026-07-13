@@ -24,6 +24,7 @@ from src.platform.time import utcnow
 
 CONNECTED_SENDER_STATUSES = {"connected"}
 WEEKDAY_NAMES = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+SENDER_ERROR_COOLDOWN = timedelta(minutes=15)
 
 
 def _aware_utc(value: datetime) -> datetime:
@@ -126,6 +127,9 @@ def ensure_user(session: Session, user_id: str, email: str | None = None) -> Use
     if user:
         if email and user.email != email:
             user.email = email
+        if session.get(UserSettings, user_id) is None:
+            session.add(UserSettings(user_id=user_id))
+            session.flush()
         return user
     user = User(id=user_id, email=email)
     session.add(user)
@@ -152,18 +156,23 @@ def connected_senders(group: SenderGroup) -> list[Sender]:
     )
 
 
-def sender_sent_count_today(session: Session, sender_id: int) -> int:
+def sender_sent_count_today(
+    session: Session,
+    sender_id: int,
+    *,
+    now: datetime | None = None,
+) -> int:
     sender = session.get(Sender, sender_id)
     if not sender:
         return 0
-    start, end = local_day_bounds(session, sender.user_id)
+    start, end = local_day_bounds(session, sender.user_id, now=now)
     return int(
         session.scalar(
             select(func.count())
             .select_from(SendLog)
             .where(
                 SendLog.sender_id == sender_id,
-                SendLog.status.in_(("sent", "test_sent")),
+                SendLog.status == "sent",
                 SendLog.sent_at >= start,
                 SendLog.sent_at < end,
             )
@@ -172,11 +181,16 @@ def sender_sent_count_today(session: Session, sender_id: int) -> int:
     )
 
 
-def campaign_sent_today(session: Session, campaign_id: int) -> int:
+def campaign_sent_today(
+    session: Session,
+    campaign_id: int,
+    *,
+    now: datetime | None = None,
+) -> int:
     campaign = session.get(Campaign, campaign_id)
     if not campaign:
         return 0
-    start, end = local_day_bounds(session, campaign.user_id)
+    start, end = local_day_bounds(session, campaign.user_id, now=now)
     return int(
         session.scalar(
             select(func.count())
@@ -192,9 +206,14 @@ def campaign_sent_today(session: Session, campaign_id: int) -> int:
     )
 
 
-def campaign_reserved_today(session: Session, campaign: Campaign) -> int:
+def campaign_reserved_today(
+    session: Session,
+    campaign: Campaign,
+    *,
+    now: datetime | None = None,
+) -> int:
     """Count queued work already reserved against today's campaign cap."""
-    start, end = local_day_bounds(session, campaign.user_id)
+    start, end = local_day_bounds(session, campaign.user_id, now=now)
     return int(
         session.scalar(
             select(func.count())
@@ -210,7 +229,90 @@ def campaign_reserved_today(session: Session, campaign: Campaign) -> int:
     )
 
 
-def eligible_senders(session: Session, group: SenderGroup, *, lock: bool = False) -> list[Sender]:
+def sender_reserved_today(
+    session: Session,
+    sender: Sender,
+    *,
+    now: datetime | None = None,
+) -> int:
+    """Count active jobs holding one of the sender's slots for the local day."""
+    start, end = local_day_bounds(session, sender.user_id, now=now)
+    return int(
+        session.scalar(
+            select(func.count())
+            .select_from(SendJob)
+            .where(
+                SendJob.sender_id == sender.id,
+                SendJob.status.in_(("queued", "running", "retry")),
+                SendJob.scheduled_for >= start,
+                SendJob.scheduled_for < end,
+            )
+        )
+        or 0
+    )
+
+
+def delivery_policy_state(
+    session: Session,
+    campaign: Campaign,
+    sender: Sender,
+    *,
+    now: datetime | None = None,
+) -> dict:
+    """Evaluate mutable send constraints immediately before external delivery."""
+    current = _aware_utc(now or utcnow())
+    if (campaign.send_settings or {}).get("mode") == "autopilot":
+        window = autopilot_window_state(session, campaign, now=current)
+        if not window["allowed"]:
+            return window
+
+        schedule = window["schedule"]
+        if schedule:
+            campaign_usage = campaign_sent_today(session, campaign.id, now=current)
+            campaign_reservations = campaign_reserved_today(session, campaign, now=current)
+            if campaign_usage + campaign_reservations > schedule.daily_cap:
+                return {
+                    "allowed": False,
+                    "reason_code": "campaign_daily_cap_reached",
+                    "reason": "Campaign reached its daily sending limit",
+                    "next_at": next_autopilot_run(
+                        session,
+                        campaign,
+                        now=current,
+                        force_next_day=True,
+                    ),
+                }
+
+    sent_by_sender = sender_sent_count_today(session, sender.id, now=current)
+    sender_reservations = sender_reserved_today(session, sender, now=current)
+    if sent_by_sender + sender_reservations > sender.daily_cap:
+        return {
+            "allowed": False,
+            "reason_code": "sender_daily_cap_reached",
+            "reason": f"{sender.email} reached its daily sending limit",
+            "next_at": None,
+        }
+
+    if sender.recent_error_at:
+        cooldown_ends_at = _aware_utc(sender.recent_error_at) + SENDER_ERROR_COOLDOWN
+        if current < cooldown_ends_at:
+            return {
+                "allowed": False,
+                "reason_code": "sender_cooldown",
+                "reason": f"{sender.email} is cooling down after a delivery error",
+                "next_at": cooldown_ends_at,
+            }
+
+    return {"allowed": True, "reason_code": None, "reason": None, "next_at": current}
+
+
+def eligible_senders(
+    session: Session,
+    group: SenderGroup,
+    *,
+    lock: bool = False,
+    now: datetime | None = None,
+) -> list[Sender]:
     eligible: list[Sender] = []
     candidates = connected_senders(group)
     if lock:
@@ -224,20 +326,14 @@ def eligible_senders(session: Session, group: SenderGroup, *, lock: bool = False
             )
         ) if candidate_ids else []
     for sender in candidates:
-        start, end = local_day_bounds(session, sender.user_id)
-        sender_reserved = session.scalar(
-            select(func.count())
-            .select_from(SendJob)
-            .where(
-                SendJob.sender_id == sender.id,
-                SendJob.status.in_(("queued", "running", "retry")),
-                SendJob.scheduled_for >= start,
-                SendJob.scheduled_for < end,
-            )
-        ) or 0
-        if sender_sent_count_today(session, sender.id) + int(sender_reserved) >= sender.daily_cap:
+        sender_reserved = sender_reserved_today(session, sender, now=now)
+        if sender_sent_count_today(session, sender.id, now=now) + sender_reserved >= sender.daily_cap:
             continue
-        if sender.recent_error_at and utcnow() - sender.recent_error_at < timedelta(minutes=15):
+        current = _aware_utc(now or utcnow())
+        if (
+            sender.recent_error_at
+            and current - _aware_utc(sender.recent_error_at) < SENDER_ERROR_COOLDOWN
+        ):
             continue
         eligible.append(sender)
     return eligible

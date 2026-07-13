@@ -15,11 +15,13 @@ from src.platform.db import SessionLocal
 from src.platform.gmail import gmail_service_for_sender
 from src.platform.models import Campaign, CampaignRecipient, Contact, Sender, SendJob, SendLog
 from src.platform.services import (
+    SENDER_ERROR_COOLDOWN,
     WEEKDAY_NAMES,
     autopilot_window_state,
     campaign_sent_today,
     campaign_reserved_today,
     connected_senders,
+    delivery_policy_state,
     eligible_senders,
     next_autopilot_run,
     require_group,
@@ -57,6 +59,45 @@ def _schedule_after_finished_batch(session: Session, job: SendJob, finished_at: 
         if (campaign.send_settings or {}).get("mode") == "autopilot"
         else next_due
     )
+
+
+def _defer_disallowed_job(
+    session: Session,
+    *,
+    job: SendJob,
+    campaign: Campaign,
+    recipient: CampaignRecipient,
+    policy: dict,
+    now: datetime,
+) -> dict:
+    reason_code = str(policy["reason_code"])
+    next_at = policy.get("next_at")
+    job.locked_at = None
+
+    if reason_code in {"sender_daily_cap_reached", "campaign_daily_cap_reached"}:
+        recipient.status = "approved"
+        session.delete(job)
+        if reason_code == "campaign_daily_cap_reached":
+            campaign.scheduled_at = next_at
+        else:
+            campaign.scheduled_at = now
+    else:
+        job.status = "retry"
+        job.scheduled_for = next_at or now + SENDER_ERROR_COOLDOWN
+        campaign.scheduled_at = job.scheduled_for
+
+    campaign.send_settings = {
+        **(campaign.send_settings or {}),
+        "pause_reason": reason_code,
+    }
+    session.commit()
+    return {
+        "status": "deferred",
+        "job_id": job.id if reason_code not in {"sender_daily_cap_reached", "campaign_daily_cap_reached"} else None,
+        "reason_code": reason_code,
+        "reason": policy["reason"],
+        "scheduled_for": next_at.isoformat() if next_at else None,
+    }
 
 
 def create_send_jobs_for_next_batch(
@@ -216,7 +257,14 @@ def perform_send_job(job_id: int, *, claimed: bool = False) -> dict:
     session = SessionLocal()
     attempt_log_id: int | None = None
     try:
-        job = session.get(SendJob, job_id)
+        initial_job = session.get(SendJob, job_id)
+        if not initial_job:
+            logger.warning("job %s not found", job_id)
+            return {"status": "missing"}
+        campaign = session.scalar(
+            select(Campaign).where(Campaign.id == initial_job.campaign_id).with_for_update()
+        )
+        job = session.scalar(select(SendJob).where(SendJob.id == job_id).with_for_update())
         if not job:
             logger.warning("job %s not found", job_id)
         else:
@@ -229,9 +277,8 @@ def perform_send_job(job_id: int, *, claimed: bool = False) -> dict:
         if job.status not in allowed_statuses:
             return {"status": job.status}
 
-        campaign = session.get(Campaign, job.campaign_id)
         contact = session.get(Contact, job.recipient_id)
-        sender = session.get(Sender, job.sender_id)
+        sender = session.scalar(select(Sender).where(Sender.id == job.sender_id).with_for_update())
         recipient = session.get(CampaignRecipient, {"campaign_id": job.campaign_id, "contact_id": job.recipient_id})
         if not campaign or not contact or not sender or not recipient:
             msg = "Campaign, contact, sender, or campaign recipient no longer exists."
@@ -241,24 +288,71 @@ def perform_send_job(job_id: int, *, claimed: bool = False) -> dict:
             session.commit()
             return {"status": "failed", "error": msg}
         logger.info("job %s campaign_status=%s recipient_status=%s sender_status=%s has_creds=%s", job_id, campaign.status, recipient.status, sender.status, bool(sender.encrypted_oauth_credentials))
-        if campaign.status in {"paused", "stopped", "ended"} or recipient.status not in {"queued", "approved"}:
-            logger.info("job %s skipped: campaign=%s recipient=%s", job_id, campaign.status, recipient.status)
-            if campaign.status == "paused":
-                job.status = "queued"
-                job.locked_at = None
-                session.commit()
-                return {"status": "paused"}
-            job.status = "cancelled"
+        if campaign.status == "paused":
+            logger.info("job %s paused with campaign", job_id)
+            job.status = "queued"
             job.locked_at = None
             session.commit()
-            return {"status": "cancelled"}
+            return {"status": "paused"}
+        if campaign.status in {"stopped", "ended"}:
+            logger.info("job %s cancelled because campaign is %s", job_id, campaign.status)
+            if recipient.status == "queued":
+                recipient.status = "approved"
+            session.delete(job)
+            session.commit()
+            return {"status": "cancelled", "reason_code": f"campaign_{campaign.status}"}
+        if recipient.status not in {"queued", "approved"} or contact.status not in {"approved", "sent"}:
+            logger.info(
+                "job %s cancelled because recipient=%s contact=%s",
+                job_id,
+                recipient.status,
+                contact.status,
+            )
+            if contact.status == "do_not_contact":
+                recipient.status = "rejected"
+            session.delete(job)
+            _schedule_after_finished_batch(session, job, utcnow())
+            session.commit()
+            return {"status": "cancelled", "reason_code": "recipient_ineligible"}
         if sender.status != "connected" or not sender.encrypted_oauth_credentials:
             logger.error("job %s sender not connected: status=%s has_creds=%s", job_id, sender.status, bool(sender.encrypted_oauth_credentials))
-            raise RuntimeError("Sender is not connected.")
+            recipient.status = "approved"
+            session.delete(job)
+            campaign.scheduled_at = utcnow()
+            campaign.send_settings = {
+                **(campaign.send_settings or {}),
+                "pause_reason": "sender_unavailable",
+            }
+            session.commit()
+            return {
+                "status": "deferred",
+                "job_id": None,
+                "reason_code": "sender_unavailable",
+                "reason": "The assigned sender is no longer connected",
+            }
+
+        now = utcnow()
+        job.scheduled_for = now
+        session.flush()
+        policy = delivery_policy_state(session, campaign, sender, now=now)
+        if not policy["allowed"]:
+            logger.info(
+                "job %s deferred by delivery policy: %s",
+                job_id,
+                policy["reason_code"],
+            )
+            return _defer_disallowed_job(
+                session,
+                job=job,
+                campaign=campaign,
+                recipient=recipient,
+                policy=policy,
+                now=now,
+            )
 
         if not claimed:
             job.status = "running"
-            job.locked_at = utcnow()
+            job.locked_at = now
         job.attempts += 1
         custom_fields = contact.custom_fields or {}
         if isinstance(custom_fields, str):
@@ -292,10 +386,10 @@ def perform_send_job(job_id: int, *, claimed: bool = False) -> dict:
             subject=subject,
             body=body,
             attachment_path=(campaign.attachment_metadata or {}).get("path"),
-            service=gmail_service_for_sender(session, sender),
+            service=None if dry_run else gmail_service_for_sender(session, sender),
         )
         now = utcnow()
-        log.status = "sent"
+        log.status = "test_sent" if dry_run else "sent"
         log.sent_at = now
         log.gmail_message_id = result.message_id
         log.gmail_thread_id = result.thread_id
@@ -319,7 +413,8 @@ def perform_send_job(job_id: int, *, claimed: bool = False) -> dict:
             job.error_message = str(exc)
             job.locked_at = None
             if not final_failure:
-                job.scheduled_for = utcnow() + timedelta(minutes=min(2 ** max(job.attempts - 1, 0), 15))
+                backoff = timedelta(minutes=min(2 ** max(job.attempts - 1, 0), 15))
+                job.scheduled_for = utcnow() + max(backoff, SENDER_ERROR_COOLDOWN)
             if attempt_log_id:
                 attempt_log = session.get(SendLog, attempt_log_id)
                 if attempt_log:

@@ -925,6 +925,466 @@ def test_perform_send_job_sends_and_persists_delivery_state(tmp_path, monkeypatc
     session.close()
 
 
+def test_settings_timezone_is_the_timezone_used_by_delivery(tmp_path):
+    session_factory = make_session_factory(tmp_path)
+    install_session_override(session_factory)
+    try:
+        client = TestClient(app)
+        response = client.patch(
+            "/api/settings",
+            json={
+                "timezone": "America/New_York",
+                "max_daily_cap": 75,
+                "bounce_rate_pause_threshold": 4.5,
+                "max_consecutive_errors": 6,
+            },
+            headers=HEADERS,
+        )
+        assert response.status_code == 200
+
+        session = session_factory()
+        settings = session.get(UserSettings, USER_ID)
+        assert settings.timezone == "America/New_York"
+        assert settings.defaults["max_daily_cap"] == 75
+        assert platform_services.user_zone(session, USER_ID).key == "America/New_York"
+        session.close()
+
+        invalid = client.patch(
+            "/api/settings",
+            json={
+                "timezone": "Mars/Olympus",
+                "max_daily_cap": 75,
+                "bounce_rate_pause_threshold": 4.5,
+                "max_consecutive_errors": 6,
+            },
+            headers=HEADERS,
+        )
+        assert invalid.status_code == 422
+    finally:
+        clear_session_override()
+
+
+def test_progress_does_not_count_recovered_attempt_as_terminal_failure(tmp_path):
+    session_factory = make_session_factory(tmp_path)
+    install_session_override(session_factory)
+    try:
+        campaign_id, sender_ids, contact_ids = _seed_delivery_campaign(
+            session_factory,
+            recipient_count=1,
+        )
+        session = session_factory()
+        campaign = session.get(Campaign, campaign_id)
+        campaign.status = "sending"
+        recipient = session.get(
+            CampaignRecipient,
+            {"campaign_id": campaign_id, "contact_id": contact_ids[0]},
+        )
+        recipient.status = "sent"
+        session.add_all(
+            [
+                SendLog(
+                    user_id=USER_ID,
+                    campaign_id=campaign_id,
+                    contact_id=contact_ids[0],
+                    recipient_id=contact_ids[0],
+                    sender_id=sender_ids[0],
+                    recipient_email="lead1@example.com",
+                    sender_email="sender1@example.com",
+                    subject="Subject",
+                    status="failed",
+                    error_message="Transient Gmail error",
+                ),
+                SendLog(
+                    user_id=USER_ID,
+                    campaign_id=campaign_id,
+                    contact_id=contact_ids[0],
+                    recipient_id=contact_ids[0],
+                    sender_id=sender_ids[0],
+                    recipient_email="lead1@example.com",
+                    sender_email="sender1@example.com",
+                    subject="Subject",
+                    status="sent",
+                    sent_at=utcnow(),
+                ),
+            ]
+        )
+        session.commit()
+        session.close()
+
+        response = TestClient(app).get(
+            f"/api/campaigns/{campaign_id}/send-progress",
+            headers=HEADERS,
+        )
+        assert response.status_code == 200
+        assert response.json()["sent_count"] == 1
+        assert response.json()["failed_count"] == 0
+    finally:
+        clear_session_override()
+
+
+def test_delivery_rechecks_autopilot_cap_before_third_send(tmp_path, monkeypatch):
+    fixed_now = datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc)
+    session_factory = make_session_factory(tmp_path)
+    campaign_id, sender_ids, contact_ids = _seed_delivery_campaign(
+        session_factory,
+        recipient_count=3,
+    )
+    session = session_factory()
+    campaign = session.get(Campaign, campaign_id)
+    campaign.status = "autopilot"
+    campaign.send_settings = {"mode": "autopilot", "delay_minutes": 5}
+    session.add_all(
+        AutopilotDaySchedule(
+            campaign_id=campaign_id,
+            day_of_week=day,
+            daily_cap=2,
+            start_time="00:00",
+            end_time="23:59",
+        )
+        for day in WEEKDAY_NAMES
+    )
+    for contact_id in contact_ids[:2]:
+        session.get(
+            CampaignRecipient,
+            {"campaign_id": campaign_id, "contact_id": contact_id},
+        ).status = "sent"
+        session.add(
+            SendLog(
+                user_id=USER_ID,
+                campaign_id=campaign_id,
+                contact_id=contact_id,
+                recipient_id=contact_id,
+                sender_id=sender_ids[0],
+                recipient_email=f"lead{contact_id}@example.com",
+                sender_email="sender1@example.com",
+                subject="Subject",
+                status="sent",
+                sent_at=fixed_now - timedelta(minutes=5),
+            )
+        )
+    pending_contact_id = contact_ids[2]
+    session.get(
+        CampaignRecipient,
+        {"campaign_id": campaign_id, "contact_id": pending_contact_id},
+    ).status = "queued"
+    job = SendJob(
+        user_id=USER_ID,
+        campaign_id=campaign_id,
+        recipient_id=pending_contact_id,
+        sender_id=sender_ids[0],
+        status="running",
+        scheduled_for=fixed_now - timedelta(days=1),
+        locked_at=fixed_now,
+        batch_id="cap-recheck",
+        idempotency_key=f"campaign:{campaign_id}:recipient:{pending_contact_id}",
+    )
+    session.add(job)
+    session.commit()
+    job_id = job.id
+    session.close()
+
+    monkeypatch.setattr(platform_jobs, "SessionLocal", session_factory)
+    monkeypatch.setattr(platform_jobs, "utcnow", lambda: fixed_now)
+    send_email_mock = MagicMock()
+    monkeypatch.setattr(platform_jobs, "send_email", send_email_mock)
+
+    result = platform_jobs.perform_send_job(job_id, claimed=True)
+    assert result["status"] == "deferred"
+    assert result["reason_code"] == "campaign_daily_cap_reached"
+    send_email_mock.assert_not_called()
+
+    session = session_factory()
+    assert session.get(SendJob, job_id) is None
+    assert session.get(
+        CampaignRecipient,
+        {"campaign_id": campaign_id, "contact_id": pending_contact_id},
+    ).status == "approved"
+    scheduled_at = session.get(Campaign, campaign_id).scheduled_at
+    assert scheduled_at.replace(tzinfo=timezone.utc) > fixed_now
+    session.close()
+
+
+def test_delivery_rechecks_autopilot_window_before_gmail(tmp_path, monkeypatch):
+    fixed_now = datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc)
+    session_factory = make_session_factory(tmp_path)
+    campaign_id, sender_ids, contact_ids = _seed_delivery_campaign(
+        session_factory,
+        recipient_count=1,
+    )
+    session = session_factory()
+    campaign = session.get(Campaign, campaign_id)
+    campaign.status = "autopilot"
+    campaign.send_settings = {"mode": "autopilot", "delay_minutes": 5}
+    session.add(
+        AutopilotDaySchedule(
+            campaign_id=campaign_id,
+            day_of_week="monday",
+            daily_cap=10,
+            start_time="09:00",
+            end_time="10:00",
+        )
+    )
+    recipient = session.get(
+        CampaignRecipient,
+        {"campaign_id": campaign_id, "contact_id": contact_ids[0]},
+    )
+    recipient.status = "queued"
+    job = SendJob(
+        user_id=USER_ID,
+        campaign_id=campaign_id,
+        recipient_id=contact_ids[0],
+        sender_id=sender_ids[0],
+        status="running",
+        scheduled_for=fixed_now,
+        locked_at=fixed_now,
+        batch_id="window-recheck",
+        idempotency_key=f"campaign:{campaign_id}:recipient:{contact_ids[0]}",
+    )
+    session.add(job)
+    session.commit()
+    job_id = job.id
+    session.close()
+
+    monkeypatch.setattr(platform_jobs, "SessionLocal", session_factory)
+    monkeypatch.setattr(platform_jobs, "utcnow", lambda: fixed_now)
+    send_email_mock = MagicMock()
+    monkeypatch.setattr(platform_jobs, "send_email", send_email_mock)
+
+    result = platform_jobs.perform_send_job(job_id, claimed=True)
+    assert result["status"] == "deferred"
+    assert result["reason_code"] == "autopilot_outside_window"
+    send_email_mock.assert_not_called()
+
+    session = session_factory()
+    persisted_job = session.get(SendJob, job_id)
+    assert persisted_job.status == "retry"
+    assert persisted_job.scheduled_for.replace(tzinfo=timezone.utc) > fixed_now
+    assert session.get(Campaign, campaign_id).status == "autopilot"
+    session.close()
+
+
+def test_retry_waits_for_sender_error_cooldown(tmp_path, monkeypatch):
+    fixed_now = datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc)
+    session_factory = make_session_factory(tmp_path)
+    campaign_id, sender_ids, contact_ids = _seed_delivery_campaign(
+        session_factory,
+        recipient_count=1,
+    )
+    session = session_factory()
+    campaign = session.get(Campaign, campaign_id)
+    campaign.status = "sending"
+    campaign.send_settings = {"mode": "send_now", "delay_minutes": 5}
+    recipient = session.get(
+        CampaignRecipient,
+        {"campaign_id": campaign_id, "contact_id": contact_ids[0]},
+    )
+    recipient.status = "queued"
+    job = SendJob(
+        user_id=USER_ID,
+        campaign_id=campaign_id,
+        recipient_id=contact_ids[0],
+        sender_id=sender_ids[0],
+        status="queued",
+        scheduled_for=fixed_now,
+        batch_id="retry-cooldown",
+        idempotency_key=f"campaign:{campaign_id}:recipient:{contact_ids[0]}",
+    )
+    session.add(job)
+    session.commit()
+    job_id = job.id
+    session.close()
+
+    monkeypatch.setattr(platform_jobs, "SessionLocal", session_factory)
+    monkeypatch.setattr(platform_jobs, "utcnow", lambda: fixed_now)
+    monkeypatch.setattr(platform_jobs, "gmail_service_for_sender", lambda *_args: object())
+    monkeypatch.setattr(
+        platform_jobs,
+        "send_email",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("Temporary Gmail error")),
+    )
+
+    assert platform_jobs.perform_send_job(job_id)["status"] == "failed"
+    session = session_factory()
+    persisted_job = session.get(SendJob, job_id)
+    assert persisted_job.status == "retry"
+    assert persisted_job.scheduled_for.replace(tzinfo=timezone.utc) >= fixed_now + timedelta(minutes=15)
+    session.close()
+
+
+def test_claimed_job_observing_stop_restores_recipient(tmp_path, monkeypatch):
+    session_factory = make_session_factory(tmp_path)
+    campaign_id, sender_ids, contact_ids = _seed_delivery_campaign(
+        session_factory,
+        recipient_count=1,
+    )
+    session = session_factory()
+    campaign = session.get(Campaign, campaign_id)
+    campaign.status = "stopped"
+    recipient = session.get(
+        CampaignRecipient,
+        {"campaign_id": campaign_id, "contact_id": contact_ids[0]},
+    )
+    recipient.status = "queued"
+    job = SendJob(
+        user_id=USER_ID,
+        campaign_id=campaign_id,
+        recipient_id=contact_ids[0],
+        sender_id=sender_ids[0],
+        status="running",
+        scheduled_for=utcnow(),
+        locked_at=utcnow(),
+        batch_id="stopped-claim",
+        idempotency_key=f"campaign:{campaign_id}:recipient:{contact_ids[0]}",
+    )
+    session.add(job)
+    session.commit()
+    job_id = job.id
+    session.close()
+
+    monkeypatch.setattr(platform_jobs, "SessionLocal", session_factory)
+    result = platform_jobs.perform_send_job(job_id, claimed=True)
+    assert result["status"] == "cancelled"
+
+    session = session_factory()
+    assert session.get(SendJob, job_id) is None
+    assert session.get(
+        CampaignRecipient,
+        {"campaign_id": campaign_id, "contact_id": contact_ids[0]},
+    ).status == "approved"
+    session.close()
+
+
+def test_dnc_added_after_queue_blocks_delivery(tmp_path, monkeypatch):
+    session_factory = make_session_factory(tmp_path)
+    campaign_id, sender_ids, contact_ids = _seed_delivery_campaign(
+        session_factory,
+        recipient_count=1,
+    )
+    session = session_factory()
+    campaign = session.get(Campaign, campaign_id)
+    campaign.status = "sending"
+    contact = session.get(Contact, contact_ids[0])
+    contact.status = "do_not_contact"
+    recipient = session.get(
+        CampaignRecipient,
+        {"campaign_id": campaign_id, "contact_id": contact_ids[0]},
+    )
+    recipient.status = "queued"
+    job = SendJob(
+        user_id=USER_ID,
+        campaign_id=campaign_id,
+        recipient_id=contact_ids[0],
+        sender_id=sender_ids[0],
+        status="running",
+        scheduled_for=utcnow(),
+        locked_at=utcnow(),
+        batch_id="dnc-recheck",
+        idempotency_key=f"campaign:{campaign_id}:recipient:{contact_ids[0]}",
+    )
+    session.add(job)
+    session.commit()
+    job_id = job.id
+    session.close()
+
+    monkeypatch.setattr(platform_jobs, "SessionLocal", session_factory)
+    send_email_mock = MagicMock()
+    monkeypatch.setattr(platform_jobs, "send_email", send_email_mock)
+    result = platform_jobs.perform_send_job(job_id, claimed=True)
+    assert result["reason_code"] == "recipient_ineligible"
+    send_email_mock.assert_not_called()
+
+    session = session_factory()
+    assert session.get(SendJob, job_id) is None
+    assert session.get(
+        CampaignRecipient,
+        {"campaign_id": campaign_id, "contact_id": contact_ids[0]},
+    ).status == "rejected"
+    session.close()
+
+
+def test_disconnected_assigned_sender_releases_job_for_group_reassignment(tmp_path, monkeypatch):
+    session_factory = make_session_factory(tmp_path)
+    campaign_id, sender_ids, contact_ids = _seed_delivery_campaign(
+        session_factory,
+        recipient_count=1,
+    )
+    session = session_factory()
+    campaign = session.get(Campaign, campaign_id)
+    campaign.status = "sending"
+    first_sender = session.get(Sender, sender_ids[0])
+    first_sender.status = "removed"
+    first_sender.encrypted_oauth_credentials = None
+    recipient = session.get(
+        CampaignRecipient,
+        {"campaign_id": campaign_id, "contact_id": contact_ids[0]},
+    )
+    recipient.status = "queued"
+    job = SendJob(
+        user_id=USER_ID,
+        campaign_id=campaign_id,
+        recipient_id=contact_ids[0],
+        sender_id=sender_ids[0],
+        status="running",
+        scheduled_for=utcnow(),
+        locked_at=utcnow(),
+        batch_id="sender-reassignment",
+        idempotency_key=f"campaign:{campaign_id}:recipient:{contact_ids[0]}",
+    )
+    session.add(job)
+    session.commit()
+    job_id = job.id
+    session.close()
+
+    monkeypatch.setattr(platform_jobs, "SessionLocal", session_factory)
+    result = platform_jobs.perform_send_job(job_id, claimed=True)
+    assert result["reason_code"] == "sender_unavailable"
+
+    session = session_factory()
+    replacement = create_send_jobs_for_next_batch(
+        session,
+        user_id=USER_ID,
+        campaign_id=campaign_id,
+    )
+    session.commit()
+    replacement_job = session.get(SendJob, replacement["job_ids"][0])
+    assert replacement_job.sender_id == sender_ids[1]
+    assert replacement_job.recipient_id == contact_ids[0]
+    session.close()
+
+
+def test_dry_run_never_builds_gmail_service_or_consumes_sender_cap(tmp_path, monkeypatch):
+    session_factory = make_session_factory(tmp_path)
+    install_session_override(session_factory)
+    try:
+        campaign_id, sender_ids, _ = _seed_delivery_campaign(
+            session_factory,
+            recipient_count=1,
+        )
+        response = TestClient(app).post(
+            f"/api/campaigns/{campaign_id}/send-now",
+            json={"delay_minutes": 0, "dry_run": True},
+            headers=HEADERS,
+        )
+        assert response.status_code == 200
+
+        monkeypatch.setattr(platform_jobs, "SessionLocal", session_factory)
+        monkeypatch.setattr(platform_worker, "SessionLocal", session_factory)
+        gmail_service_mock = MagicMock(side_effect=AssertionError("dry run touched Gmail"))
+        monkeypatch.setattr(platform_jobs, "gmail_service_for_sender", gmail_service_mock)
+
+        assert platform_worker.run_worker_cycle() == 1
+        gmail_service_mock.assert_not_called()
+
+        session = session_factory()
+        log = session.scalar(select(SendLog).where(SendLog.campaign_id == campaign_id))
+        assert log.status == "test_sent"
+        assert platform_services.sender_sent_count_today(session, sender_ids[0]) == 0
+        assert platform_services.campaign_sent_today(session, campaign_id) == 1
+        session.close()
+    finally:
+        clear_session_override()
+
+
 def test_final_send_failure_marks_recipient_failed(tmp_path, monkeypatch):
     session_factory = make_session_factory(tmp_path)
     session = session_factory()
@@ -1554,6 +2014,7 @@ def test_autopilot_compressed_day_resumes_after_five_minutes(tmp_path, monkeypat
         monkeypatch.setattr(platform_scheduler, "utcnow", lambda: after_next_day)
         monkeypatch.setattr(platform_worker, "utcnow", lambda: after_next_day)
         monkeypatch.setattr(platform_services, "utcnow", lambda: start + timedelta(days=1, seconds=1))
+        monkeypatch.setattr(platform_jobs, "utcnow", lambda: start + timedelta(days=1, seconds=1))
         assert platform_worker.run_worker_cycle() == 1
         assert len(sent_requests) == 2
 

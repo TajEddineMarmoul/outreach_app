@@ -556,33 +556,19 @@ def get_campaign_send_progress(
         .where(CampaignRecipient.campaign_id == campaign_id)
     ) or 0
     sent = session.scalar(
-        select(func.count(func.distinct(SendLog.recipient_id)))
-        .select_from(SendLog)
-        .join(
-            CampaignRecipient,
-            (CampaignRecipient.campaign_id == SendLog.campaign_id)
-            & (CampaignRecipient.contact_id == SendLog.recipient_id),
-        )
+        select(func.count())
+        .select_from(CampaignRecipient)
         .where(
-            SendLog.campaign_id == campaign_id,
-            SendLog.user_id == user_id,
-            SendLog.status == "sent",
-            (CampaignRecipient.reset_at.is_(None) | (SendLog.sent_at >= CampaignRecipient.reset_at)),
+            CampaignRecipient.campaign_id == campaign_id,
+            CampaignRecipient.status == "sent",
         )
     ) or 0
     failed = session.scalar(
-        select(func.count(func.distinct(SendLog.recipient_id)))
-        .select_from(SendLog)
-        .join(
-            CampaignRecipient,
-            (CampaignRecipient.campaign_id == SendLog.campaign_id)
-            & (CampaignRecipient.contact_id == SendLog.recipient_id),
-        )
+        select(func.count())
+        .select_from(CampaignRecipient)
         .where(
-            SendLog.campaign_id == campaign_id,
-            SendLog.user_id == user_id,
-            SendLog.status == "failed",
-            (CampaignRecipient.reset_at.is_(None) | (SendLog.created_at >= CampaignRecipient.reset_at)),
+            CampaignRecipient.campaign_id == campaign_id,
+            CampaignRecipient.status == "failed",
         )
     ) or 0
     running_job = session.scalar(
@@ -608,7 +594,7 @@ def get_campaign_send_progress(
             .where(
                 SendLog.campaign_id == campaign_id,
                 SendLog.user_id == user_id,
-                SendLog.status == "sent",
+                SendLog.status.in_(("sent", "test_sent")),
                 (CampaignRecipient.reset_at.is_(None) | (SendLog.sent_at >= CampaignRecipient.reset_at)),
             )
             .group_by(SendLog.sender_id)

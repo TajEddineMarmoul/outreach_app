@@ -2,19 +2,28 @@ from __future__ import annotations
 
 import json
 import os
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
-from api.deps import config_path, db, get_current_user_id, get_db
+from api.deps import get_current_user_id
 from api.schemas import SettingsUpdate
 from src.gmail_sender import credentials_file_path
-from src.models import load_config
+from src.platform.db import get_session
+from src.platform.models import UserSettings
+from src.platform.services import ensure_user
 
 
 router = APIRouter()
+DEFAULT_SETTINGS = {
+    "max_daily_cap": 50,
+    "bounce_rate_pause_threshold": 5.0,
+    "max_consecutive_errors": 3,
+}
 
 
 class CredentialsContent(BaseModel):
@@ -22,42 +31,43 @@ class CredentialsContent(BaseModel):
 
 
 @router.get("/api/settings")
-def get_settings(conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
-    config = load_config(config_path())
+def get_settings(
+    session: Session = Depends(get_session),
+    user_id: str = Depends(get_current_user_id),
+):
+    ensure_user(session, user_id)
+    settings = session.get(UserSettings, user_id)
+    defaults = {**DEFAULT_SETTINGS, **(settings.defaults or {})}
+    session.commit()
     return {
-        "timezone": db.get_setting(conn, "timezone", config.timezone, user_id),
-        "max_daily_cap": db.get_setting(
-            conn,
-            "max_daily_cap",
-            config.sending.max_daily_cap_allowed_without_manual_override,
-            user_id,
-        ),
-        "bounce_rate_pause_threshold": db.get_setting(
-            conn,
-            "bounce_rate_pause_threshold",
-            config.sending.bounce_rate_pause_threshold,
-            user_id,
-        ),
-        "max_consecutive_errors": db.get_setting(
-            conn,
-            "max_consecutive_errors",
-            config.sending.max_consecutive_errors,
-            user_id,
-        ),
-        "config_path": str(config_path()),
+        "timezone": settings.timezone,
+        "max_daily_cap": defaults["max_daily_cap"],
+        "bounce_rate_pause_threshold": defaults["bounce_rate_pause_threshold"],
+        "max_consecutive_errors": defaults["max_consecutive_errors"],
     }
 
 
 @router.patch("/api/settings")
 def patch_settings(
     req: SettingsUpdate,
-    conn=Depends(get_db),
+    session: Session = Depends(get_session),
     user_id: str = Depends(get_current_user_id),
 ):
-    db.set_setting(conn, "timezone", req.timezone, user_id)
-    db.set_setting(conn, "max_daily_cap", req.max_daily_cap, user_id)
-    db.set_setting(conn, "bounce_rate_pause_threshold", req.bounce_rate_pause_threshold, user_id)
-    db.set_setting(conn, "max_consecutive_errors", req.max_consecutive_errors, user_id)
+    try:
+        ZoneInfo(req.timezone)
+    except (ZoneInfoNotFoundError, ValueError):
+        raise HTTPException(status_code=422, detail="Unknown IANA timezone")
+
+    ensure_user(session, user_id)
+    settings = session.get(UserSettings, user_id)
+    settings.timezone = req.timezone
+    settings.defaults = {
+        **(settings.defaults or {}),
+        "max_daily_cap": req.max_daily_cap,
+        "bounce_rate_pause_threshold": req.bounce_rate_pause_threshold,
+        "max_consecutive_errors": req.max_consecutive_errors,
+    }
+    session.commit()
     return {"status": "success"}
 
 

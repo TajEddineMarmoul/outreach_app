@@ -153,7 +153,7 @@ def start_group_sender_oauth(
     return {"auth_url": auth_url}
 
 
-@router.patch("/senders/{sender_id}")
+@senders_router.patch("/{sender_id}")
 def patch_sender(
     sender_id: int,
     req: SenderPatch,
@@ -177,7 +177,7 @@ def patch_sender(
     return serialize_sender(session, sender)
 
 
-@router.delete("/senders/{sender_id}")
+@senders_router.delete("/{sender_id}")
 def delete_sender(
     sender_id: int,
     session: Session = Depends(get_session),
@@ -189,22 +189,3 @@ def delete_sender(
     mark_sender_removed(sender)
     session.commit()
     return {"status": "success"}
-
-
-@senders_router.patch("/{sender_id}")
-def patch_sender_canonical(
-    sender_id: int,
-    req: SenderPatch,
-    session: Session = Depends(get_session),
-    user_id: str = Depends(get_current_user_id),
-):
-    return patch_sender(sender_id, req, session, user_id)
-
-
-@senders_router.delete("/{sender_id}")
-def delete_sender_canonical(
-    sender_id: int,
-    session: Session = Depends(get_session),
-    user_id: str = Depends(get_current_user_id),
-):
-    return delete_sender(sender_id, session, user_id)

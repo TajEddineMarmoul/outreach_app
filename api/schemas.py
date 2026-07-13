@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional, List, Dict
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class CampaignCreate(BaseModel):
@@ -62,10 +62,10 @@ class TestSendRequest(BaseModel):
 
 
 class SettingsUpdate(BaseModel):
-    timezone: str
-    max_daily_cap: int
-    bounce_rate_pause_threshold: float
-    max_consecutive_errors: int
+    timezone: str = Field(min_length=1, max_length=80)
+    max_daily_cap: int = Field(ge=1, le=10000)
+    bounce_rate_pause_threshold: float = Field(ge=0, le=100)
+    max_consecutive_errors: int = Field(ge=1, le=1000)
 
 
 class SaveCredentialsRequest(BaseModel):

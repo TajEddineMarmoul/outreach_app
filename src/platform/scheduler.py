@@ -94,6 +94,10 @@ def enqueue_due_campaign_batches(session: Session, *, limit: int = 25) -> list[d
             else:
                 campaign.status = "paused"
                 campaign.scheduled_at = None
+            campaign.send_settings = {
+                **(campaign.send_settings or {}),
+                "pause_reason": result.get("reason_code", "no_eligible_work"),
+            }
         results.append({"campaign_id": campaign.id, **result})
     session.commit()
     for result in results:
