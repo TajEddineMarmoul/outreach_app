@@ -4,7 +4,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0006_add_campaign_recipient_reset_at"
+revision = "0006_recipient_reset_at"
 down_revision = "0005_add_autopilot_day_schedules"
 branch_labels = None
 depends_on = None
