@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -9,6 +9,13 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Request failed";
+}
+
+function toLocalDateTimeInput(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
 }
 
 export default function ScheduleDialog({
@@ -53,43 +60,64 @@ export default function ScheduleDialog({
   const [autoStartAt, setAutoStartAt] = useState("");
 
   const [sendingAction, setSendingAction] = useState(false);
+  const [settingsReady, setSettingsReady] = useState(false);
+  const [settingsError, setSettingsError] = useState("");
+
+  const activeAutopilotEntries = Object.values(autoSchedule).filter((entry) => entry.active);
+  const autopilotValidationError = activeAutopilotEntries.length === 0
+    ? "Select at least one autopilot day."
+    : activeAutopilotEntries.some(
+        (entry) => Number(entry.cap) < 1 || !entry.start || !entry.end || entry.start >= entry.end
+      )
+      ? "Each enabled day needs a valid cap and a start time before its end time."
+      : "";
 
   useEffect(() => {
-    if (!isOpen) return;
-    const settings = summary?.send_settings || {};
-    const savedDelay = Number(settings.delay_minutes ?? 5);
-    setBulkDelay(savedDelay);
-    setAutoDelay(savedDelay);
-    setDryRun(Boolean(settings.dry_run ?? false));
-    if (settings.draft_scheduled_at) {
-      setScheduledAt(settings.draft_scheduled_at.slice(0, 16));
-      setAutoStartAt(settings.draft_scheduled_at.slice(0, 16));
-    }
-    if (summary?.autopilot_schedule) {
-      setAutoSchedule((current) => {
-        const next = { ...current };
-        for (const entry of summary.autopilot_schedule || []) {
-          if (next[entry.day]) {
-            next[entry.day] = {
-              ...next[entry.day],
-              active: true,
-              cap: String(entry.cap),
-              start: entry.start,
-              end: entry.end,
-            };
+    if (!isOpen || !summary) return;
+    const hydration = window.setTimeout(() => {
+      const settings = summary.send_settings || {};
+      const savedMode = settings.mode || "send_now";
+      setActiveTab(savedMode === "autopilot" ? "autopilot" : savedMode === "schedule" ? "schedule" : defaultTab);
+      const savedDelay = Number(settings.delay_minutes ?? 5);
+      setBulkDelay(savedDelay);
+      setAutoDelay(savedDelay);
+      setDryRun(Boolean(settings.dry_run ?? false));
+      if (settings.draft_scheduled_at) {
+        const localValue = toLocalDateTimeInput(settings.draft_scheduled_at);
+        setScheduledAt(localValue);
+        setAutoStartAt(localValue);
+      } else {
+        setScheduledAt("");
+        setAutoStartAt("");
+      }
+      if (summary.autopilot_schedule) {
+        setAutoSchedule((current) => {
+          const next = { ...current };
+          for (const entry of summary.autopilot_schedule || []) {
+            if (next[entry.day]) {
+              next[entry.day] = {
+                ...next[entry.day],
+                active: true,
+                cap: String(entry.cap),
+                start: entry.start,
+                end: entry.end,
+              };
+            }
           }
-        }
-        for (const day of Object.keys(next)) {
-          if (!(summary.autopilot_schedule || []).some((entry) => entry.day === day)) {
-            next[day] = { ...next[day], active: false };
+          for (const day of Object.keys(next)) {
+            if (!(summary.autopilot_schedule || []).some((entry) => entry.day === day)) {
+              next[day] = { ...next[day], active: false };
+            }
           }
-        }
-        return next;
-      });
-    }
-  }, [isOpen, summary]);
+          return next;
+        });
+      }
+      setSettingsReady(true);
+    }, 0);
+    return () => window.clearTimeout(hydration);
+  }, [defaultTab, isOpen, summary]);
 
-  const saveSettings = async (mode: "send_now" | "schedule" | "autopilot") => {
+  const saveSettings = useCallback(async (mode: "send_now" | "schedule" | "autopilot") => {
     const schedule: Record<string, { cap: number; start: string; end: string }> = {};
     if (mode === "autopilot") {
       for (const [day, config] of Object.entries(autoSchedule)) {
@@ -103,7 +131,7 @@ export default function ScheduleDialog({
       dry_run: dryRun,
     };
     if (mode === "autopilot") body.schedule = schedule;
-    if (draftDate) body.scheduled_at = new Date(draftDate).toISOString();
+    body.scheduled_at = draftDate ? new Date(draftDate).toISOString() : null;
     const res = await authFetch(`${API_URL}/api/campaigns/${campaignId}/send-settings`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -111,7 +139,39 @@ export default function ScheduleDialog({
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.detail || "Failed to save send settings");
+  }, [authFetch, autoDelay, autoSchedule, autoStartAt, bulkDelay, campaignId, dryRun, scheduledAt]);
+
+  useEffect(() => {
+    if (!isOpen || readOnly || !settingsReady) return;
+    const mode = activeTab === "autopilot" ? "autopilot" : activeTab === "schedule" ? "schedule" : "send_now";
+    if (mode === "autopilot" && autopilotValidationError) return;
+    const timer = window.setTimeout(() => {
+      saveSettings(mode)
+        .then(() => setSettingsError(""))
+        .catch((error) => setSettingsError(errorMessage(error)));
+    }, 600);
+    return () => window.clearTimeout(timer);
+  }, [activeTab, autopilotValidationError, isOpen, readOnly, saveSettings, settingsReady]);
+
+  const finishClose = () => {
+    setSettingsReady(false);
     mutateAll();
+    onClose();
+  };
+
+  const closeDialog = async () => {
+    if (!readOnly && settingsReady) {
+      const mode = activeTab === "autopilot" ? "autopilot" : activeTab === "schedule" ? "schedule" : "send_now";
+      if (!(mode === "autopilot" && autopilotValidationError)) {
+        try {
+          await saveSettings(mode);
+        } catch (error) {
+          setSettingsError(errorMessage(error));
+          return;
+        }
+      }
+    }
+    finishClose();
   };
 
   const handleBulkSend = async (mode: "send-now" | "schedule") => {
@@ -137,8 +197,7 @@ export default function ScheduleDialog({
       if (!res.ok) {
         throw new Error(data.detail?.msg || data.detail || "Failed");
       }
-      mutateAll();
-      onClose();
+      finishClose();
     } catch (error: unknown) {
       console.error("[Send] Error:", errorMessage(error));
       alert(errorMessage(error));
@@ -148,14 +207,18 @@ export default function ScheduleDialog({
   };
 
   const handleAutopilotStart = async () => {
+    const scheduleBody: Record<string, { cap: number; start: string; end: string }> = {};
+    for (const [day, config] of Object.entries(autoSchedule)) {
+      if (config.active) {
+        scheduleBody[day] = { cap: Number(config.cap), start: config.start, end: config.end };
+      }
+    }
+    if (autopilotValidationError) {
+      setSettingsError(autopilotValidationError);
+      return;
+    }
     setSendingAction(true);
     try {
-      const scheduleBody: Record<string, { cap: number; start: string; end: string }> = {};
-      for (const [day, config] of Object.entries(autoSchedule)) {
-        if (config.active) {
-          scheduleBody[day] = { cap: Number(config.cap), start: config.start, end: config.end };
-        }
-      }
       const body: Record<string, unknown> = {
         schedule: scheduleBody,
         delay_minutes: autoDelay,
@@ -173,8 +236,7 @@ export default function ScheduleDialog({
         const data = await res.json();
         throw new Error(data.detail?.msg || data.detail || "Failed");
       }
-      mutateAll();
-      onClose();
+      finishClose();
     } catch (error: unknown) {
       alert(errorMessage(error));
     } finally {
@@ -183,7 +245,7 @@ export default function ScheduleDialog({
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
+    <Dialog open={isOpen} onOpenChange={(open) => { if (!open) void closeDialog(); }}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Send options</DialogTitle>
@@ -195,6 +257,11 @@ export default function ScheduleDialog({
             <TabsTrigger value="schedule">Schedule</TabsTrigger>
             <TabsTrigger value="autopilot">Autopilot</TabsTrigger>
           </TabsList>
+          {(settingsError || (activeTab === "autopilot" ? autopilotValidationError : "")) && (
+            <p className="mt-3 text-xs text-red-600">
+              {settingsError || autopilotValidationError}
+            </p>
+          )}
 
           {/* 1. Send Now */}
           <TabsContent value="send-now" className="py-4 space-y-4">
@@ -210,8 +277,7 @@ export default function ScheduleDialog({
               Test mode (no real emails sent)
             </label>
             <DialogFooter className="pt-2">
-              <Button variant="outline" onClick={onClose}>{readOnly ? "Close" : "Cancel"}</Button>
-              {!readOnly && <Button variant="outline" onClick={async () => { try { setSendingAction(true); await saveSettings("send_now"); onClose(); } catch (error) { alert(errorMessage(error)); } finally { setSendingAction(false); } }} disabled={sendingAction}>Save settings</Button>}
+              <Button variant="outline" onClick={() => void closeDialog()}>Close</Button>
               {!readOnly && <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={() => handleBulkSend("send-now")} disabled={sendingAction}>
                 {sendingAction ? "Starting..." : "Send now"}
               </Button>}
@@ -236,8 +302,7 @@ export default function ScheduleDialog({
               Test mode (no real emails sent)
             </label>
             <DialogFooter className="pt-2">
-              <Button variant="outline" onClick={onClose}>{readOnly ? "Close" : "Cancel"}</Button>
-              {!readOnly && <Button variant="outline" onClick={async () => { try { setSendingAction(true); await saveSettings("schedule"); onClose(); } catch (error) { alert(errorMessage(error)); } finally { setSendingAction(false); } }} disabled={sendingAction}>Save settings</Button>}
+              <Button variant="outline" onClick={() => void closeDialog()}>Close</Button>
               {!readOnly && <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={() => handleBulkSend("schedule")} disabled={sendingAction || !scheduledAt}>
                 {sendingAction ? "Scheduling..." : "Schedule"}
               </Button>}
@@ -333,8 +398,7 @@ export default function ScheduleDialog({
             </label>
 
             <DialogFooter className="pt-2">
-              <Button variant="outline" onClick={onClose}>{readOnly ? "Close" : "Cancel"}</Button>
-              {!readOnly && <Button variant="outline" onClick={async () => { try { setSendingAction(true); await saveSettings("autopilot"); onClose(); } catch (error) { alert(errorMessage(error)); } finally { setSendingAction(false); } }} disabled={sendingAction}>Save settings</Button>}
+              <Button variant="outline" onClick={() => void closeDialog()}>Close</Button>
               {!readOnly && <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={handleAutopilotStart} disabled={sendingAction}>
                 {sendingAction ? "Starting..." : "Start Autopilot"}
               </Button>}

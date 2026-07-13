@@ -3,21 +3,20 @@ from __future__ import annotations
 import logging
 import hmac
 import os
-from datetime import datetime, timezone
-from zoneinfo import ZoneInfo
+from datetime import datetime, time, timezone
 
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from fastapi import APIRouter, Depends, Header, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from api.auth import get_current_user_id
 from src.platform.db import get_session
 from src.platform.jobs import create_send_jobs_for_next_batch
 from src.platform.models import AutopilotDaySchedule, Campaign, CampaignRecipient, Contact, SendJob, SendLog, Sender
 from src.platform.scheduler import WEEKDAY_NAMES, next_autopilot_run
-from src.platform.services import campaign_sent_today, connected_senders, ensure_user, require_group, serialize_group
+from src.platform.services import campaign_sent_today, connected_senders, ensure_user, require_group, serialize_group, user_zone
 from src.platform.time import utcnow
 from src.platform.worker import recover_stale_jobs, run_worker_cycle
 
@@ -35,40 +34,67 @@ def worker_tick(x_worker_token: str | None = Header(default=None)):
     return {"status": "ok", "recovered": recovered, "processed": processed}
 
 
-class CampaignSenderGroupSelect(BaseModel):
+class DeliveryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class CampaignSenderGroupSelect(DeliveryRequest):
     sender_group_id: int
 
 
-class SendNowRequest(BaseModel):
+class SendNowRequest(DeliveryRequest):
     delay_minutes: int = Field(default=5, ge=0, le=1440)
     dry_run: bool = False
 
 
-class ScheduleRequest(BaseModel):
+class ScheduleRequest(DeliveryRequest):
     scheduled_at: datetime
     delay_minutes: int = Field(default=5, ge=0, le=1440)
     dry_run: bool = False
 
 
-class DayScheduleEntry(BaseModel):
+class DayScheduleEntry(DeliveryRequest):
     cap: int = Field(..., ge=1)
-    start: str = "09:00"
-    end: str = "17:00"
+    start: str = Field(default="09:00", pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+    end: str = Field(default="17:00", pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+
+    @model_validator(mode="after")
+    def validate_window(self):
+        if time.fromisoformat(self.start) >= time.fromisoformat(self.end):
+            raise ValueError("start must be earlier than end")
+        return self
 
 
-class AutopilotRequest(BaseModel):
-    schedule: dict[str, DayScheduleEntry] | None = None
+class AutopilotRequest(DeliveryRequest):
+    schedule: dict[str, DayScheduleEntry] = Field(..., min_length=1)
     delay_minutes: int = Field(default=5, ge=0, le=1440)
     scheduled_at: datetime | None = None
     dry_run: bool = False
 
+    @model_validator(mode="after")
+    def validate_days(self):
+        unknown = sorted(set(self.schedule) - set(WEEKDAY_NAMES))
+        if unknown:
+            raise ValueError(f"unknown autopilot days: {', '.join(unknown)}")
+        return self
 
-class SendSettingsUpdate(BaseModel):
+
+class SendSettingsUpdate(DeliveryRequest):
     mode: str | None = Field(default=None, pattern="^(send_now|schedule|autopilot)$")
     delay_minutes: int | None = Field(default=None, ge=0, le=1440)
     dry_run: bool | None = None
     scheduled_at: datetime | None = None
     schedule: dict[str, DayScheduleEntry] | None = None
+
+    @model_validator(mode="after")
+    def validate_schedule(self):
+        if self.mode == "autopilot" and not self.schedule:
+            raise ValueError("autopilot requires at least one enabled day")
+        if self.schedule is not None:
+            unknown = sorted(set(self.schedule) - set(WEEKDAY_NAMES))
+            if unknown:
+                raise ValueError(f"unknown autopilot days: {', '.join(unknown)}")
+        return self
 
 
 EDIT_LOCKED_STATUSES = {"sending", "scheduled", "autopilot", "paused"}
@@ -171,11 +197,14 @@ def patch_send_settings(
         settings["delay_minutes"] = req.delay_minutes
     if req.dry_run is not None:
         settings["dry_run"] = req.dry_run
-    if req.scheduled_at is not None:
-        scheduled_at = req.scheduled_at
-        if scheduled_at.tzinfo is None:
-            scheduled_at = scheduled_at.replace(tzinfo=timezone.utc)
-        settings["draft_scheduled_at"] = scheduled_at.astimezone(timezone.utc).isoformat()
+    if "scheduled_at" in req.model_fields_set:
+        if req.scheduled_at is None:
+            settings.pop("draft_scheduled_at", None)
+        else:
+            scheduled_at = req.scheduled_at
+            if scheduled_at.tzinfo is None:
+                scheduled_at = scheduled_at.replace(tzinfo=timezone.utc)
+            settings["draft_scheduled_at"] = scheduled_at.astimezone(timezone.utc).isoformat()
     campaign.send_settings = settings
     if req.schedule is not None:
         session.execute(delete(AutopilotDaySchedule).where(AutopilotDaySchedule.campaign_id == campaign.id))
@@ -218,7 +247,7 @@ def post_send_now(
 ):
     logger = logging.getLogger("outreach.send")
     logger.info("send-now start campaign=%s user=%s", campaign_id, user_id)
-    campaign = require_campaign(session, campaign_id, user_id)
+    campaign = require_campaign_editable(session, campaign_id, user_id)
     previous_status = campaign.status
     logger.info("campaign id=%s status=%s sender_group_id=%s", campaign.id, campaign.status, campaign.selected_sender_group_id)
     try:
@@ -280,7 +309,7 @@ def post_schedule(
     session: Session = Depends(get_session),
     user_id: str = Depends(get_current_user_id),
 ):
-    campaign = require_campaign(session, campaign_id, user_id)
+    campaign = require_campaign_editable(session, campaign_id, user_id)
     if not campaign.selected_sender_group_id:
         raise HTTPException(status_code=400, detail="Campaign does not have a sender group selected")
     try:
@@ -296,7 +325,7 @@ def post_schedule(
         .where(
             CampaignRecipient.campaign_id == campaign_id,
             CampaignRecipient.status == "approved",
-            Contact.status == "approved",
+            Contact.status.in_(("approved", "sent")),
         )
     ) or 0
     if approved_recipients == 0:
@@ -320,11 +349,11 @@ def post_schedule(
 @router.post("/api/campaigns/{campaign_id}/autopilot/start")
 def post_autopilot_start(
     campaign_id: int,
-    req: AutopilotRequest = AutopilotRequest(),
+    req: AutopilotRequest,
     session: Session = Depends(get_session),
     user_id: str = Depends(get_current_user_id),
 ):
-    campaign = require_campaign(session, campaign_id, user_id)
+    campaign = require_campaign_editable(session, campaign_id, user_id)
     if not campaign.selected_sender_group_id:
         raise HTTPException(status_code=400, detail="Campaign does not have a sender group selected")
     try:
@@ -340,7 +369,7 @@ def post_autopilot_start(
         .where(
             CampaignRecipient.campaign_id == campaign_id,
             CampaignRecipient.status == "approved",
-            Contact.status == "approved",
+            Contact.status.in_(("approved", "sent")),
         )
     ) or 0
     if approved_recipients == 0:
@@ -358,17 +387,16 @@ def post_autopilot_start(
     session.execute(
         delete(AutopilotDaySchedule).where(AutopilotDaySchedule.campaign_id == campaign.id)
     )
-    if req.schedule:
-        for day_name, entry in req.schedule.items():
-            session.add(
-                AutopilotDaySchedule(
-                    campaign_id=campaign.id,
-                    day_of_week=day_name,
-                    daily_cap=entry.cap,
-                    start_time=entry.start,
-                    end_time=entry.end,
-                )
+    for day_name, entry in req.schedule.items():
+        session.add(
+            AutopilotDaySchedule(
+                campaign_id=campaign.id,
+                day_of_week=day_name,
+                daily_cap=entry.cap,
+                start_time=entry.start,
+                end_time=entry.end,
             )
+        )
     scheduled_at = req.scheduled_at
     if scheduled_at is not None:
         if scheduled_at.tzinfo is None:
@@ -387,6 +415,10 @@ def post_pause(
     user_id: str = Depends(get_current_user_id),
 ):
     campaign = require_campaign(session, campaign_id, user_id)
+    if campaign.status == "paused":
+        return {"status": "paused"}
+    if campaign.status not in {"sending", "scheduled", "autopilot"}:
+        raise HTTPException(status_code=409, detail=f"Cannot pause a campaign that is {campaign.status}")
     campaign.status = "paused"
     session.commit()
     return {"status": "paused"}
@@ -399,9 +431,22 @@ def post_resume(
     user_id: str = Depends(get_current_user_id),
 ):
     campaign = require_campaign(session, campaign_id, user_id)
+    if campaign.status != "paused":
+        raise HTTPException(status_code=409, detail=f"Cannot resume a campaign that is {campaign.status}")
     mode = (campaign.send_settings or {}).get("mode", "send_now")
-    campaign.status = "autopilot" if mode == "autopilot" else "sending"
     job_ids = queued_job_ids(session, campaign_id, user_id)
+    campaign.status = "autopilot" if mode == "autopilot" else "sending"
+    resume_at = campaign.scheduled_at
+    if resume_at and resume_at.tzinfo is None:
+        resume_at = resume_at.replace(tzinfo=timezone.utc)
+    if not job_ids and mode == "schedule" and resume_at and resume_at > utcnow():
+        campaign.status = "scheduled"
+        session.commit()
+        return {
+            "status": "scheduled",
+            "queued": 0,
+            "scheduled_at": campaign.scheduled_at.isoformat(),
+        }
     result: dict = {}
     if not job_ids:
         try:
@@ -429,6 +474,18 @@ def post_resume(
                     **(campaign.send_settings or {}),
                     "pause_reason": result.get("reason_code", "daily_caps_reached"),
                 }
+        elif result.get("reason_code") in ("autopilot_day_disabled", "autopilot_outside_window"):
+            campaign.status = "autopilot"
+            campaign.scheduled_at = next_autopilot_run(session, campaign, now=utcnow())
+            campaign.send_settings = {
+                **(campaign.send_settings or {}),
+                "pause_reason": result["reason_code"],
+            }
+    if job_ids:
+        campaign.send_settings = {
+            **(campaign.send_settings or {}),
+            "pause_reason": None,
+        }
     session.commit()
     if not job_ids:
         if mode == "autopilot" and campaign.status == "autopilot":
@@ -442,7 +499,7 @@ def post_resume(
             status_code=409,
             detail=result.get("reason", "No email was queued"),
         )
-    return {"status": "sending", "queued": len(job_ids)}
+    return {"status": campaign.status, "queued": len(job_ids)}
 
 
 @router.post("/api/campaigns/{campaign_id}/stop")
@@ -452,29 +509,38 @@ def post_stop(
     user_id: str = Depends(get_current_user_id),
 ):
     campaign = require_campaign(session, campaign_id, user_id)
-    active_jobs = list(
+    if campaign.status == "stopped":
+        return {"status": "stopped", "cancelled": 0, "in_flight": 0}
+    if campaign.status not in {"sending", "scheduled", "autopilot", "paused"}:
+        raise HTTPException(status_code=409, detail=f"Cannot stop a campaign that is {campaign.status}")
+    cancellable_jobs = list(
         session.scalars(
             select(SendJob).where(
                 SendJob.campaign_id == campaign_id,
-                SendJob.status.in_(("queued", "retry", "running")),
+                SendJob.status.in_(("queued", "retry")),
             )
         )
     )
-    for job in active_jobs:
+    for job in cancellable_jobs:
         recipient = session.get(
             CampaignRecipient,
             {"campaign_id": campaign_id, "contact_id": job.recipient_id},
         )
         if recipient and recipient.status == "queued":
             recipient.status = "approved"
-        # Remove active attempts so a later resume can reuse the recipient's
-        # idempotency key. A worker that already claimed the job will observe
-        # the campaign's stopped status before sending.
+        # Remove unclaimed attempts so a later start can reuse the recipient's
+        # idempotency key. Claimed work remains for the worker to finalize.
         session.delete(job)
+    in_flight = session.scalar(
+        select(func.count()).select_from(SendJob).where(
+            SendJob.campaign_id == campaign_id,
+            SendJob.status == "running",
+        )
+    ) or 0
     campaign.status = "stopped"
     campaign.scheduled_at = None
     session.commit()
-    return {"status": "stopped", "cancelled": len(active_jobs)}
+    return {"status": "stopped", "cancelled": len(cancellable_jobs), "in_flight": in_flight}
 
 
 @router.get("/api/campaigns/{campaign_id}/send-progress")
@@ -583,7 +649,7 @@ def get_campaign_send_progress(
         )
     )
     today_schedule = next(
-        (s for s in day_schedules if s.day_of_week == WEEKDAY_NAMES[utcnow().astimezone(ZoneInfo("UTC")).weekday()]),
+        (s for s in day_schedules if s.day_of_week == WEEKDAY_NAMES[utcnow().astimezone(user_zone(session, user_id)).weekday()]),
         None,
     )
     result = {
@@ -695,7 +761,7 @@ def get_campaign_recipients(
                 "contact_id": cr.contact_id,
                 "email": c.email_normalized,
                 "custom_fields": c.custom_fields or {},
-                "status": cr.status if c.status == "approved" else c.status,
+                "status": cr.status if c.status in {"approved", "sent"} else c.status,
                 "source_type": c.source_type,
                 "created_at": cr.created_at.isoformat() if cr.created_at else None,
             }

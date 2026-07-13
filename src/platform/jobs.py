@@ -4,7 +4,6 @@ import logging
 import json
 import secrets
 from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from jinja2 import Environment
 from sqlalchemy import func, or_, select, update
@@ -14,14 +13,15 @@ from sqlalchemy.orm import Session
 from src.gmail_sender import fake_send_email, send_email
 from src.platform.db import SessionLocal
 from src.platform.gmail import gmail_service_for_sender
-from src.platform.models import AutopilotDaySchedule, Campaign, CampaignRecipient, Contact, Sender, SendJob, SendLog, UserSettings
-
-WEEKDAY_NAMES = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+from src.platform.models import Campaign, CampaignRecipient, Contact, Sender, SendJob, SendLog
 from src.platform.services import (
+    WEEKDAY_NAMES,
+    autopilot_window_state,
     campaign_sent_today,
     campaign_reserved_today,
     connected_senders,
     eligible_senders,
+    next_autopilot_run,
     require_group,
     sender_sent_count_today,
 )
@@ -51,7 +51,12 @@ def _schedule_after_finished_batch(session: Session, job: SendJob, finished_at: 
     if not campaign or campaign.status in {"paused", "stopped", "ended"}:
         return
     delay_minutes = int((campaign.send_settings or {}).get("delay_minutes", 5))
-    campaign.scheduled_at = finished_at + timedelta(minutes=delay_minutes)
+    next_due = finished_at + timedelta(minutes=delay_minutes)
+    campaign.scheduled_at = (
+        next_autopilot_run(session, campaign, now=next_due)
+        if (campaign.send_settings or {}).get("mode") == "autopilot"
+        else next_due
+    )
 
 
 def create_send_jobs_for_next_batch(
@@ -62,7 +67,11 @@ def create_send_jobs_for_next_batch(
     delay_minutes: int = 5,
     scheduled_for: datetime | None = None,
 ) -> dict:
-    campaign = session.scalar(select(Campaign).where(Campaign.id == campaign_id, Campaign.user_id == user_id))
+    campaign = session.scalar(
+        select(Campaign)
+        .where(Campaign.id == campaign_id, Campaign.user_id == user_id)
+        .with_for_update()
+    )
     if not campaign:
         raise LookupError("Campaign not found")
     if campaign.status in {"paused", "stopped", "ended"}:
@@ -72,7 +81,7 @@ def create_send_jobs_for_next_batch(
 
     group = require_group(session, user_id, campaign.selected_sender_group_id)
     connected = connected_senders(group)
-    senders = eligible_senders(session, group)
+    senders = eligible_senders(session, group, lock=True)
     if not senders:
         if not connected:
             reason_code = "no_connected_senders"
@@ -88,18 +97,16 @@ def create_send_jobs_for_next_batch(
     max_to_send = len(senders)
     is_autopilot = (campaign.send_settings or {}).get("mode") == "autopilot"
     if is_autopilot:
-        user_settings = session.get(UserSettings, campaign.user_id)
-        try:
-            zone = ZoneInfo(user_settings.timezone if user_settings else "UTC")
-        except ZoneInfoNotFoundError:
-            zone = ZoneInfo("UTC")
-        today_name = WEEKDAY_NAMES[utcnow().astimezone(zone).weekday()]
-        day_schedule = session.scalar(
-            select(AutopilotDaySchedule).where(
-                AutopilotDaySchedule.campaign_id == campaign.id,
-                AutopilotDaySchedule.day_of_week == today_name,
-            )
-        )
+        window = autopilot_window_state(session, campaign)
+        if not window["allowed"]:
+            return {
+                "created": 0,
+                "queued": 0,
+                "reason_code": window["reason_code"],
+                "reason": window["reason"],
+                "next_at": window["next_at"].isoformat(),
+            }
+        day_schedule = window["schedule"]
         if day_schedule:
             sent_today = campaign_sent_today(session, campaign.id)
             remaining_campaign = day_schedule.daily_cap - sent_today - campaign_reserved_today(session, campaign)
@@ -128,7 +135,7 @@ def create_send_jobs_for_next_batch(
         .where(
             SendJob.campaign_id == campaign_id,
             SendJob.recipient_id == CampaignRecipient.contact_id,
-            SendJob.status.in_(("queued", "running", "retry", "sent")),
+            SendJob.status.in_(("queued", "running", "retry", "sent", "failed")),
         )
         .exists()
     )
@@ -139,7 +146,7 @@ def create_send_jobs_for_next_batch(
             .where(
                 CampaignRecipient.campaign_id == campaign_id,
                 Contact.user_id == user_id,
-                Contact.status == "approved",
+                Contact.status.in_(("approved", "sent")),
                 CampaignRecipient.status == "approved",
                 ~existing_job,
             )
@@ -294,10 +301,10 @@ def perform_send_job(job_id: int, *, claimed: bool = False) -> dict:
         log.gmail_thread_id = result.thread_id
         job.status = "sent"
         recipient.status = "sent"
-        contact.status = "sent"
         sender.status = "connected"
         sender.last_error = None
         sender.recent_error_at = None
+        session.refresh(campaign, attribute_names=["status"])
         _schedule_after_finished_batch(session, job, now)
         session.commit()
         logger.info("perform_send_job success job_id=%s gmail_id=%s", job_id, result.message_id)
@@ -307,8 +314,12 @@ def perform_send_job(job_id: int, *, claimed: bool = False) -> dict:
         session.rollback()
         job = session.get(SendJob, job_id)
         if job:
-            job.status = "retry" if job.attempts < job.max_attempts else "failed"
+            final_failure = job.attempts >= job.max_attempts
+            job.status = "failed" if final_failure else "retry"
             job.error_message = str(exc)
+            job.locked_at = None
+            if not final_failure:
+                job.scheduled_for = utcnow() + timedelta(minutes=min(2 ** max(job.attempts - 1, 0), 15))
             if attempt_log_id:
                 attempt_log = session.get(SendLog, attempt_log_id)
                 if attempt_log:
@@ -318,6 +329,13 @@ def perform_send_job(job_id: int, *, claimed: bool = False) -> dict:
             if sender:
                 sender.last_error = str(exc)
                 sender.recent_error_at = utcnow()
+            if final_failure:
+                recipient = session.get(
+                    CampaignRecipient,
+                    {"campaign_id": job.campaign_id, "contact_id": job.recipient_id},
+                )
+                if recipient:
+                    recipient.status = "failed"
             _schedule_after_finished_batch(session, job, utcnow())
             session.commit()
         return {"status": "failed", "job_id": job_id, "error": str(exc)}

@@ -138,12 +138,15 @@ def get_templates(conn: sqlite3.Connection, user_id: str = "default_user") -> li
     return list(conn.execute("SELECT * FROM templates WHERE user_id = ? ORDER BY id", (user_id,)).fetchall())
 
 def create_template(conn: sqlite3.Connection, user_id: str = "default_user", title: str = "", subject: str = "", body: str = "") -> int:
-    conn.execute(
+    cursor = conn.execute(
         "INSERT INTO templates (title, subject, body, user_id) VALUES (?, ?, ?, ?)",
         (title, subject, body, user_id),
     )
+    template_id = cursor.lastrowid
     conn.commit()
-    return conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    if template_id is None:
+        raise RuntimeError("Database did not return the created template id")
+    return int(template_id)
 
 def delete_template(conn: sqlite3.Connection, template_id: int, user_id: str = "default_user") -> None:
     conn.execute("DELETE FROM templates WHERE id = ? AND user_id = ?", (template_id, user_id))

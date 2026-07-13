@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -18,15 +18,23 @@ from src.platform import scheduler as platform_scheduler
 from src.platform import services as platform_services
 from src.platform import worker as platform_worker
 from src.platform.jobs import WEEKDAY_NAMES, create_send_jobs_for_next_batch
-from src.platform.models import AutopilotDaySchedule, Base, Campaign, CampaignRecipient, Contact, OAuthState, Sender, SenderGroup, SendJob, SendLog
+from src.platform.models import AutopilotDaySchedule, Base, Campaign, CampaignRecipient, Contact, OAuthState, Sender, SenderGroup, SendJob, SendLog, UserSettings
 from src.platform.security import decrypt_text
 from src.platform.services import ensure_user
 from src.platform.time import utcnow
 from src.db.contact_repo import insert_contact
+from src.db.campaign_repo import create_template
 
 
 USER_ID = "mock_app_user"
 HEADERS = {"Authorization": f"Bearer {USER_ID}"}
+
+
+def all_day_schedule(cap: int = 10) -> dict[str, dict[str, object]]:
+    return {
+        day: {"cap": cap, "start": "00:00", "end": "23:59"}
+        for day in WEEKDAY_NAMES
+    }
 
 
 def make_session_factory(tmp_path):
@@ -57,6 +65,15 @@ def test_contact_insert_uses_pending_status_without_implicit_imports():
     assert inserted_data["status"] == "pending"
     assert inserted_data["user_id"] == USER_ID
     assert inserted_data["email_normalized"] == "lead@example.com"
+
+
+def test_template_insert_uses_database_cursor_id():
+    connection = MagicMock()
+    connection.execute.return_value.lastrowid = 41
+
+    assert create_template(connection, USER_ID, "Title", "Subject", "Body") == 41
+    assert connection.execute.call_count == 1
+    connection.commit.assert_called_once_with()
 
 
 def test_sender_group_can_hold_multiple_senders_and_delete_clears_credentials(tmp_path):
@@ -391,6 +408,88 @@ def test_autopilot_campaign_cap_reserves_queued_recipients(tmp_path):
     assert second["created"] == 1
     assert third["reason_code"] == "campaign_daily_cap_reached"
     assert session.scalar(select(SendJob.id)) is not None
+    session.close()
+
+
+def test_autopilot_does_not_queue_on_disabled_day_or_outside_window(tmp_path):
+    session_factory = make_session_factory(tmp_path)
+    session = session_factory()
+    ensure_user(session, USER_ID)
+    group = SenderGroup(user_id=USER_ID, name="Autopilot policy")
+    sender = Sender(
+        user_id=USER_ID,
+        group=group,
+        email="policy@example.com",
+        status="connected",
+        daily_cap=10,
+        encrypted_oauth_credentials="encrypted",
+    )
+    campaign = Campaign(
+        user_id=USER_ID,
+        selected_sender_group=group,
+        name="Policy campaign",
+        status="autopilot",
+        send_settings={"mode": "autopilot", "delay_minutes": 5},
+    )
+    contact = Contact(user_id=USER_ID, email_normalized="policy-lead@example.com", status="approved")
+    session.add_all([group, sender, campaign, contact])
+    session.flush()
+    session.add(CampaignRecipient(campaign_id=campaign.id, contact_id=contact.id, status="approved"))
+    tomorrow = WEEKDAY_NAMES[(utcnow().weekday() + 1) % 7]
+    session.add(
+        AutopilotDaySchedule(
+            campaign_id=campaign.id,
+            day_of_week=tomorrow,
+            daily_cap=10,
+            start_time="00:00",
+            end_time="23:59",
+        )
+    )
+    session.commit()
+
+    disabled = create_send_jobs_for_next_batch(session, user_id=USER_ID, campaign_id=campaign.id)
+    assert disabled["reason_code"] == "autopilot_day_disabled"
+    assert session.scalar(select(SendJob.id)) is None
+
+    session.query(AutopilotDaySchedule).delete()
+    session.add(
+        AutopilotDaySchedule(
+            campaign_id=campaign.id,
+            day_of_week=WEEKDAY_NAMES[utcnow().weekday()],
+            daily_cap=10,
+            start_time="00:00",
+            end_time="00:01",
+        )
+    )
+    session.commit()
+    outside = create_send_jobs_for_next_batch(session, user_id=USER_ID, campaign_id=campaign.id)
+    assert outside["reason_code"] == "autopilot_outside_window"
+    assert session.scalar(select(SendJob.id)) is None
+    session.close()
+
+
+def test_daily_counts_follow_user_timezone(tmp_path, monkeypatch):
+    session_factory = make_session_factory(tmp_path)
+    session = session_factory()
+    ensure_user(session, USER_ID)
+    session.get(UserSettings, USER_ID).timezone = "Europe/Paris"
+    campaign = Campaign(user_id=USER_ID, name="Timezone", status="draft")
+    session.add(campaign)
+    session.flush()
+    session.add(
+        SendLog(
+            user_id=USER_ID,
+            campaign_id=campaign.id,
+            recipient_email="timezone@example.com",
+            sender_email="sender@example.com",
+            subject="Timezone",
+            status="sent",
+            sent_at=datetime(2026, 7, 13, 22, 30, tzinfo=timezone.utc),
+        )
+    )
+    session.commit()
+    monkeypatch.setattr(platform_services, "utcnow", lambda: datetime(2026, 7, 13, 23, 30, tzinfo=timezone.utc))
+    assert platform_services.campaign_sent_today(session, campaign.id) == 1
     session.close()
 
 
@@ -819,11 +918,66 @@ def test_perform_send_job_sends_and_persists_delivery_state(tmp_path, monkeypatc
     assert persisted_job.status == "sent"
     assert persisted_job.attempts == 1
     assert persisted_recipient.status == "sent"
+    assert session.get(Contact, contact.id).status == "approved"
     assert log.status == "sent"
     assert log.contact_id == contact.id
     assert log.gmail_message_id == "gmail-message"
     session.close()
 
+
+def test_final_send_failure_marks_recipient_failed(tmp_path, monkeypatch):
+    session_factory = make_session_factory(tmp_path)
+    session = session_factory()
+    ensure_user(session, USER_ID)
+    group = SenderGroup(user_id=USER_ID, name="Failed delivery")
+    sender = Sender(
+        user_id=USER_ID,
+        group=group,
+        email="failed-sender@example.com",
+        status="connected",
+        daily_cap=10,
+        encrypted_oauth_credentials="encrypted",
+    )
+    campaign = Campaign(
+        user_id=USER_ID,
+        selected_sender_group=group,
+        name="Failed delivery",
+        subject_template="Subject",
+        body_template="Body",
+        status="sending",
+    )
+    contact = Contact(user_id=USER_ID, email_normalized="failed-lead@example.com", status="approved")
+    session.add_all([group, sender, campaign, contact])
+    session.flush()
+    recipient = CampaignRecipient(campaign_id=campaign.id, contact_id=contact.id, status="queued")
+    job = SendJob(
+        user_id=USER_ID,
+        campaign_id=campaign.id,
+        recipient_id=contact.id,
+        sender_id=sender.id,
+        status="queued",
+        max_attempts=1,
+        scheduled_for=utcnow(),
+        batch_id="failed-batch",
+        idempotency_key=f"campaign:{campaign.id}:recipient:{contact.id}",
+    )
+    session.add_all([recipient, job])
+    session.commit()
+    job_id = job.id
+    campaign_id = campaign.id
+    contact_id = contact.id
+    session.close()
+
+    monkeypatch.setattr(platform_jobs, "SessionLocal", session_factory)
+    monkeypatch.setattr(platform_jobs, "gmail_service_for_sender", lambda _session, _sender: object())
+    monkeypatch.setattr(platform_jobs, "send_email", lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("Gmail failed")))
+
+    result = platform_jobs.perform_send_job(job_id)
+    assert result["status"] == "failed"
+    session = session_factory()
+    assert session.get(SendJob, job_id).status == "failed"
+    assert session.get(CampaignRecipient, {"campaign_id": campaign_id, "contact_id": contact_id}).status == "failed"
+    session.close()
 
 def _seed_delivery_campaign(session_factory, *, recipient_count=4):
     session = session_factory()
@@ -888,6 +1042,127 @@ def _install_fake_delivery(monkeypatch, session_factory, sent_requests):
         return SimpleNamespace(message_id=f"gmail-message-{sequence}", thread_id=f"gmail-thread-{sequence}")
 
     monkeypatch.setattr(platform_jobs, "send_email", fake_send_email)
+
+
+def test_active_campaign_rejects_new_start_modes_and_invalid_controls(tmp_path):
+    session_factory = make_session_factory(tmp_path)
+    install_session_override(session_factory)
+    try:
+        campaign_id, _, _ = _seed_delivery_campaign(session_factory, recipient_count=1)
+        session = session_factory()
+        campaign = session.get(Campaign, campaign_id)
+        campaign.status = "sending"
+        session.commit()
+        session.close()
+
+        client = TestClient(app)
+        assert client.post(f"/api/campaigns/{campaign_id}/send-now", json={}, headers=HEADERS).status_code == 409
+        assert client.post(
+            f"/api/campaigns/{campaign_id}/schedule",
+            json={"scheduled_at": (utcnow() + timedelta(hours=1)).isoformat()},
+            headers=HEADERS,
+        ).status_code == 409
+        assert client.post(
+            f"/api/campaigns/{campaign_id}/autopilot/start",
+            json={"schedule": all_day_schedule()},
+            headers=HEADERS,
+        ).status_code == 409
+        assert client.post(f"/api/campaigns/{campaign_id}/resume", headers=HEADERS).status_code == 409
+
+        assert client.post(f"/api/campaigns/{campaign_id}/pause", headers=HEADERS).status_code == 200
+        assert client.post(f"/api/campaigns/{campaign_id}/pause", headers=HEADERS).status_code == 200
+        assert client.post(f"/api/campaigns/{campaign_id}/resume", headers=HEADERS).status_code == 200
+    finally:
+        clear_session_override()
+
+
+def test_stop_cancels_queued_jobs_but_preserves_claimed_job(tmp_path):
+    session_factory = make_session_factory(tmp_path)
+    install_session_override(session_factory)
+    try:
+        campaign_id, sender_ids, contact_ids = _seed_delivery_campaign(session_factory, recipient_count=2)
+        session = session_factory()
+        campaign = session.get(Campaign, campaign_id)
+        campaign.status = "sending"
+        for contact_id in contact_ids:
+            session.get(
+                CampaignRecipient,
+                {"campaign_id": campaign_id, "contact_id": contact_id},
+            ).status = "queued"
+        session.add_all(
+            [
+                SendJob(
+                    user_id=USER_ID,
+                    campaign_id=campaign_id,
+                    recipient_id=contact_ids[0],
+                    sender_id=sender_ids[0],
+                    status="queued",
+                    scheduled_for=utcnow(),
+                    batch_id="stop-queued",
+                    idempotency_key=f"campaign:{campaign_id}:recipient:{contact_ids[0]}",
+                ),
+                SendJob(
+                    user_id=USER_ID,
+                    campaign_id=campaign_id,
+                    recipient_id=contact_ids[1],
+                    sender_id=sender_ids[1],
+                    status="running",
+                    scheduled_for=utcnow(),
+                    locked_at=utcnow(),
+                    batch_id="stop-running",
+                    idempotency_key=f"campaign:{campaign_id}:recipient:{contact_ids[1]}",
+                ),
+            ]
+        )
+        session.commit()
+        session.close()
+
+        response = TestClient(app).post(f"/api/campaigns/{campaign_id}/stop", headers=HEADERS)
+        assert response.status_code == 200
+        assert response.json() == {"status": "stopped", "cancelled": 1, "in_flight": 1}
+
+        session = session_factory()
+        jobs = list(session.scalars(select(SendJob).where(SendJob.campaign_id == campaign_id)))
+        assert len(jobs) == 1
+        assert jobs[0].status == "running"
+        assert session.get(Campaign, campaign_id).status == "stopped"
+        assert session.get(
+            CampaignRecipient,
+            {"campaign_id": campaign_id, "contact_id": contact_ids[0]},
+        ).status == "approved"
+        session.close()
+    finally:
+        clear_session_override()
+
+
+def test_resuming_future_schedule_keeps_original_start_time(tmp_path):
+    session_factory = make_session_factory(tmp_path)
+    install_session_override(session_factory)
+    try:
+        campaign_id, _, _ = _seed_delivery_campaign(session_factory, recipient_count=1)
+        due = utcnow() + timedelta(hours=2)
+        session = session_factory()
+        campaign = session.get(Campaign, campaign_id)
+        campaign.status = "paused"
+        campaign.scheduled_at = due
+        campaign.send_settings = {"mode": "schedule", "delay_minutes": 5}
+        session.commit()
+        session.close()
+
+        response = TestClient(app).post(f"/api/campaigns/{campaign_id}/resume", headers=HEADERS)
+        assert response.status_code == 200
+        assert response.json()["status"] == "scheduled"
+        assert response.json()["queued"] == 0
+
+        session = session_factory()
+        campaign = session.get(Campaign, campaign_id)
+        assert campaign.status == "scheduled"
+        assert campaign.scheduled_at.replace(tzinfo=due.tzinfo).timestamp() == due.timestamp()
+        assert session.scalar(select(SendJob.id).where(SendJob.campaign_id == campaign_id)) is None
+        session.close()
+    finally:
+        clear_session_override()
+
 
 def test_send_now_http_runs_two_sender_batches_through_fake_gmail(tmp_path, monkeypatch):
     session_factory = make_session_factory(tmp_path)
@@ -992,9 +1267,7 @@ def test_autopilot_http_starts_and_sends_due_batch_through_fake_gmail(tmp_path, 
         response = TestClient(app).post(
             f"/api/campaigns/{campaign_id}/autopilot/start",
             json={
-                "days": ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"],
-                "start_time": "00:00",
-                "end_time": "23:59",
+                "schedule": all_day_schedule(),
                 "delay_minutes": 6,
                 "scheduled_at": due.isoformat(),
             },
@@ -1020,6 +1293,106 @@ def test_autopilot_http_starts_and_sends_due_batch_through_fake_gmail(tmp_path, 
         clear_session_override()
 
 
+def test_autopilot_rejects_empty_unknown_and_invalid_day_schedules(tmp_path):
+    session_factory = make_session_factory(tmp_path)
+    install_session_override(session_factory)
+    try:
+        campaign_id, _, _ = _seed_delivery_campaign(session_factory, recipient_count=1)
+        client = TestClient(app)
+        endpoint = f"/api/campaigns/{campaign_id}/autopilot/start"
+
+        empty = client.post(endpoint, json={"schedule": {}}, headers=HEADERS)
+        unknown = client.post(
+            endpoint,
+            json={"schedule": {"funday": {"cap": 2, "start": "09:00", "end": "17:00"}}},
+            headers=HEADERS,
+        )
+        reversed_window = client.post(
+            endpoint,
+            json={"schedule": {"monday": {"cap": 2, "start": "17:00", "end": "09:00"}}},
+            headers=HEADERS,
+        )
+
+        assert empty.status_code == 422
+        assert unknown.status_code == 422
+        assert reversed_window.status_code == 422
+    finally:
+        clear_session_override()
+
+
+def test_autopilot_stops_at_today_cap_then_resumes_next_day(tmp_path, monkeypatch):
+    session_factory = make_session_factory(tmp_path)
+    install_session_override(session_factory)
+    sent_requests = []
+    _install_fake_delivery(monkeypatch, session_factory, sent_requests)
+    try:
+        campaign_id, sender_ids, contact_ids = _seed_delivery_campaign(session_factory, recipient_count=3)
+        session = session_factory()
+        senders = list(session.scalars(select(Sender).where(Sender.id.in_(sender_ids)).order_by(Sender.id)))
+        senders[0].daily_cap = 10
+        senders[1].status = "removed"
+        senders[1].encrypted_oauth_credentials = None
+        session.commit()
+        session.close()
+
+        response = TestClient(app).post(
+            f"/api/campaigns/{campaign_id}/autopilot/start",
+            json={
+                "schedule": all_day_schedule(cap=2),
+                "delay_minutes": 0,
+                "scheduled_at": (utcnow() - timedelta(seconds=1)).isoformat(),
+            },
+            headers=HEADERS,
+        )
+        assert response.status_code == 200
+
+        assert platform_worker.run_worker_cycle() == 1
+        assert platform_worker.run_worker_cycle() == 1
+        assert platform_worker.run_worker_cycle() == 0
+
+        session = session_factory()
+        campaign = session.get(Campaign, campaign_id)
+        statuses = list(
+            session.scalars(
+                select(CampaignRecipient.status)
+                .where(CampaignRecipient.campaign_id == campaign_id)
+                .order_by(CampaignRecipient.contact_id)
+            )
+        )
+        next_day = campaign.scheduled_at + timedelta(seconds=1)
+        assert campaign.status == "autopilot"
+        assert campaign.send_settings["pause_reason"] == "campaign_daily_cap_reached"
+        assert statuses == ["sent", "sent", "approved"]
+        assert len(sent_requests) == 2
+        session.close()
+
+        monkeypatch.setattr(platform_scheduler, "utcnow", lambda: next_day)
+        monkeypatch.setattr(platform_worker, "utcnow", lambda: next_day)
+        monkeypatch.setattr(platform_services, "utcnow", lambda: next_day)
+        monkeypatch.setattr(platform_jobs, "utcnow", lambda: next_day)
+        assert platform_worker.run_worker_cycle() == 1
+        assert len(sent_requests) == 3
+
+        session = session_factory()
+        campaign = session.get(Campaign, campaign_id)
+        campaign.scheduled_at = next_day
+        session.commit()
+        session.close()
+        assert platform_worker.run_worker_cycle() == 0
+
+        session = session_factory()
+        assert session.get(Campaign, campaign_id).status == "ended"
+        assert {
+            row.status
+            for row in session.scalars(
+                select(CampaignRecipient).where(CampaignRecipient.contact_id.in_(contact_ids))
+            )
+        } == {"sent"}
+        session.close()
+    finally:
+        clear_session_override()
+
+
 def test_autopilot_waits_full_three_minutes_between_fake_gmail_batches(tmp_path, monkeypatch):
     session_factory = make_session_factory(tmp_path)
     install_session_override(session_factory)
@@ -1030,9 +1403,7 @@ def test_autopilot_waits_full_three_minutes_between_fake_gmail_batches(tmp_path,
         response = TestClient(app).post(
             f"/api/campaigns/{campaign_id}/autopilot/start",
             json={
-                "days": ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"],
-                "start_time": "00:00",
-                "end_time": "23:59",
+                "schedule": all_day_schedule(),
                 "delay_minutes": 3,
                 "scheduled_at": (utcnow() - timedelta(seconds=1)).isoformat(),
             },
@@ -1144,9 +1515,7 @@ def test_autopilot_compressed_day_resumes_after_five_minutes(tmp_path, monkeypat
         response = TestClient(app).post(
             f"/api/campaigns/{campaign_id}/autopilot/start",
             json={
-                "days": ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"],
-                "start_time": "00:00",
-                "end_time": "23:59",
+                "schedule": all_day_schedule(),
                 "delay_minutes": 0,
                 "scheduled_at": (start - timedelta(seconds=1)).isoformat(),
             },

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Iterable
 
@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from src.platform.models import (
     Campaign,
+    AutopilotDaySchedule,
     Contact,
     OAuthState,
     Sender,
@@ -22,6 +23,102 @@ from src.platform.time import utcnow
 
 
 CONNECTED_SENDER_STATUSES = {"connected"}
+WEEKDAY_NAMES = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+
+
+def _aware_utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+
+def user_zone(session: Session, user_id: str) -> ZoneInfo:
+    settings = session.get(UserSettings, user_id)
+    try:
+        return ZoneInfo(settings.timezone if settings else "UTC")
+    except ZoneInfoNotFoundError:
+        return ZoneInfo("UTC")
+
+
+def local_day_bounds(session: Session, user_id: str, *, now: datetime | None = None) -> tuple[datetime, datetime]:
+    zone = user_zone(session, user_id)
+    local_midnight = _aware_utc(now or utcnow()).astimezone(zone).replace(hour=0, minute=0, second=0, microsecond=0)
+    return local_midnight.astimezone(timezone.utc), (local_midnight + timedelta(days=1)).astimezone(timezone.utc)
+
+
+def _clock(value: str, fallback: time) -> time:
+    try:
+        return time.fromisoformat(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _day_schedules(session: Session, campaign_id: int) -> dict[str, AutopilotDaySchedule]:
+    schedules = session.scalars(
+        select(AutopilotDaySchedule).where(AutopilotDaySchedule.campaign_id == campaign_id)
+    )
+    return {schedule.day_of_week: schedule for schedule in schedules}
+
+
+def next_autopilot_run(
+    session: Session,
+    campaign: Campaign,
+    *,
+    now: datetime | None = None,
+    force_next_day: bool = False,
+) -> datetime:
+    current = _aware_utc(now or utcnow())
+    zone = user_zone(session, campaign.user_id)
+    local_now = current.astimezone(zone)
+    schedules = _day_schedules(session, campaign.id)
+    settings = campaign.send_settings or {}
+    allowed_days = set(schedules) if schedules else set(settings.get("days") or WEEKDAY_NAMES[:5])
+    first_offset = 1 if force_next_day else 0
+    for offset in range(first_offset, 9):
+        candidate_date = local_now.date() + timedelta(days=offset)
+        day_name = WEEKDAY_NAMES[candidate_date.weekday()]
+        if day_name not in allowed_days:
+            continue
+        schedule = schedules.get(day_name)
+        start = _clock(schedule.start_time if schedule else str(settings.get("start_time", "09:00")), time(9, 0))
+        end = _clock(schedule.end_time if schedule else str(settings.get("end_time", "17:00")), time(17, 0))
+        start_at = datetime.combine(candidate_date, start, tzinfo=zone)
+        end_at = datetime.combine(candidate_date, end, tzinfo=zone)
+        if offset == 0 and start_at <= local_now <= end_at:
+            return current
+        if start_at > local_now:
+            return start_at.astimezone(timezone.utc)
+    return (local_now + timedelta(days=1)).astimezone(timezone.utc)
+
+
+def autopilot_window_state(session: Session, campaign: Campaign, *, now: datetime | None = None) -> dict:
+    current = _aware_utc(now or utcnow())
+    zone = user_zone(session, campaign.user_id)
+    local_now = current.astimezone(zone)
+    schedules = _day_schedules(session, campaign.id)
+    settings = campaign.send_settings or {}
+    day_name = WEEKDAY_NAMES[local_now.weekday()]
+    allowed_days = set(schedules) if schedules else set(settings.get("days") or WEEKDAY_NAMES[:5])
+    if day_name not in allowed_days:
+        return {
+            "allowed": False,
+            "reason_code": "autopilot_day_disabled",
+            "reason": "Autopilot is disabled today",
+            "next_at": next_autopilot_run(session, campaign, now=current),
+            "schedule": None,
+        }
+    schedule = schedules.get(day_name)
+    start = _clock(schedule.start_time if schedule else str(settings.get("start_time", "09:00")), time(9, 0))
+    end = _clock(schedule.end_time if schedule else str(settings.get("end_time", "17:00")), time(17, 0))
+    start_at = datetime.combine(local_now.date(), start, tzinfo=zone)
+    end_at = datetime.combine(local_now.date(), end, tzinfo=zone)
+    if local_now < start_at or local_now > end_at:
+        return {
+            "allowed": False,
+            "reason_code": "autopilot_outside_window",
+            "reason": "Autopilot is outside today's sending window",
+            "next_at": next_autopilot_run(session, campaign, now=current),
+            "schedule": schedule,
+        }
+    return {"allowed": True, "reason_code": None, "reason": None, "next_at": current, "schedule": schedule}
 
 
 def ensure_user(session: Session, user_id: str, email: str | None = None) -> User:
@@ -56,7 +153,10 @@ def connected_senders(group: SenderGroup) -> list[Sender]:
 
 
 def sender_sent_count_today(session: Session, sender_id: int) -> int:
-    start = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    sender = session.get(Sender, sender_id)
+    if not sender:
+        return 0
+    start, end = local_day_bounds(session, sender.user_id)
     return int(
         session.scalar(
             select(func.count())
@@ -65,6 +165,7 @@ def sender_sent_count_today(session: Session, sender_id: int) -> int:
                 SendLog.sender_id == sender_id,
                 SendLog.status.in_(("sent", "test_sent")),
                 SendLog.sent_at >= start,
+                SendLog.sent_at < end,
             )
         )
         or 0
@@ -72,7 +173,10 @@ def sender_sent_count_today(session: Session, sender_id: int) -> int:
 
 
 def campaign_sent_today(session: Session, campaign_id: int) -> int:
-    start = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    campaign = session.get(Campaign, campaign_id)
+    if not campaign:
+        return 0
+    start, end = local_day_bounds(session, campaign.user_id)
     return int(
         session.scalar(
             select(func.count())
@@ -81,6 +185,7 @@ def campaign_sent_today(session: Session, campaign_id: int) -> int:
                 SendLog.campaign_id == campaign_id,
                 SendLog.status.in_(("sent", "test_sent")),
                 SendLog.sent_at >= start,
+                SendLog.sent_at < end,
             )
         )
         or 0
@@ -89,14 +194,7 @@ def campaign_sent_today(session: Session, campaign_id: int) -> int:
 
 def campaign_reserved_today(session: Session, campaign: Campaign) -> int:
     """Count queued work already reserved against today's campaign cap."""
-    user_settings = session.get(UserSettings, campaign.user_id)
-    try:
-        zone = ZoneInfo(user_settings.timezone if user_settings else "UTC")
-    except ZoneInfoNotFoundError:
-        zone = ZoneInfo("UTC")
-    local_midnight = utcnow().astimezone(zone).replace(hour=0, minute=0, second=0, microsecond=0)
-    start = local_midnight.astimezone(timezone.utc)
-    end = (local_midnight + timedelta(days=1)).astimezone(timezone.utc)
+    start, end = local_day_bounds(session, campaign.user_id)
     return int(
         session.scalar(
             select(func.count())
@@ -112,16 +210,29 @@ def campaign_reserved_today(session: Session, campaign: Campaign) -> int:
     )
 
 
-def eligible_senders(session: Session, group: SenderGroup) -> list[Sender]:
+def eligible_senders(session: Session, group: SenderGroup, *, lock: bool = False) -> list[Sender]:
     eligible: list[Sender] = []
-    for sender in connected_senders(group):
+    candidates = connected_senders(group)
+    if lock:
+        candidate_ids = [sender.id for sender in candidates]
+        candidates = list(
+            session.scalars(
+                select(Sender)
+                .where(Sender.id.in_(candidate_ids))
+                .order_by(Sender.id)
+                .with_for_update()
+            )
+        ) if candidate_ids else []
+    for sender in candidates:
+        start, end = local_day_bounds(session, sender.user_id)
         sender_reserved = session.scalar(
             select(func.count())
             .select_from(SendJob)
             .where(
                 SendJob.sender_id == sender.id,
                 SendJob.status.in_(("queued", "running", "retry")),
-                SendJob.scheduled_for >= utcnow().replace(hour=0, minute=0, second=0, microsecond=0),
+                SendJob.scheduled_for >= start,
+                SendJob.scheduled_for < end,
             )
         ) or 0
         if sender_sent_count_today(session, sender.id) + int(sender_reserved) >= sender.daily_cap:
