@@ -17,13 +17,12 @@ from src.platform.models import Campaign, CampaignRecipient, Contact, Sender, Se
 from src.platform.services import (
     SENDER_ERROR_COOLDOWN,
     WEEKDAY_NAMES,
+    autopilot_reschedule_state,
     autopilot_window_state,
-    campaign_sent_today,
-    campaign_reserved_today,
+    campaign_daily_capacity,
     connected_senders,
     delivery_policy_state,
     eligible_senders,
-    next_autopilot_run,
     require_group,
     sender_sent_count_today,
 )
@@ -54,11 +53,20 @@ def _schedule_after_finished_batch(session: Session, job: SendJob, finished_at: 
         return
     delay_minutes = int((campaign.send_settings or {}).get("delay_minutes", 5))
     next_due = finished_at + timedelta(minutes=delay_minutes)
-    campaign.scheduled_at = (
-        next_autopilot_run(session, campaign, now=next_due)
-        if (campaign.send_settings or {}).get("mode") == "autopilot"
-        else next_due
-    )
+    if (campaign.send_settings or {}).get("mode") == "autopilot":
+        state = autopilot_reschedule_state(
+            session,
+            campaign,
+            now=finished_at,
+            next_candidate=next_due,
+        )
+        campaign.scheduled_at = state["next_at"]
+        campaign.send_settings = {
+            **(campaign.send_settings or {}),
+            "pause_reason": state["pause_reason"],
+        }
+    else:
+        campaign.scheduled_at = next_due
 
 
 def _defer_disallowed_job(
@@ -120,14 +128,18 @@ def create_send_jobs_for_next_batch(
     if not campaign.selected_sender_group_id:
         raise ValueError("Campaign does not have a sender group selected")
 
+    policy_now = utcnow()
     group = require_group(session, user_id, campaign.selected_sender_group_id)
     connected = connected_senders(group)
-    senders = eligible_senders(session, group, lock=True)
+    senders = eligible_senders(session, group, lock=True, now=policy_now)
     if not senders:
         if not connected:
             reason_code = "no_connected_senders"
             reason = "No eligible connected senders in selected group"
-        elif all(sender_sent_count_today(session, sender.id) >= sender.daily_cap for sender in connected):
+        elif all(
+            sender_sent_count_today(session, sender.id, now=policy_now) >= sender.daily_cap
+            for sender in connected
+        ):
             reason_code = "daily_caps_reached"
             reason = "All senders in the selected group reached their daily cap"
         else:
@@ -138,7 +150,7 @@ def create_send_jobs_for_next_batch(
     max_to_send = len(senders)
     is_autopilot = (campaign.send_settings or {}).get("mode") == "autopilot"
     if is_autopilot:
-        window = autopilot_window_state(session, campaign)
+        window = autopilot_window_state(session, campaign, now=policy_now)
         if not window["allowed"]:
             return {
                 "created": 0,
@@ -147,10 +159,14 @@ def create_send_jobs_for_next_batch(
                 "reason": window["reason"],
                 "next_at": window["next_at"].isoformat(),
             }
-        day_schedule = window["schedule"]
-        if day_schedule:
-            sent_today = campaign_sent_today(session, campaign.id)
-            remaining_campaign = day_schedule.daily_cap - sent_today - campaign_reserved_today(session, campaign)
+        capacity = campaign_daily_capacity(
+            session,
+            campaign,
+            now=policy_now,
+            schedule=window["schedule"],
+        )
+        if capacity is not None:
+            remaining_campaign = capacity["remaining"]
             if remaining_campaign <= 0:
                 return {
                     "created": 0,

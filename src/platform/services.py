@@ -247,6 +247,61 @@ def campaign_reserved_today(
     )
 
 
+def campaign_daily_capacity(
+    session: Session,
+    campaign: Campaign,
+    *,
+    now: datetime | None = None,
+    schedule: AutopilotDaySchedule | None = None,
+) -> dict | None:
+    """Return the campaign's cap usage for one consistent local-day snapshot."""
+    current = _aware_utc(now or utcnow())
+    day_schedule = schedule
+    if day_schedule is None:
+        day_schedule = autopilot_window_state(session, campaign, now=current).get("schedule")
+    if day_schedule is None:
+        return None
+
+    sent = campaign_sent_today(session, campaign.id, now=current)
+    reserved = campaign_reserved_today(session, campaign, now=current)
+    return {
+        "cap": day_schedule.daily_cap,
+        "sent": sent,
+        "reserved": reserved,
+        "remaining": day_schedule.daily_cap - sent - reserved,
+    }
+
+
+def autopilot_reschedule_state(
+    session: Session,
+    campaign: Campaign,
+    *,
+    now: datetime | None = None,
+    next_candidate: datetime | None = None,
+) -> dict:
+    """Choose the next wakeup without briefly reactivating an exhausted day."""
+    current = _aware_utc(now or utcnow())
+    window = autopilot_window_state(session, campaign, now=current)
+    capacity = campaign_daily_capacity(
+        session,
+        campaign,
+        now=current,
+        schedule=window.get("schedule"),
+    )
+    if capacity is not None and capacity["remaining"] <= 0:
+        return {
+            "next_at": next_autopilot_run(session, campaign, now=current, force_next_day=True),
+            "pause_reason": "campaign_daily_cap_reached",
+            "capacity": capacity,
+        }
+
+    return {
+        "next_at": next_autopilot_run(session, campaign, now=next_candidate or current),
+        "pause_reason": window.get("reason_code") if not window["allowed"] else None,
+        "capacity": capacity,
+    }
+
+
 def sender_reserved_today(
     session: Session,
     sender: Sender,
@@ -284,11 +339,16 @@ def delivery_policy_state(
         if not window["allowed"]:
             return window
 
-        schedule = window["schedule"]
-        if schedule:
-            campaign_usage = campaign_sent_today(session, campaign.id, now=current)
-            campaign_reservations = campaign_reserved_today(session, campaign, now=current)
-            if campaign_usage + campaign_reservations > schedule.daily_cap:
+        capacity = campaign_daily_capacity(
+            session,
+            campaign,
+            now=current,
+            schedule=window["schedule"],
+        )
+        if capacity is not None:
+            # The running job already owns one reservation. Zero remaining is
+            # valid for that job; a negative value means the cap was exceeded.
+            if capacity["remaining"] < 0:
                 return {
                     "allowed": False,
                     "reason_code": "campaign_daily_cap_reached",

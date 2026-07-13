@@ -1022,6 +1022,73 @@ def test_browser_timezone_sync_reschedules_active_autopilot(tmp_path, monkeypatc
         clear_session_override()
 
 
+def test_timezone_sync_keeps_exhausted_autopilot_on_next_local_day(tmp_path, monkeypatch):
+    fixed_now = datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc)
+    session_factory = make_session_factory(tmp_path)
+    install_session_override(session_factory)
+    try:
+        campaign_id, sender_ids, contact_ids = _seed_delivery_campaign(
+            session_factory,
+            recipient_count=2,
+        )
+        session = session_factory()
+        campaign = session.get(Campaign, campaign_id)
+        campaign.status = "autopilot"
+        campaign.send_settings = {"mode": "autopilot", "delay_minutes": 5}
+        campaign.scheduled_at = fixed_now + timedelta(days=1)
+        session.add_all(
+            AutopilotDaySchedule(
+                campaign_id=campaign_id,
+                day_of_week=day,
+                daily_cap=2,
+                start_time="09:00",
+                end_time="17:00",
+            )
+            for day in ("monday", "tuesday")
+        )
+        for contact_id in contact_ids:
+            session.add(
+                SendLog(
+                    user_id=USER_ID,
+                    campaign_id=campaign_id,
+                    contact_id=contact_id,
+                    recipient_id=contact_id,
+                    sender_id=sender_ids[0],
+                    recipient_email=f"lead{contact_id}@example.com",
+                    sender_email="sender1@example.com",
+                    subject="Subject",
+                    status="sent",
+                    sent_at=fixed_now - timedelta(minutes=5),
+                )
+            )
+        session.commit()
+        session.close()
+
+        monkeypatch.setattr(settings_router, "utcnow", lambda: fixed_now)
+        response = TestClient(app).patch(
+            "/api/settings/timezone",
+            json={"timezone": "Europe/Paris"},
+            headers=HEADERS,
+        )
+        assert response.status_code == 200
+
+        session = session_factory()
+        campaign = session.get(Campaign, campaign_id)
+        assert campaign.scheduled_at.replace(tzinfo=timezone.utc) == datetime(
+            2026,
+            7,
+            14,
+            7,
+            0,
+            tzinfo=timezone.utc,
+        )
+        assert campaign.send_settings["pause_reason"] == "campaign_daily_cap_reached"
+        assert list(session.scalars(select(SendJob).where(SendJob.campaign_id == campaign_id))) == []
+        session.close()
+    finally:
+        clear_session_override()
+
+
 def test_progress_does_not_count_recovered_attempt_as_terminal_failure(tmp_path):
     session_factory = make_session_factory(tmp_path)
     install_session_override(session_factory)
@@ -1866,6 +1933,13 @@ def test_autopilot_stops_at_today_cap_then_resumes_next_day(tmp_path, monkeypatc
 
         assert platform_worker.run_worker_cycle() == 1
         assert platform_worker.run_worker_cycle() == 1
+
+        session = session_factory()
+        campaign = session.get(Campaign, campaign_id)
+        assert campaign.send_settings["pause_reason"] == "campaign_daily_cap_reached"
+        assert campaign.scheduled_at.replace(tzinfo=timezone.utc) > utcnow()
+        session.close()
+
         assert platform_worker.run_worker_cycle() == 0
 
         session = session_factory()

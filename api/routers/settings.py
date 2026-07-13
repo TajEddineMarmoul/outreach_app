@@ -15,7 +15,12 @@ from api.schemas import SettingsUpdate
 from src.gmail_sender import credentials_file_path
 from src.platform.db import get_session
 from src.platform.models import Campaign, UserSettings
-from src.platform.services import ensure_user, next_autopilot_run, set_user_timezone
+from src.platform.services import (
+    autopilot_reschedule_state,
+    ensure_user,
+    set_user_timezone,
+    validate_timezone_name,
+)
 from src.platform.time import utcnow
 
 
@@ -35,11 +40,43 @@ class TimezoneUpdate(BaseModel):
     timezone: str
 
 
-def _set_timezone(session: Session, user_id: str, value: str) -> bool:
+def _set_timezone(session: Session, user_id: str, value: str) -> tuple[bool, int]:
     try:
-        return set_user_timezone(session, user_id, value)
+        validate_timezone_name(value)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+    settings = session.get(UserSettings, user_id)
+    if settings and settings.timezone == value:
+        return False, 0
+
+    # Delivery workers lock campaigns first. Keep the same lock order so a
+    # timezone change cannot race a batch created with the previous timezone.
+    campaigns = list(
+        session.scalars(
+            select(Campaign)
+            .where(Campaign.user_id == user_id, Campaign.status == "autopilot")
+            .order_by(Campaign.id)
+            .with_for_update()
+        )
+    )
+    session.scalar(
+        select(UserSettings)
+        .where(UserSettings.user_id == user_id)
+        .with_for_update()
+    )
+    changed = set_user_timezone(session, user_id, value)
+    if not changed:
+        return False, 0
+
+    now = utcnow()
+    for campaign in campaigns:
+        state = autopilot_reschedule_state(session, campaign, now=now)
+        campaign.scheduled_at = state["next_at"]
+        campaign.send_settings = {
+            **(campaign.send_settings or {}),
+            "pause_reason": state["pause_reason"],
+        }
+    return True, len(campaigns)
 
 
 @router.get("/api/settings")
@@ -85,34 +122,17 @@ def patch_timezone(
     user_id: str = Depends(get_current_user_id),
 ):
     ensure_user(session, user_id)
-    settings = session.scalar(
-        select(UserSettings)
-        .where(UserSettings.user_id == user_id)
-        .with_for_update()
-    )
-    try:
-        changed = set_user_timezone(session, user_id, req.timezone)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+    changed, rescheduled_campaigns = _set_timezone(session, user_id, req.timezone)
+    settings = session.get(UserSettings, user_id)
     if not changed:
         session.commit()
         return {"status": "success", "timezone": settings.timezone, "changed": False}
-    now = utcnow()
-    campaigns = list(
-        session.scalars(
-            select(Campaign)
-            .where(Campaign.user_id == user_id, Campaign.status == "autopilot")
-            .with_for_update()
-        )
-    )
-    for campaign in campaigns:
-        campaign.scheduled_at = next_autopilot_run(session, campaign, now=now)
     session.commit()
     return {
         "status": "success",
         "timezone": settings.timezone,
         "changed": True,
-        "rescheduled_campaigns": len(campaigns),
+        "rescheduled_campaigns": rescheduled_campaigns,
     }
 
 
