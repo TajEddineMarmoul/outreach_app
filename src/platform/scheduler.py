@@ -90,6 +90,13 @@ def enqueue_due_campaign_batches(session: Session, *, limit: int = 25) -> list[d
     )
     results: list[dict] = []
     for campaign in campaigns:
+        # Serialize schedulers for the same campaign so concurrent ticks
+        # cannot both create work beyond the campaign's daily cap.
+        campaign = session.scalar(
+            select(Campaign).where(Campaign.id == campaign.id).with_for_update()
+        )
+        if not campaign:
+            continue
         active_jobs = list(
             session.scalars(
                 select(SendJob).where(
@@ -111,6 +118,11 @@ def enqueue_due_campaign_batches(session: Session, *, limit: int = 25) -> list[d
             delay_minutes=delay_minutes,
             scheduled_for=now,
         )
+        if result.get("job_ids"):
+            campaign.send_settings = {
+                **(campaign.send_settings or {}),
+                "pause_reason": None,
+            }
         if result.get("exhausted"):
             campaign.status = "ended"
             campaign.scheduled_at = None
@@ -118,6 +130,12 @@ def enqueue_due_campaign_batches(session: Session, *, limit: int = 25) -> list[d
             if (campaign.send_settings or {}).get("mode") == "autopilot" or campaign.status == "autopilot":
                 campaign.status = "autopilot"
                 campaign.scheduled_at = next_autopilot_run(session, campaign, now=now, force_next_day=True)
+                campaign.send_settings = {
+                    **(campaign.send_settings or {}),
+                    "pause_reason": "campaign_daily_cap_reached"
+                    if result.get("reason_code") == "campaign_daily_cap_reached"
+                    else "daily_caps_reached",
+                }
             else:
                 campaign.status = "paused"
                 campaign.scheduled_at = None

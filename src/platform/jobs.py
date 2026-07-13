@@ -19,6 +19,7 @@ from src.platform.models import AutopilotDaySchedule, Campaign, CampaignRecipien
 WEEKDAY_NAMES = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
 from src.platform.services import (
     campaign_sent_today,
+    campaign_reserved_today,
     connected_senders,
     eligible_senders,
     require_group,
@@ -101,7 +102,7 @@ def create_send_jobs_for_next_batch(
         )
         if day_schedule:
             sent_today = campaign_sent_today(session, campaign.id)
-            remaining_campaign = day_schedule.daily_cap - sent_today
+            remaining_campaign = day_schedule.daily_cap - sent_today - campaign_reserved_today(session, campaign)
             if remaining_campaign <= 0:
                 return {
                     "created": 0,

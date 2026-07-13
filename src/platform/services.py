@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Iterable
 
 from sqlalchemy import func, select
@@ -13,6 +14,7 @@ from src.platform.models import (
     Sender,
     SenderGroup,
     SendLog,
+    SendJob,
     User,
     UserSettings,
 )
@@ -85,10 +87,44 @@ def campaign_sent_today(session: Session, campaign_id: int) -> int:
     )
 
 
+def campaign_reserved_today(session: Session, campaign: Campaign) -> int:
+    """Count queued work already reserved against today's campaign cap."""
+    user_settings = session.get(UserSettings, campaign.user_id)
+    try:
+        zone = ZoneInfo(user_settings.timezone if user_settings else "UTC")
+    except ZoneInfoNotFoundError:
+        zone = ZoneInfo("UTC")
+    local_midnight = utcnow().astimezone(zone).replace(hour=0, minute=0, second=0, microsecond=0)
+    start = local_midnight.astimezone(timezone.utc)
+    end = (local_midnight + timedelta(days=1)).astimezone(timezone.utc)
+    return int(
+        session.scalar(
+            select(func.count())
+            .select_from(SendJob)
+            .where(
+                SendJob.campaign_id == campaign.id,
+                SendJob.status.in_(("queued", "running", "retry")),
+                SendJob.scheduled_for >= start,
+                SendJob.scheduled_for < end,
+            )
+        )
+        or 0
+    )
+
+
 def eligible_senders(session: Session, group: SenderGroup) -> list[Sender]:
     eligible: list[Sender] = []
     for sender in connected_senders(group):
-        if sender_sent_count_today(session, sender.id) >= sender.daily_cap:
+        sender_reserved = session.scalar(
+            select(func.count())
+            .select_from(SendJob)
+            .where(
+                SendJob.sender_id == sender.id,
+                SendJob.status.in_(("queued", "running", "retry")),
+                SendJob.scheduled_for >= utcnow().replace(hour=0, minute=0, second=0, microsecond=0),
+            )
+        ) or 0
+        if sender_sent_count_today(session, sender.id) + int(sender_reserved) >= sender.daily_cap:
             continue
         if sender.recent_error_at and utcnow() - sender.recent_error_at < timedelta(minutes=15):
             continue

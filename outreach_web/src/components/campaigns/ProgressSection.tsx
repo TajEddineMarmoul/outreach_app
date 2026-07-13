@@ -127,7 +127,11 @@ export default function ProgressSection({ campaignId }: { campaignId: string }) 
               Waiting for the next batch{countdown ? ` - ${countdown}` : ""}
             </div>
             <div className="text-xs text-amber-700 mt-0.5">
-              Next check: {data.next_batch_at ? new Date(data.next_batch_at).toLocaleString() : "pending worker check"}
+              {data.pause_reason === "campaign_daily_cap_reached"
+                ? "Today's campaign limit is reached. The worker will continue on the next eligible day."
+                : data.pause_reason === "daily_caps_reached"
+                  ? "All connected senders reached today's limit. The worker will retry on the next eligible day."
+                  : `Next check: ${data.next_batch_at ? new Date(data.next_batch_at).toLocaleString() : "pending worker check"}`}
               {data.delay_minutes > 0 ? ` · ${data.delay_minutes} minute delay between batches` : ""}
             </div>
           </div>

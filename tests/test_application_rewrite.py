@@ -17,8 +17,8 @@ from src.platform import oauth as platform_oauth
 from src.platform import scheduler as platform_scheduler
 from src.platform import services as platform_services
 from src.platform import worker as platform_worker
-from src.platform.jobs import create_send_jobs_for_next_batch
-from src.platform.models import Base, Campaign, CampaignRecipient, Contact, OAuthState, Sender, SenderGroup, SendJob, SendLog
+from src.platform.jobs import WEEKDAY_NAMES, create_send_jobs_for_next_batch
+from src.platform.models import AutopilotDaySchedule, Base, Campaign, CampaignRecipient, Contact, OAuthState, Sender, SenderGroup, SendJob, SendLog
 from src.platform.security import decrypt_text
 from src.platform.services import ensure_user
 from src.platform.time import utcnow
@@ -340,6 +340,57 @@ def test_next_batch_queues_one_email_per_connected_sender(tmp_path, monkeypatch)
     )
     assert second_batch["created"] == 2
     assert len(list(session.scalars(select(SendJob)))) == 5
+    session.close()
+
+
+def test_autopilot_campaign_cap_reserves_queued_recipients(tmp_path):
+    session_factory = make_session_factory(tmp_path)
+    session = session_factory()
+    ensure_user(session, USER_ID)
+    group = SenderGroup(user_id=USER_ID, name="Autopilot cap")
+    sender = Sender(
+        user_id=USER_ID,
+        group=group,
+        email="sender@example.com",
+        status="connected",
+        daily_cap=10,
+        encrypted_oauth_credentials="encrypted",
+    )
+    campaign = Campaign(
+        user_id=USER_ID,
+        selected_sender_group=group,
+        name="Two per day",
+        status="autopilot",
+        send_settings={"mode": "autopilot", "delay_minutes": 5},
+    )
+    contacts = [
+        Contact(user_id=USER_ID, email_normalized=f"cap{i}@example.com", status="approved")
+        for i in range(3)
+    ]
+    session.add_all([group, sender, campaign, *contacts])
+    session.flush()
+    session.add(
+        AutopilotDaySchedule(
+            campaign_id=campaign.id,
+            day_of_week=WEEKDAY_NAMES[utcnow().weekday()],
+            daily_cap=2,
+            start_time="00:00",
+            end_time="23:59",
+        )
+    )
+    session.add_all(
+        [CampaignRecipient(campaign_id=campaign.id, contact_id=contact.id, status="approved") for contact in contacts]
+    )
+    session.commit()
+
+    first = create_send_jobs_for_next_batch(session, user_id=USER_ID, campaign_id=campaign.id)
+    second = create_send_jobs_for_next_batch(session, user_id=USER_ID, campaign_id=campaign.id)
+    third = create_send_jobs_for_next_batch(session, user_id=USER_ID, campaign_id=campaign.id)
+
+    assert first["created"] == 1
+    assert second["created"] == 1
+    assert third["reason_code"] == "campaign_daily_cap_reached"
+    assert session.scalar(select(SendJob.id)) is not None
     session.close()
 
 
