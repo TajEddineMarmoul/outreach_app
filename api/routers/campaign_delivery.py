@@ -63,6 +63,27 @@ class AutopilotRequest(BaseModel):
     dry_run: bool = False
 
 
+class SendSettingsUpdate(BaseModel):
+    mode: str | None = Field(default=None, pattern="^(send_now|schedule|autopilot)$")
+    delay_minutes: int | None = Field(default=None, ge=0, le=1440)
+    dry_run: bool | None = None
+    scheduled_at: datetime | None = None
+    schedule: dict[str, DayScheduleEntry] | None = None
+
+
+EDIT_LOCKED_STATUSES = {"sending", "scheduled", "autopilot", "paused"}
+
+
+def require_campaign_editable(session: Session, campaign_id: int, user_id: str) -> Campaign:
+    campaign = require_campaign(session, campaign_id, user_id)
+    if campaign.status in EDIT_LOCKED_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail="Stop the campaign before editing its composer, send options, or recipients",
+        )
+    return campaign
+
+
 def require_campaign(session: Session, campaign_id: int, user_id: str) -> Campaign:
     campaign = session.scalar(
         select(Campaign).where(Campaign.id == campaign_id, Campaign.user_id == user_id)
@@ -125,10 +146,51 @@ def patch_campaign_sender_group(
         group = require_group(session, user_id, req.sender_group_id)
     except LookupError:
         raise HTTPException(status_code=404, detail="Sender group not found")
-    campaign = ensure_campaign_shell(session, campaign_id=campaign_id, user_id=user_id)
+    campaign = session.scalar(select(Campaign).where(Campaign.id == campaign_id, Campaign.user_id == user_id))
+    if campaign:
+        require_campaign_editable(session, campaign_id, user_id)
+    else:
+        campaign = ensure_campaign_shell(session, campaign_id=campaign_id, user_id=user_id)
     campaign.selected_sender_group_id = group.id
     session.commit()
     return {"status": "success", "sender_group": serialize_group(session, group)}
+
+
+@router.patch("/api/campaigns/{campaign_id}/send-settings")
+def patch_send_settings(
+    campaign_id: int,
+    req: SendSettingsUpdate,
+    session: Session = Depends(get_session),
+    user_id: str = Depends(get_current_user_id),
+):
+    campaign = require_campaign_editable(session, campaign_id, user_id)
+    settings = dict(campaign.send_settings or {})
+    if req.mode is not None:
+        settings["mode"] = req.mode
+    if req.delay_minutes is not None:
+        settings["delay_minutes"] = req.delay_minutes
+    if req.dry_run is not None:
+        settings["dry_run"] = req.dry_run
+    if req.scheduled_at is not None:
+        scheduled_at = req.scheduled_at
+        if scheduled_at.tzinfo is None:
+            scheduled_at = scheduled_at.replace(tzinfo=timezone.utc)
+        settings["draft_scheduled_at"] = scheduled_at.astimezone(timezone.utc).isoformat()
+    campaign.send_settings = settings
+    if req.schedule is not None:
+        session.execute(delete(AutopilotDaySchedule).where(AutopilotDaySchedule.campaign_id == campaign.id))
+        for day_name, entry in req.schedule.items():
+            session.add(
+                AutopilotDaySchedule(
+                    campaign_id=campaign.id,
+                    day_of_week=day_name,
+                    daily_cap=entry.cap,
+                    start_time=entry.start,
+                    end_time=entry.end,
+                )
+            )
+    session.commit()
+    return {"status": "success", "send_settings": campaign.send_settings}
 
 
 @router.get("/api/campaigns/{campaign_id}/sender-group")
@@ -246,7 +308,7 @@ def post_schedule(
     campaign.scheduled_at = scheduled_at.astimezone(timezone.utc)
     campaign.send_settings = {
         **(campaign.send_settings or {}),
-        "mode": "send_now",
+        "mode": "schedule",
         "delay_minutes": req.delay_minutes,
         "dry_run": req.dry_run,
         "pause_reason": None,
@@ -536,6 +598,8 @@ def get_campaign_send_progress(
         "current_recipient": current_recipient,
         "next_batch_at": campaign.scheduled_at.isoformat() if campaign.scheduled_at else None,
         "delay_minutes": int((campaign.send_settings or {}).get("delay_minutes", 0)),
+        "send_mode": (campaign.send_settings or {}).get("mode", "send_now"),
+        "send_settings": dict(campaign.send_settings or {}),
         "pause_reason": pause_reason,
         "senders": sender_details,
         "autopilot_schedule": [
@@ -651,7 +715,7 @@ def patch_recipient_reset(
     session: Session = Depends(get_session),
     user_id: str = Depends(get_current_user_id),
 ):
-    require_campaign(session, campaign_id, user_id)
+    require_campaign_editable(session, campaign_id, user_id)
     recipient = session.get(CampaignRecipient, {"campaign_id": campaign_id, "contact_id": contact_id})
     if not recipient:
         raise HTTPException(status_code=404, detail="Recipient not found in this campaign")
@@ -677,7 +741,7 @@ def delete_campaign_recipient(
     session: Session = Depends(get_session),
     user_id: str = Depends(get_current_user_id),
 ):
-    require_campaign(session, campaign_id, user_id)
+    require_campaign_editable(session, campaign_id, user_id)
     recipient = session.get(CampaignRecipient, {"campaign_id": campaign_id, "contact_id": contact_id})
     if not recipient:
         raise HTTPException(status_code=404, detail="Recipient not found in this campaign")

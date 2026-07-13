@@ -37,9 +37,11 @@ const STATUS_BADGES: Record<string, string> = {
 export default function RecipientsSection({
   campaignId,
   onOpenImport,
+  readOnly = false,
 }: {
   campaignId: string;
   onOpenImport: () => void;
+  readOnly?: boolean;
 }) {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
@@ -114,7 +116,7 @@ export default function RecipientsSection({
             className="pl-9 h-9 text-sm"
           />
         </div>
-        <Button size="sm" className="gap-1.5" onClick={onOpenImport}>
+        <Button size="sm" className="gap-1.5" onClick={onOpenImport} disabled={readOnly}>
           <UserPlus className="w-4 h-4" />
           Add recipients
         </Button>
@@ -157,7 +159,7 @@ export default function RecipientsSection({
                         <div className="flex items-center justify-end gap-1">
                           <button
                             onClick={() => handleReset(r.contact_id)}
-                            disabled={actionLoading === r.contact_id}
+                            disabled={readOnly || actionLoading === r.contact_id}
                             className="p-1.5 rounded hover:bg-slate-200 text-slate-500 hover:text-blue-600 disabled:opacity-40"
                             title="Reset to Approved"
                           >
@@ -165,7 +167,7 @@ export default function RecipientsSection({
                           </button>
                           <button
                             onClick={() => handleDelete(r.contact_id)}
-                            disabled={actionLoading === r.contact_id}
+                            disabled={readOnly || actionLoading === r.contact_id}
                             className="p-1.5 rounded hover:bg-slate-200 text-slate-500 hover:text-red-600 disabled:opacity-40"
                             title="Remove from campaign"
                           >

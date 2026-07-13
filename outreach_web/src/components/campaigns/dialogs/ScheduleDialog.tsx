@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -17,12 +17,19 @@ export default function ScheduleDialog({
   campaignId,
   defaultTab,
   mutateAll,
+  summary,
+  readOnly = false,
 }: {
   isOpen: boolean;
   onClose: () => void;
   campaignId: string;
   defaultTab: string;
   mutateAll: () => void;
+  summary?: {
+    send_settings?: { delay_minutes?: number; dry_run?: boolean; mode?: string; draft_scheduled_at?: string };
+    autopilot_schedule?: { day: string; cap: number; start: string; end: string }[];
+  };
+  readOnly?: boolean;
 }) {
   const [activeTab, setActiveTab] = useState(defaultTab);
   const { authFetch } = useApiClient();
@@ -46,6 +53,66 @@ export default function ScheduleDialog({
   const [autoStartAt, setAutoStartAt] = useState("");
 
   const [sendingAction, setSendingAction] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const settings = summary?.send_settings || {};
+    const savedDelay = Number(settings.delay_minutes ?? 5);
+    setBulkDelay(savedDelay);
+    setAutoDelay(savedDelay);
+    setDryRun(Boolean(settings.dry_run ?? false));
+    if (settings.draft_scheduled_at) {
+      setScheduledAt(settings.draft_scheduled_at.slice(0, 16));
+      setAutoStartAt(settings.draft_scheduled_at.slice(0, 16));
+    }
+    if (summary?.autopilot_schedule) {
+      setAutoSchedule((current) => {
+        const next = { ...current };
+        for (const entry of summary.autopilot_schedule || []) {
+          if (next[entry.day]) {
+            next[entry.day] = {
+              ...next[entry.day],
+              active: true,
+              cap: String(entry.cap),
+              start: entry.start,
+              end: entry.end,
+            };
+          }
+        }
+        for (const day of Object.keys(next)) {
+          if (!(summary.autopilot_schedule || []).some((entry) => entry.day === day)) {
+            next[day] = { ...next[day], active: false };
+          }
+        }
+        return next;
+      });
+    }
+  }, [isOpen, summary]);
+
+  const saveSettings = async (mode: "send_now" | "schedule" | "autopilot") => {
+    const schedule: Record<string, { cap: number; start: string; end: string }> = {};
+    if (mode === "autopilot") {
+      for (const [day, config] of Object.entries(autoSchedule)) {
+        if (config.active) schedule[day] = { cap: Number(config.cap), start: config.start, end: config.end };
+      }
+    }
+    const draftDate = mode === "schedule" ? scheduledAt : mode === "autopilot" ? autoStartAt : "";
+    const body: Record<string, unknown> = {
+      mode,
+      delay_minutes: mode === "autopilot" ? autoDelay : bulkDelay,
+      dry_run: dryRun,
+    };
+    if (mode === "autopilot") body.schedule = schedule;
+    if (draftDate) body.scheduled_at = new Date(draftDate).toISOString();
+    const res = await authFetch(`${API_URL}/api/campaigns/${campaignId}/send-settings`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || "Failed to save send settings");
+    mutateAll();
+  };
 
   const handleBulkSend = async (mode: "send-now" | "schedule") => {
     if (mode === "schedule" && !scheduledAt) {
@@ -136,17 +203,18 @@ export default function ScheduleDialog({
             </p>
             <div className="space-y-1">
               <label className="text-xs font-semibold text-slate-700">Delay between emails (min)</label>
-              <Input type="number" min={0} value={bulkDelay} onChange={(e) => setBulkDelay(Number(e.target.value))} />
+              <Input type="number" min={0} value={bulkDelay} onChange={(e) => setBulkDelay(Number(e.target.value))} disabled={readOnly} />
             </div>
             <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
-              <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} className="accent-purple-600" />
+              <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} disabled={readOnly} className="accent-purple-600" />
               Test mode (no real emails sent)
             </label>
             <DialogFooter className="pt-2">
-              <Button variant="outline" onClick={onClose}>Cancel</Button>
-              <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={() => handleBulkSend("send-now")} disabled={sendingAction}>
+              <Button variant="outline" onClick={onClose}>{readOnly ? "Close" : "Cancel"}</Button>
+              {!readOnly && <Button variant="outline" onClick={async () => { try { setSendingAction(true); await saveSettings("send_now"); onClose(); } catch (error) { alert(errorMessage(error)); } finally { setSendingAction(false); } }} disabled={sendingAction}>Save settings</Button>}
+              {!readOnly && <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={() => handleBulkSend("send-now")} disabled={sendingAction}>
                 {sendingAction ? "Starting..." : "Send now"}
-              </Button>
+              </Button>}
             </DialogFooter>
           </TabsContent>
 
@@ -157,21 +225,22 @@ export default function ScheduleDialog({
             </p>
             <div className="space-y-1">
               <label className="text-xs font-semibold text-slate-700">Delay between emails (min)</label>
-              <Input type="number" min={0} value={bulkDelay} onChange={(e) => setBulkDelay(Number(e.target.value))} />
+              <Input type="number" min={0} value={bulkDelay} onChange={(e) => setBulkDelay(Number(e.target.value))} disabled={readOnly} />
             </div>
             <div className="space-y-1">
               <label className="text-xs font-semibold text-slate-700">Start at</label>
-              <Input type="datetime-local" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)} />
+              <Input type="datetime-local" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)} disabled={readOnly} />
             </div>
             <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
-              <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} className="accent-purple-600" />
+              <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} disabled={readOnly} className="accent-purple-600" />
               Test mode (no real emails sent)
             </label>
             <DialogFooter className="pt-2">
-              <Button variant="outline" onClick={onClose}>Cancel</Button>
-              <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={() => handleBulkSend("schedule")} disabled={sendingAction || !scheduledAt}>
+              <Button variant="outline" onClick={onClose}>{readOnly ? "Close" : "Cancel"}</Button>
+              {!readOnly && <Button variant="outline" onClick={async () => { try { setSendingAction(true); await saveSettings("schedule"); onClose(); } catch (error) { alert(errorMessage(error)); } finally { setSendingAction(false); } }} disabled={sendingAction}>Save settings</Button>}
+              {!readOnly && <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={() => handleBulkSend("schedule")} disabled={sendingAction || !scheduledAt}>
                 {sendingAction ? "Scheduling..." : "Schedule"}
-              </Button>
+              </Button>}
             </DialogFooter>
           </TabsContent>
 
@@ -197,6 +266,7 @@ export default function ScheduleDialog({
                           [d]: { ...entry, active: !entry.active },
                         })
                       }
+                      disabled={readOnly}
                       className="w-4 h-4 shrink-0 accent-blue-600"
                     />
                     <span className="text-xs font-semibold text-slate-700 w-8 shrink-0">{dayLabel}</span>
@@ -211,7 +281,7 @@ export default function ScheduleDialog({
                             [d]: { ...entry, cap: e.target.value },
                           })
                         }
-                        disabled={!entry.active}
+                        disabled={readOnly || !entry.active}
                         className="h-7 w-16 text-xs"
                         placeholder="Cap"
                       />
@@ -225,7 +295,7 @@ export default function ScheduleDialog({
                             [d]: { ...entry, start: e.target.value },
                           })
                         }
-                        disabled={!entry.active}
+                        disabled={readOnly || !entry.active}
                         className="h-7 w-24 text-xs"
                       />
                       <span className="text-xs text-slate-400 shrink-0">to</span>
@@ -238,7 +308,7 @@ export default function ScheduleDialog({
                             [d]: { ...entry, end: e.target.value },
                           })
                         }
-                        disabled={!entry.active}
+                        disabled={readOnly || !entry.active}
                         className="h-7 w-24 text-xs"
                       />
                     </div>
@@ -249,24 +319,25 @@ export default function ScheduleDialog({
 
             <div className="space-y-1">
               <label className="text-xs font-semibold text-slate-700">Delay between batches (min)</label>
-              <Input type="number" min={0} value={autoDelay} onChange={(e) => setAutoDelay(Number(e.target.value))} />
+              <Input type="number" min={0} value={autoDelay} onChange={(e) => setAutoDelay(Number(e.target.value))} disabled={readOnly} />
             </div>
 
             <div className="space-y-1">
               <label className="text-xs font-semibold text-slate-700">Start at (optional, leave empty to start now)</label>
-              <Input type="datetime-local" value={autoStartAt} onChange={(e) => setAutoStartAt(e.target.value)} />
+              <Input type="datetime-local" value={autoStartAt} onChange={(e) => setAutoStartAt(e.target.value)} disabled={readOnly} />
             </div>
 
             <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
-              <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} className="accent-purple-600" />
+              <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} disabled={readOnly} className="accent-purple-600" />
               Test mode (no real emails sent)
             </label>
 
             <DialogFooter className="pt-2">
-              <Button variant="outline" onClick={onClose}>Cancel</Button>
-              <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={handleAutopilotStart} disabled={sendingAction}>
+              <Button variant="outline" onClick={onClose}>{readOnly ? "Close" : "Cancel"}</Button>
+              {!readOnly && <Button variant="outline" onClick={async () => { try { setSendingAction(true); await saveSettings("autopilot"); onClose(); } catch (error) { alert(errorMessage(error)); } finally { setSendingAction(false); } }} disabled={sendingAction}>Save settings</Button>}
+              {!readOnly && <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={handleAutopilotStart} disabled={sendingAction}>
                 {sendingAction ? "Starting..." : "Start Autopilot"}
-              </Button>
+              </Button>}
             </DialogFooter>
           </TabsContent>
         </Tabs>

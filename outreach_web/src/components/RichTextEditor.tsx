@@ -16,6 +16,7 @@ interface RichTextEditorProps {
   placeholder?: string;
   validVariables?: string[];
   onEditorReady?: (editor: Editor | null) => void;
+  readOnly?: boolean;
 }
 
 const TEMPLATE_VARIABLE_PATTERN = /\{\{\s*([^{}]+?)\s*\}\}/g;
@@ -81,11 +82,12 @@ function ensureHTML(content: string): string {
     .join("");
 }
 
-export default function RichTextEditor({ content, onChange, placeholder, validVariables = [], onEditorReady }: RichTextEditorProps) {
+export default function RichTextEditor({ content, onChange, placeholder, validVariables = [], onEditorReady, readOnly = false }: RichTextEditorProps) {
   const isUpdatingRef = useRef(false);
 
   const editor = useEditor({
     immediatelyRender: true,
+    editable: !readOnly,
     extensions: [
       StarterKit.configure({
         heading: false,
@@ -137,6 +139,11 @@ export default function RichTextEditor({ content, onChange, placeholder, validVa
       isUpdatingRef.current = false;
     }
   }, [content, editor]);
+
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return;
+    editor.setEditable(!readOnly);
+  }, [editor, readOnly]);
 
   useEffect(() => {
     if (!editor || editor.isDestroyed) return;

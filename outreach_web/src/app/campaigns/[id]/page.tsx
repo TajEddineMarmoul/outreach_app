@@ -332,6 +332,8 @@ export default function CampaignEditorPage() {
     }
   };
 
+  const editingLocked = Boolean(campaign && ["sending", "scheduled", "autopilot", "paused"].includes(campaign.status));
+
   if (campLoading) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center text-slate-400 gap-2 h-screen">
@@ -367,6 +369,7 @@ export default function CampaignEditorPage() {
             value={name}
             onChange={(e) => setName(e.target.value)}
             onBlur={(e) => handleUpdateName(e.target.value)}
+            disabled={editingLocked}
             className="font-bold text-xl text-slate-900 border-none bg-transparent hover:bg-slate-50 focus:bg-slate-100 rounded px-2 py-0.5 outline-none max-w-sm focus:ring-1 focus:ring-blue-500/20"
           />
           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border bg-slate-100 text-slate-700 border-slate-200 uppercase tracking-wider scale-90">
@@ -404,6 +407,7 @@ export default function CampaignEditorPage() {
               setSendTab("send-now");
               setSendModalOpen(true);
             }}
+            title={editingLocked ? "View current send options" : "Send options"}
           >
             <Send className="w-3.5 h-3.5" />
             <span>Send options</span>
@@ -464,7 +468,18 @@ export default function CampaignEditorPage() {
         </div>
       </header>
 
-      <div className="flex-1 flex overflow-hidden p-8 max-w-6xl mx-auto w-full">
+      <div className="flex-1 flex flex-col overflow-hidden p-8 max-w-6xl mx-auto w-full">
+        <div className="mb-4 flex items-center justify-between gap-4 rounded-lg border border-slate-200 bg-white px-4 py-3 text-xs text-slate-600">
+          <div>
+            <span className="font-semibold text-slate-800">Sending configuration:</span>{" "}
+            <span className="capitalize">{String(summary?.send_settings?.mode || "send_now").replaceAll("_", " ")}</span>
+            <span className="ml-3">{Number(summary?.send_settings?.delay_minutes ?? 5)} min between batches</span>
+            {summary?.send_settings?.dry_run ? <span className="ml-3 font-semibold text-amber-700">Test mode</span> : null}
+          </div>
+          <span className={editingLocked ? "font-semibold text-amber-700" : "text-slate-400"}>
+            {editingLocked ? "Stop campaign to edit" : "Draft settings can be edited"}
+          </span>
+        </div>
         <Tabs defaultValue="composer" className="flex-1 flex flex-col">
           <TabsList className="w-fit">
             <TabsTrigger value="composer" className="gap-1.5">
@@ -496,6 +511,7 @@ export default function CampaignEditorPage() {
                         variant="ghost"
                         className="p-0 h-auto text-blue-600 hover:text-blue-800 hover:bg-transparent flex items-start justify-start"
                         onClick={() => setSenderModalOpen(true)}
+                        disabled={editingLocked}
                       >
                         <span className="flex flex-col items-start min-w-0">
                           <span className="text-sm font-semibold">
@@ -517,6 +533,7 @@ export default function CampaignEditorPage() {
                         variant="ghost"
                         className="p-0 h-auto text-blue-600 hover:text-blue-800 hover:bg-transparent text-sm font-semibold gap-1 flex items-center justify-start"
                         onClick={() => setSenderModalOpen(true)}
+                        disabled={editingLocked}
                       >
                         No sender connected. Click to Connect ▾
                       </Button>
@@ -539,6 +556,7 @@ export default function CampaignEditorPage() {
                     <Button
                       className="bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 rounded-full py-0.5 px-3.5 h-7 text-xs font-semibold"
                       onClick={() => setRecipientsModalOpen(true)}
+                      disabled={editingLocked}
                     >
                       {summary?.recipients ? `${summary.recipients} recipients` : "Select recipients"}
                     </Button>
@@ -551,6 +569,7 @@ export default function CampaignEditorPage() {
                     type="text"
                     value={subject}
                     onChange={(e) => setSubject(e.target.value)}
+                    disabled={editingLocked}
                     placeholder="Enter email subject template"
                     className="flex-1 text-slate-900 border-none outline-none focus:ring-0 placeholder-slate-400 py-1 bg-transparent text-sm font-medium"
                   />
@@ -564,6 +583,7 @@ export default function CampaignEditorPage() {
                       type="button"
                       className="p-1.5 hover:bg-slate-200/60 rounded text-slate-500 hover:text-slate-800 transition-colors flex items-center gap-1"
                       onClick={() => setAttachmentModalOpen(true)}
+                      disabled={editingLocked}
                       title="Add attachment"
                     >
                       <Paperclip className="w-4 h-4" />
@@ -573,6 +593,7 @@ export default function CampaignEditorPage() {
                       type="button"
                       className="p-1.5 hover:bg-slate-200/60 rounded text-slate-500 hover:text-slate-800 transition-colors flex items-center gap-1"
                       onClick={() => setTemplateModalOpen(true)}
+                      disabled={editingLocked}
                       title="Select template"
                     >
                       <ClipboardList className="w-4 h-4" />
@@ -609,6 +630,7 @@ export default function CampaignEditorPage() {
                   placeholder="Compose your email or select a template..."
                   validVariables={activeVariables}
                   onEditorReady={handleEditorReady}
+                  readOnly={editingLocked}
                 />
 
                 {unknownVariables.length > 0 && (
@@ -631,6 +653,7 @@ export default function CampaignEditorPage() {
                         await authFetch(`${API_URL}/api/campaigns/${campaignId}/attachment`, { method: "DELETE" });
                         mutateSummary();
                       }}
+                      disabled={editingLocked}
                       className="text-slate-400 hover:text-red-600 transition-colors p-1"
                       title="Remove attachment"
                     >
@@ -653,6 +676,7 @@ export default function CampaignEditorPage() {
             <RecipientsSection
               campaignId={campaignId as string}
               onOpenImport={() => setRecipientsModalOpen(true)}
+              readOnly={editingLocked}
             />
           </TabsContent>
         </Tabs>
@@ -669,6 +693,8 @@ export default function CampaignEditorPage() {
         onClose={() => setSendModalOpen(false)}
         campaignId={campaignId as string}
         defaultTab={sendTab}
+        summary={summary}
+        readOnly={editingLocked}
         mutateAll={() => {
           mutate(`${API_URL}/api/campaigns/${campaignId}`);
           mutateSummary();

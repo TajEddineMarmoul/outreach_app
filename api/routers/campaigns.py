@@ -20,7 +20,6 @@ from api.schemas import (
     CampaignCreate,
     CampaignUpdate,
     ComposerUpdate,
-    SendSettingsUpdate,
     SenderSelect,
     RecipientsPaste,
     RecipientsGoogleSheet,
@@ -37,6 +36,20 @@ from src.scheduler import send_test_email
 from src.analytics import send_log_dataframe
 
 router = APIRouter()
+
+EDIT_LOCKED_STATUSES = {"sending", "scheduled", "autopilot", "paused"}
+
+
+def require_editable_campaign(conn, campaign_id: int, user_id: str):
+    campaign = db.get_campaign(conn, campaign_id, user_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    if str(campaign["status"]) in EDIT_LOCKED_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail="Stop the campaign before editing its composer, send options, or recipients",
+        )
+    return campaign
 
 
 # ----------------------------------------------------
@@ -77,9 +90,7 @@ def get_campaign(campaign_id: int, conn=Depends(get_db), user_id: str = Depends(
 
 @router.patch("/api/campaigns/{campaign_id}")
 def update_campaign(campaign_id: int, req: CampaignUpdate, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
-    campaign = db.get_campaign(conn, campaign_id, user_id)
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
+    campaign = require_editable_campaign(conn, campaign_id, user_id)
     
     name = req.name if req.name is not None else str(campaign["name"])
     subject = req.subject_template if req.subject_template is not None else str(campaign["subject_template"])
@@ -101,9 +112,7 @@ def update_campaign(campaign_id: int, req: CampaignUpdate, conn=Depends(get_db),
 
 @router.delete("/api/campaigns/{campaign_id}")
 def delete_campaign(campaign_id: int, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
-    campaign = db.get_campaign(conn, campaign_id, user_id)
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
+    campaign = require_editable_campaign(conn, campaign_id, user_id)
     from sqlalchemy import delete as sa_delete, select
     from src.platform.db import SessionLocal
     from src.platform.models import (
@@ -155,11 +164,13 @@ def get_campaign_summary(campaign_id: int, conn=Depends(get_db), user_id: str = 
     sender_group_id = None
     sender_group_capacity = None
     sender_emails: list[str] = []
+    send_settings: dict = {}
+    autopilot_schedule: list[dict] = []
     try:
         from sqlalchemy import select
         from sqlalchemy.exc import SQLAlchemyError
         from src.platform.db import SessionLocal
-        from src.platform.models import Campaign as PlatformCampaign
+        from src.platform.models import AutopilotDaySchedule, Campaign as PlatformCampaign
         from src.platform.services import require_group, serialize_group
 
         platform_session = SessionLocal()
@@ -167,6 +178,21 @@ def get_campaign_summary(campaign_id: int, conn=Depends(get_db), user_id: str = 
             platform_campaign = platform_session.scalar(
                 select(PlatformCampaign).where(PlatformCampaign.id == campaign_id, PlatformCampaign.user_id == user_id)
             )
+            if platform_campaign:
+                send_settings = dict(platform_campaign.send_settings or {})
+                autopilot_schedule = [
+                    {
+                        "day": item.day_of_week,
+                        "cap": item.daily_cap,
+                        "start": item.start_time,
+                        "end": item.end_time,
+                    }
+                    for item in platform_session.scalars(
+                        select(AutopilotDaySchedule).where(
+                            AutopilotDaySchedule.campaign_id == platform_campaign.id
+                        )
+                    )
+                ]
             if platform_campaign and platform_campaign.selected_sender_group_id:
                 group = require_group(platform_session, user_id, platform_campaign.selected_sender_group_id)
                 group_payload = serialize_group(platform_session, group)
@@ -221,13 +247,13 @@ def get_campaign_summary(campaign_id: int, conn=Depends(get_db), user_id: str = 
         "tracking_enabled": tracking_enabled,
         "unsubscribe_link": unsubscribe_link,
         "sheet_synced": sheet_synced,
+        "send_settings": send_settings,
+        "autopilot_schedule": autopilot_schedule,
     }
 
 @router.patch("/api/campaigns/{campaign_id}/composer")
 def patch_composer(campaign_id: int, req: ComposerUpdate, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
-    campaign = db.get_campaign(conn, campaign_id, user_id)
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
+    campaign = require_editable_campaign(conn, campaign_id, user_id)
     
     db.update_campaign(
         conn,
@@ -249,27 +275,9 @@ def patch_composer(campaign_id: int, req: ComposerUpdate, conn=Depends(get_db), 
     
     return {"status": "success"}
 
-@router.patch("/api/campaigns/{campaign_id}/send-settings")
-def patch_send_settings(campaign_id: int, req: SendSettingsUpdate, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
-    config = load_config(config_path())
-    config.sending.days = req.days
-    config.sending.start_time = req.start_time
-    config.sending.end_time = req.end_time
-    config.sending.daily_cap = req.daily_cap
-    config.sending.delay_minutes = req.delay_minutes
-    save_config(config, config_path())
-    
-    selected_sender = db.get_campaign_sender(conn, campaign_id, user_id)
-    if selected_sender and req.sender_daily_cap is not None:
-        db.update_sender_daily_cap(conn, int(selected_sender["id"]), req.sender_daily_cap, user_id)
-        
-    return {"status": "success"}
-
 @router.post("/api/campaigns/{campaign_id}/attachment")
 async def post_attachment(campaign_id: int, file: UploadFile = File(...), conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
-    campaign = db.get_campaign(conn, campaign_id, user_id)
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
+    campaign = require_editable_campaign(conn, campaign_id, user_id)
         
     upload_dir = PROJECT_ROOT / "data" / "uploads"
     upload_dir.mkdir(parents=True, exist_ok=True)
@@ -293,9 +301,7 @@ async def post_attachment(campaign_id: int, file: UploadFile = File(...), conn=D
 
 @router.delete("/api/campaigns/{campaign_id}/attachment")
 def delete_attachment(campaign_id: int, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
-    campaign = db.get_campaign(conn, campaign_id, user_id)
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
+    campaign = require_editable_campaign(conn, campaign_id, user_id)
         
     db.update_campaign(
         conn,
@@ -315,9 +321,7 @@ def delete_attachment(campaign_id: int, conn=Depends(get_db), user_id: str = Dep
 
 @router.patch("/api/campaigns/{campaign_id}/sender")
 def patch_campaign_sender(campaign_id: int, req: SenderSelect, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
-    campaign = db.get_campaign(conn, campaign_id, user_id)
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
+    campaign = require_editable_campaign(conn, campaign_id, user_id)
     db.set_campaign_sender(conn, campaign_id, req.sender_id, user_id)
     return {"status": "success"}
 
@@ -353,9 +357,7 @@ async def post_recipients_csv(
     conn=Depends(get_db),
     user_id: str = Depends(get_current_user_id),
 ):
-    campaign = db.get_campaign(conn, campaign_id, user_id)
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
+    campaign = require_editable_campaign(conn, campaign_id, user_id)
         
     mapping = json.loads(mapping_json)
     content = await file.read()
@@ -366,9 +368,7 @@ async def post_recipients_csv(
 
 @router.post("/api/campaigns/{campaign_id}/recipients/paste")
 def post_recipients_paste(campaign_id: int, req: RecipientsPaste, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
-    campaign = db.get_campaign(conn, campaign_id, user_id)
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
+    campaign = require_editable_campaign(conn, campaign_id, user_id)
         
     df = pd.read_csv(StringIO(req.raw))
     mapping = detect_columns(list(df.columns))
@@ -377,9 +377,7 @@ def post_recipients_paste(campaign_id: int, req: RecipientsPaste, conn=Depends(g
 
 @router.post("/api/campaigns/{campaign_id}/recipients/google-sheet")
 def post_recipients_sheet(campaign_id: int, req: RecipientsGoogleSheet, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
-    campaign = db.get_campaign(conn, campaign_id, user_id)
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
+    campaign = require_editable_campaign(conn, campaign_id, user_id)
         
     sheet_url = req.url
     tab_name = req.tab_name
@@ -406,9 +404,7 @@ def post_recipients_sheet(campaign_id: int, req: RecipientsGoogleSheet, conn=Dep
 
 @router.post("/api/campaigns/{campaign_id}/recipients/select-existing")
 def post_recipients_select_existing(campaign_id: int, req: RecipientsSelectExisting, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
-    campaign = db.get_campaign(conn, campaign_id, user_id)
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
+    campaign = require_editable_campaign(conn, campaign_id, user_id)
     
     requested_ids = [int(cid) for cid in req.contact_ids]
     placeholders = ",".join("?" for _ in requested_ids)
@@ -574,9 +570,7 @@ class ApproveRecipientsRequest(BaseModel):
 @router.post("/api/campaigns/{campaign_id}/recipients/approve")
 def post_approve_recipients(campaign_id: int, req: ApproveRecipientsRequest, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
     from src.preview import approve_contacts
-    campaign = db.get_campaign(conn, campaign_id, user_id)
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
+    campaign = require_editable_campaign(conn, campaign_id, user_id)
     if req.contact_ids is not None:
         requested_ids = [int(contact_id) for contact_id in req.contact_ids]
         placeholders = ",".join("?" for _ in requested_ids)
@@ -623,9 +617,7 @@ class RejectRecipientsRequest(BaseModel):
 @router.post("/api/campaigns/{campaign_id}/recipients/reject")
 def post_reject_recipients(campaign_id: int, req: RejectRecipientsRequest, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
     from src.preview import reject_contacts
-    campaign = db.get_campaign(conn, campaign_id, user_id)
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
+    campaign = require_editable_campaign(conn, campaign_id, user_id)
     requested_ids = [int(contact_id) for contact_id in req.contact_ids]
     placeholders = ",".join("?" for _ in requested_ids)
     attached_ids = {

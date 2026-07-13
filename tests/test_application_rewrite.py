@@ -394,7 +394,7 @@ def test_reset_recipient_removes_terminal_job_and_starts_new_attempt_boundary(tm
             daily_cap=10,
             encrypted_oauth_credentials="encrypted",
         )
-        campaign = Campaign(user_id=USER_ID, selected_sender_group_id=group.id, name="Reset flow", status="sending")
+        campaign = Campaign(user_id=USER_ID, selected_sender_group_id=group.id, name="Reset flow", status="draft")
         contact = Contact(user_id=USER_ID, email_normalized="sent@example.com", status="sent")
         session.add_all([sender, campaign, contact])
         session.flush()
@@ -427,6 +427,8 @@ def test_reset_recipient_removes_terminal_job_and_starts_new_attempt_boundary(tm
         assert updated.reset_at is not None
         assert session.get(Contact, contact_id).status == "approved"
         assert session.scalar(select(SendJob.id)) is None
+        session.get(Campaign, campaign_id).status = "sending"
+        session.commit()
         retry = create_send_jobs_for_next_batch(session, user_id=USER_ID, campaign_id=campaign_id)
         assert retry["created"] == 1
         session.close()
