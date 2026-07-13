@@ -39,6 +39,14 @@ def user_zone(session: Session, user_id: str) -> ZoneInfo:
         return ZoneInfo("UTC")
 
 
+def validate_timezone_name(value: str) -> str:
+    try:
+        ZoneInfo(value)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise ValueError("Unknown IANA timezone") from exc
+    return value
+
+
 def local_day_bounds(session: Session, user_id: str, *, now: datetime | None = None) -> tuple[datetime, datetime]:
     zone = user_zone(session, user_id)
     local_midnight = _aware_utc(now or utcnow()).astimezone(zone).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -136,6 +144,16 @@ def ensure_user(session: Session, user_id: str, email: str | None = None) -> Use
     session.add(UserSettings(user_id=user_id))
     session.flush()
     return user
+
+
+def set_user_timezone(session: Session, user_id: str, timezone_name: str) -> bool:
+    validate_timezone_name(timezone_name)
+    ensure_user(session, user_id)
+    settings = session.get(UserSettings, user_id)
+    changed = settings.timezone != timezone_name
+    settings.timezone = timezone_name
+    session.flush()
+    return changed
 
 
 def require_group(session: Session, user_id: str, group_id: int) -> SenderGroup:

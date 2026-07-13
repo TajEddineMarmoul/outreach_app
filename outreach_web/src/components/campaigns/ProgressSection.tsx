@@ -9,6 +9,7 @@ const POLL_INTERVAL = 3000;
 
 interface ProgressData {
   campaign_status: string;
+  timezone: string;
   total_recipients: number;
   sent_count: number;
   failed_count: number;
@@ -40,9 +41,13 @@ interface ProgressData {
 function formatCountdown(nextBatchAt: string | null, now: number) {
   if (!nextBatchAt) return null;
   const remainingSeconds = Math.max(0, Math.ceil((new Date(nextBatchAt).getTime() - now) / 1000));
-  const minutes = Math.floor(remainingSeconds / 60);
+  const days = Math.floor(remainingSeconds / 86_400);
+  const hours = Math.floor((remainingSeconds % 86_400) / 3_600);
+  const minutes = Math.floor((remainingSeconds % 3_600) / 60);
   const seconds = remainingSeconds % 60;
-  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m ${seconds}s`;
 }
 
 export default function ProgressSection({ campaignId }: { campaignId: string }) {
@@ -77,6 +82,11 @@ export default function ProgressSection({ campaignId }: { campaignId: string }) 
   const failedWidth = done > 0 ? (data.failed_count / done) * 100 : 0;
   const countdown = formatCountdown(data.next_batch_at, now);
   const isComplete = data.campaign_status === "ended" || (total > 0 && done >= total);
+  const waitingReason = data.pause_reason === "campaign_daily_cap_reached"
+    ? "Today's campaign limit is reached. Recipient resets do not reset real sends."
+    : data.pause_reason === "daily_caps_reached"
+      ? "All connected senders reached today's limit."
+      : null;
   const stateLabel = data.is_sending
     ? "Sending now"
     : data.is_waiting
@@ -126,12 +136,9 @@ export default function ProgressSection({ campaignId }: { campaignId: string }) 
             <div className="text-sm font-semibold text-amber-900">
               Waiting for the next batch{countdown ? ` - ${countdown}` : ""}
             </div>
+            {waitingReason && <div className="text-xs text-amber-700 mt-0.5">{waitingReason}</div>}
             <div className="text-xs text-amber-700 mt-0.5">
-              {data.pause_reason === "campaign_daily_cap_reached"
-                ? "Today's campaign limit is reached. The worker will continue on the next eligible day."
-                : data.pause_reason === "daily_caps_reached"
-                  ? "All connected senders reached today's limit. The worker will retry on the next eligible day."
-                  : `Next check: ${data.next_batch_at ? new Date(data.next_batch_at).toLocaleString() : "pending worker check"}`}
+              Next check: {data.next_batch_at ? new Date(data.next_batch_at).toLocaleString(undefined, { timeZoneName: "short" }) : "pending worker check"}
               {data.delay_minutes > 0 ? ` · ${data.delay_minutes} minute delay between batches` : ""}
             </div>
           </div>
@@ -156,7 +163,10 @@ export default function ProgressSection({ campaignId }: { campaignId: string }) 
 
       {data.autopilot_schedule && data.autopilot_schedule.length > 0 && (
         <div>
-          <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Autopilot schedule</h3>
+          <div className="flex items-center justify-between gap-3 mb-2">
+            <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Autopilot schedule</h3>
+            <span className="text-xs text-slate-500">{data.timezone}</span>
+          </div>
           <div className="space-y-1.5">
             {data.campaign_daily_cap != null && (
               <div className="flex items-center gap-3 px-3 py-2 bg-blue-50 rounded-lg mb-2">
@@ -171,6 +181,9 @@ export default function ProgressSection({ campaignId }: { campaignId: string }) 
                       style={{ width: `${Math.min(((data.campaign_sent_today ?? 0) / data.campaign_daily_cap) * 100, 100)}%` }}
                     />
                   </div>
+                  {(data.campaign_sent_today ?? 0) >= data.campaign_daily_cap && (
+                    <div className="text-xs text-blue-700 mt-1">Next eligible day required</div>
+                  )}
                 </div>
               </div>
             )}

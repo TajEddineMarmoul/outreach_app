@@ -16,7 +16,7 @@ from src.platform.db import get_session
 from src.platform.jobs import create_send_jobs_for_next_batch
 from src.platform.models import AutopilotDaySchedule, Campaign, CampaignRecipient, Contact, SendJob, SendLog, Sender
 from src.platform.scheduler import WEEKDAY_NAMES, next_autopilot_run
-from src.platform.services import campaign_sent_today, connected_senders, ensure_user, require_group, serialize_group, user_zone
+from src.platform.services import campaign_sent_today, connected_senders, ensure_user, require_group, serialize_group, set_user_timezone, user_zone
 from src.platform.time import utcnow
 from src.platform.worker import recover_stale_jobs, run_worker_cycle
 
@@ -36,6 +36,7 @@ def worker_tick(x_worker_token: str | None = Header(default=None)):
 
 class DeliveryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    timezone: str | None = Field(default=None, min_length=1, max_length=80)
 
 
 class CampaignSenderGroupSelect(DeliveryRequest):
@@ -98,6 +99,19 @@ class SendSettingsUpdate(DeliveryRequest):
 
 
 EDIT_LOCKED_STATUSES = {"sending", "scheduled", "autopilot", "paused"}
+
+
+def apply_request_timezone(
+    session: Session,
+    user_id: str,
+    timezone_name: str | None,
+) -> None:
+    if timezone_name is None:
+        return
+    try:
+        set_user_timezone(session, user_id, timezone_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
 
 
 def require_campaign_editable(session: Session, campaign_id: int, user_id: str) -> Campaign:
@@ -190,6 +204,7 @@ def patch_send_settings(
     user_id: str = Depends(get_current_user_id),
 ):
     campaign = require_campaign_editable(session, campaign_id, user_id)
+    apply_request_timezone(session, user_id, req.timezone)
     settings = dict(campaign.send_settings or {})
     if req.mode is not None:
         settings["mode"] = req.mode
@@ -248,6 +263,7 @@ def post_send_now(
     logger = logging.getLogger("outreach.send")
     logger.info("send-now start campaign=%s user=%s", campaign_id, user_id)
     campaign = require_campaign_editable(session, campaign_id, user_id)
+    apply_request_timezone(session, user_id, req.timezone)
     previous_status = campaign.status
     logger.info("campaign id=%s status=%s sender_group_id=%s", campaign.id, campaign.status, campaign.selected_sender_group_id)
     try:
@@ -310,6 +326,7 @@ def post_schedule(
     user_id: str = Depends(get_current_user_id),
 ):
     campaign = require_campaign_editable(session, campaign_id, user_id)
+    apply_request_timezone(session, user_id, req.timezone)
     if not campaign.selected_sender_group_id:
         raise HTTPException(status_code=400, detail="Campaign does not have a sender group selected")
     try:
@@ -354,6 +371,7 @@ def post_autopilot_start(
     user_id: str = Depends(get_current_user_id),
 ):
     campaign = require_campaign_editable(session, campaign_id, user_id)
+    apply_request_timezone(session, user_id, req.timezone)
     if not campaign.selected_sender_group_id:
         raise HTTPException(status_code=400, detail="Campaign does not have a sender group selected")
     try:
@@ -640,6 +658,7 @@ def get_campaign_send_progress(
     )
     result = {
         "campaign_status": campaign.status,
+        "timezone": user_zone(session, user_id).key,
         "total_recipients": total,
         "sent_count": sent,
         "failed_count": failed,

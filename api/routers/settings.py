@@ -2,20 +2,21 @@ from __future__ import annotations
 
 import json
 import os
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from api.deps import get_current_user_id
 from api.schemas import SettingsUpdate
 from src.gmail_sender import credentials_file_path
 from src.platform.db import get_session
-from src.platform.models import UserSettings
-from src.platform.services import ensure_user
+from src.platform.models import Campaign, UserSettings
+from src.platform.services import ensure_user, next_autopilot_run, set_user_timezone
+from src.platform.time import utcnow
 
 
 router = APIRouter()
@@ -28,6 +29,17 @@ DEFAULT_SETTINGS = {
 
 class CredentialsContent(BaseModel):
     content: str
+
+
+class TimezoneUpdate(BaseModel):
+    timezone: str
+
+
+def _set_timezone(session: Session, user_id: str, value: str) -> bool:
+    try:
+        return set_user_timezone(session, user_id, value)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
 
 
 @router.get("/api/settings")
@@ -53,14 +65,9 @@ def patch_settings(
     session: Session = Depends(get_session),
     user_id: str = Depends(get_current_user_id),
 ):
-    try:
-        ZoneInfo(req.timezone)
-    except (ZoneInfoNotFoundError, ValueError):
-        raise HTTPException(status_code=422, detail="Unknown IANA timezone")
-
     ensure_user(session, user_id)
     settings = session.get(UserSettings, user_id)
-    settings.timezone = req.timezone
+    _set_timezone(session, user_id, req.timezone)
     settings.defaults = {
         **(settings.defaults or {}),
         "max_daily_cap": req.max_daily_cap,
@@ -69,6 +76,44 @@ def patch_settings(
     }
     session.commit()
     return {"status": "success"}
+
+
+@router.patch("/api/settings/timezone")
+def patch_timezone(
+    req: TimezoneUpdate,
+    session: Session = Depends(get_session),
+    user_id: str = Depends(get_current_user_id),
+):
+    ensure_user(session, user_id)
+    settings = session.scalar(
+        select(UserSettings)
+        .where(UserSettings.user_id == user_id)
+        .with_for_update()
+    )
+    try:
+        changed = set_user_timezone(session, user_id, req.timezone)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    if not changed:
+        session.commit()
+        return {"status": "success", "timezone": settings.timezone, "changed": False}
+    now = utcnow()
+    campaigns = list(
+        session.scalars(
+            select(Campaign)
+            .where(Campaign.user_id == user_id, Campaign.status == "autopilot")
+            .with_for_update()
+        )
+    )
+    for campaign in campaigns:
+        campaign.scheduled_at = next_autopilot_run(session, campaign, now=now)
+    session.commit()
+    return {
+        "status": "success",
+        "timezone": settings.timezone,
+        "changed": True,
+        "rescheduled_campaigns": len(campaigns),
+    }
 
 
 @router.get("/api/oauth/status")

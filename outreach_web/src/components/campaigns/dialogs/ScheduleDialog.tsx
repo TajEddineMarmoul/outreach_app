@@ -35,6 +35,7 @@ export default function ScheduleDialog({
   summary?: {
     send_settings?: { delay_minutes?: number; dry_run?: boolean; mode?: string; draft_scheduled_at?: string };
     autopilot_schedule?: { day: string; cap: number; start: string; end: string }[];
+    timezone?: string;
   };
   readOnly?: boolean;
 }) {
@@ -58,6 +59,7 @@ export default function ScheduleDialog({
   });
   const [autoDelay, setAutoDelay] = useState(5);
   const [autoStartAt, setAutoStartAt] = useState("");
+  const [timezone, setTimezone] = useState("UTC");
 
   const [sendingAction, setSendingAction] = useState(false);
   const [settingsReady, setSettingsReady] = useState(false);
@@ -76,6 +78,8 @@ export default function ScheduleDialog({
     if (!isOpen || !summary) return;
     const hydration = window.setTimeout(() => {
       const settings = summary.send_settings || {};
+      const browserTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || summary.timezone || "UTC";
+      setTimezone(readOnly ? summary.timezone || browserTimezone : browserTimezone);
       const savedMode = settings.mode || "send_now";
       setActiveTab(savedMode === "autopilot" ? "autopilot" : savedMode === "schedule" ? "schedule" : defaultTab);
       const savedDelay = Number(settings.delay_minutes ?? 5);
@@ -115,7 +119,7 @@ export default function ScheduleDialog({
       setSettingsReady(true);
     }, 0);
     return () => window.clearTimeout(hydration);
-  }, [defaultTab, isOpen, summary]);
+  }, [defaultTab, isOpen, readOnly, summary]);
 
   const saveSettings = useCallback(async (mode: "send_now" | "schedule" | "autopilot") => {
     const schedule: Record<string, { cap: number; start: string; end: string }> = {};
@@ -129,6 +133,7 @@ export default function ScheduleDialog({
       mode,
       delay_minutes: mode === "autopilot" ? autoDelay : bulkDelay,
       dry_run: dryRun,
+      timezone,
     };
     if (mode === "autopilot") body.schedule = schedule;
     body.scheduled_at = draftDate ? new Date(draftDate).toISOString() : null;
@@ -139,7 +144,7 @@ export default function ScheduleDialog({
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.detail || "Failed to save send settings");
-  }, [authFetch, autoDelay, autoSchedule, autoStartAt, bulkDelay, campaignId, dryRun, scheduledAt]);
+  }, [authFetch, autoDelay, autoSchedule, autoStartAt, bulkDelay, campaignId, dryRun, scheduledAt, timezone]);
 
   useEffect(() => {
     if (!isOpen || readOnly || !settingsReady) return;
@@ -223,6 +228,7 @@ export default function ScheduleDialog({
         schedule: scheduleBody,
         delay_minutes: autoDelay,
         dry_run: dryRun,
+        timezone,
       };
       if (autoStartAt) {
         body.scheduled_at = new Date(autoStartAt).toISOString();
@@ -311,10 +317,10 @@ export default function ScheduleDialog({
 
           {/* 3. Autopilot */}
           <TabsContent value="autopilot" className="py-4 space-y-4">
-            <p className="text-xs text-slate-500">
-              Configure per-day sending limits and time windows.
-              Days with no checkmark are skipped.
-            </p>
+            <div className="flex items-center justify-between gap-3 text-xs text-slate-500">
+              <span>Configure per-day sending limits and time windows.</span>
+              <span className="font-medium text-slate-700 shrink-0">{timezone}</span>
+            </div>
 
             <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
               {["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"].map((d) => {

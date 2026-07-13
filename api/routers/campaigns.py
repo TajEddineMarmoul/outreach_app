@@ -166,15 +166,17 @@ def get_campaign_summary(campaign_id: int, conn=Depends(get_db), user_id: str = 
     sender_emails: list[str] = []
     send_settings: dict = {}
     autopilot_schedule: list[dict] = []
+    user_timezone = "UTC"
     try:
         from sqlalchemy import select
         from sqlalchemy.exc import SQLAlchemyError
         from src.platform.db import SessionLocal
         from src.platform.models import AutopilotDaySchedule, Campaign as PlatformCampaign
-        from src.platform.services import require_group, serialize_group
+        from src.platform.services import require_group, serialize_group, user_zone
 
         platform_session = SessionLocal()
         try:
+            user_timezone = user_zone(platform_session, user_id).key
             platform_campaign = platform_session.scalar(
                 select(PlatformCampaign).where(PlatformCampaign.id == campaign_id, PlatformCampaign.user_id == user_id)
             )
@@ -249,6 +251,7 @@ def get_campaign_summary(campaign_id: int, conn=Depends(get_db), user_id: str = 
         "sheet_synced": sheet_synced,
         "send_settings": send_settings,
         "autopilot_schedule": autopilot_schedule,
+        "timezone": user_timezone,
     }
 
 @router.patch("/api/campaigns/{campaign_id}/composer")

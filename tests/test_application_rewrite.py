@@ -10,7 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from fastapi.testclient import TestClient
 
 from api.main import app
-from api.routers import campaign_delivery, oauth as oauth_router
+from api.routers import campaign_delivery, oauth as oauth_router, settings as settings_router
 from src.platform import db as platform_db
 from src.platform import jobs as platform_jobs
 from src.platform import oauth as platform_oauth
@@ -960,6 +960,64 @@ def test_settings_timezone_is_the_timezone_used_by_delivery(tmp_path):
             headers=HEADERS,
         )
         assert invalid.status_code == 422
+    finally:
+        clear_session_override()
+
+
+def test_browser_timezone_sync_reschedules_active_autopilot(tmp_path, monkeypatch):
+    fixed_now = datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc)
+    session_factory = make_session_factory(tmp_path)
+    install_session_override(session_factory)
+    try:
+        campaign_id, _, _ = _seed_delivery_campaign(session_factory, recipient_count=1)
+        session = session_factory()
+        campaign = session.get(Campaign, campaign_id)
+        campaign.status = "autopilot"
+        campaign.send_settings = {"mode": "autopilot", "delay_minutes": 5}
+        campaign.scheduled_at = fixed_now + timedelta(days=1)
+        session.add(
+            AutopilotDaySchedule(
+                campaign_id=campaign_id,
+                day_of_week="monday",
+                daily_cap=10,
+                start_time="09:00",
+                end_time="17:00",
+            )
+        )
+        session.commit()
+        session.close()
+
+        monkeypatch.setattr(settings_router, "utcnow", lambda: fixed_now)
+        client = TestClient(app)
+        response = client.patch(
+            "/api/settings/timezone",
+            json={"timezone": "America/New_York"},
+            headers=HEADERS,
+        )
+        assert response.status_code == 200
+        assert response.json()["changed"] is True
+        assert response.json()["rescheduled_campaigns"] == 1
+
+        session = session_factory()
+        assert session.get(UserSettings, USER_ID).timezone == "America/New_York"
+        scheduled_at = session.get(Campaign, campaign_id).scheduled_at
+        assert scheduled_at.replace(tzinfo=timezone.utc) == datetime(
+            2026,
+            7,
+            13,
+            13,
+            0,
+            tzinfo=timezone.utc,
+        )
+        session.close()
+
+        unchanged = client.patch(
+            "/api/settings/timezone",
+            json={"timezone": "America/New_York"},
+            headers=HEADERS,
+        )
+        assert unchanged.status_code == 200
+        assert unchanged.json()["changed"] is False
     finally:
         clear_session_override()
 
