@@ -3,17 +3,19 @@ from __future__ import annotations
 import logging
 import json
 import secrets
+from collections import OrderedDict
 from datetime import datetime, timedelta
+from threading import Lock
 
 from jinja2 import Environment
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from src.gmail_sender import fake_send_email, send_email
+from src.gmail_sender import EmailAttachment, fake_send_email, send_email
 from src.platform.db import SessionLocal
 from src.platform.gmail import gmail_service_for_sender
-from src.platform.models import Campaign, CampaignRecipient, Contact, Sender, SendJob, SendLog
+from src.platform.models import Campaign, CampaignAttachment, CampaignRecipient, Contact, Sender, SendJob, SendLog
 from src.platform.services import (
     SENDER_ERROR_COOLDOWN,
     WEEKDAY_NAMES,
@@ -30,6 +32,9 @@ from src.platform.time import utcnow
 
 
 TEMPLATE_ENV = Environment(autoescape=False)
+ATTACHMENT_CACHE_LIMIT = 4
+_attachment_cache: OrderedDict[tuple[int, str], EmailAttachment] = OrderedDict()
+_attachment_cache_lock = Lock()
 
 
 def _exception_detail(exc: BaseException) -> str:
@@ -39,6 +44,35 @@ def _exception_detail(exc: BaseException) -> str:
 
 def _render(template: str, context: dict) -> str:
     return TEMPLATE_ENV.from_string(template or "").render(**context)
+
+
+def _campaign_email_attachment(session: Session, campaign: Campaign) -> EmailAttachment | None:
+    metadata = dict(campaign.attachment_metadata or {})
+    checksum = str(metadata.get("sha256") or "")
+    if not metadata.get("filename") or not checksum:
+        return None
+
+    cache_key = (campaign.id, checksum)
+    with _attachment_cache_lock:
+        cached = _attachment_cache.get(cache_key)
+        if cached:
+            _attachment_cache.move_to_end(cache_key)
+            return cached
+
+    stored = session.get(CampaignAttachment, campaign.id)
+    if not stored or stored.sha256 != checksum:
+        raise RuntimeError("Campaign attachment metadata does not match stored content")
+    attachment = EmailAttachment(
+        filename=stored.filename,
+        content_type=stored.content_type,
+        content=stored.content,
+    )
+    with _attachment_cache_lock:
+        _attachment_cache[cache_key] = attachment
+        _attachment_cache.move_to_end(cache_key)
+        while len(_attachment_cache) > ATTACHMENT_CACHE_LIMIT:
+            _attachment_cache.popitem(last=False)
+    return attachment
 
 
 def _has_unsent_approved_recipients(session: Session, campaign: Campaign) -> bool:
@@ -433,12 +467,13 @@ def perform_send_job(job_id: int, *, claimed: bool = False) -> dict:
 
         dry_run = (campaign.send_settings or {}).get("dry_run", False)
         send_fn = fake_send_email if dry_run else send_email
+        email_attachment = _campaign_email_attachment(session, campaign)
         result = send_fn(
             sender=sender.email,
             recipient=contact.email_normalized,
             subject=subject,
             body=body,
-            attachment_path=(campaign.attachment_metadata or {}).get("path"),
+            attachment=email_attachment,
             service=None if dry_run else gmail_service_for_sender(session, sender),
         )
         now = utcnow()

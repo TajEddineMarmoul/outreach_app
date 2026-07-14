@@ -27,7 +27,7 @@ def config_path() -> Path:
 
 
 def get_db():
-    conn = db.init_db()
+    conn = db.connect()
     try:
         yield conn
     finally:

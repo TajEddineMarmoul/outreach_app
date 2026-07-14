@@ -20,7 +20,7 @@ from src.platform import scheduler as platform_scheduler
 from src.platform import services as platform_services
 from src.platform import worker as platform_worker
 from src.platform.jobs import WEEKDAY_NAMES, create_send_jobs_for_next_batch
-from src.platform.models import AutopilotDaySchedule, Base, Campaign, CampaignRecipient, Contact, OAuthState, Sender, SenderGroup, SendJob, SendLog, UserSettings
+from src.platform.models import AutopilotDaySchedule, Base, Campaign, CampaignAttachment, CampaignRecipient, Contact, OAuthState, Sender, SenderGroup, SendJob, SendLog, UserSettings
 from src.platform.security import decrypt_text, encrypt_text
 from src.platform.services import ensure_user
 from src.platform.time import utcnow
@@ -1965,6 +1965,27 @@ def test_send_now_http_runs_two_sender_batches_through_fake_gmail(tmp_path, monk
     _install_fake_delivery(monkeypatch, session_factory, sent_requests)
     try:
         campaign_id, sender_ids, contact_ids = _seed_delivery_campaign(session_factory)
+        session = session_factory()
+        campaign = session.get(Campaign, campaign_id)
+        campaign.attachment_metadata = {
+            "filename": "resume.pdf",
+            "content_type": "application/pdf",
+            "size_bytes": 18,
+            "sha256": "test-sha",
+            "storage": "database",
+        }
+        session.add(
+            CampaignAttachment(
+                campaign_id=campaign_id,
+                filename="resume.pdf",
+                content_type="application/pdf",
+                size_bytes=18,
+                sha256="test-sha",
+                content=b"%PDF stored resume",
+            )
+        )
+        session.commit()
+        session.close()
         response = TestClient(app).post(
             f"/api/campaigns/{campaign_id}/send-now",
             json={"delay_minutes": 3},
@@ -1978,6 +1999,7 @@ def test_send_now_http_runs_two_sender_batches_through_fake_gmail(tmp_path, monk
             "sender1@example.com",
             "sender2@example.com",
         ]
+        assert all(request["attachment"].filename == "resume.pdf" for request in sent_requests)
 
         progress = TestClient(app).get(
             f"/api/campaigns/{campaign_id}/send-progress",

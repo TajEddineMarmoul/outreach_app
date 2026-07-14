@@ -1,13 +1,28 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import useSWR from "swr";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { ChevronLeft, ChevronRight, Paperclip } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { ChevronLeft, ChevronRight, Loader2, Paperclip, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useApiClient } from "@/lib/api";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+
+interface PreviewEntry {
+  id: number;
+  recipient_email: string;
+  subject: string;
+  body: string;
+  attachment_name: string;
+}
+
+interface PreviewResponse {
+  items: PreviewEntry[];
+  total: number;
+  offset: number;
+  limit: number;
+}
 
 export default function PreviewDialog({
   isOpen,
@@ -18,28 +33,24 @@ export default function PreviewDialog({
   onClose: () => void;
   campaignId: string;
 }) {
-  const { data: previews, mutate: mutatePreviews } = useSWR(
-    isOpen ? `${API_URL}/api/campaigns/${campaignId}/preview` : null
+  const [previewIndex, setPreviewIndex] = useState(0);
+  const { data: previews, isLoading } = useSWR<PreviewResponse>(
+    isOpen ? `${API_URL}/api/campaigns/${campaignId}/preview?offset=${previewIndex}&limit=1` : null,
+    { keepPreviousData: true }
   );
   const { authFetch } = useApiClient();
   
   const [testEmail, setTestEmail] = useState("");
   const [testSending, setTestSending] = useState(false);
-  const [previewIndex, setPreviewIndex] = useState(0);
-  const previewRows = Array.isArray(previews) ? previews : [];
-  const currentPreview = previewRows[previewIndex] || null;
-  const hasPreviews = previewRows.length > 0 && previewRows[0]?.subject !== null && previewRows[0]?.subject !== undefined;
+  const currentPreview = previews?.items?.[0] || null;
+  const previewTotal = previews?.total || 0;
 
   const [testResult, setTestResult] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
-  useEffect(() => {
+  const handleClose = () => {
     setPreviewIndex(0);
     setTestResult(null);
-  }, [isOpen, previewRows.length]);
-
-  const handleGenerate = async () => {
-    await authFetch(`${API_URL}/api/campaigns/${campaignId}/preview/generate`, { method: "POST" });
-    mutatePreviews();
+    onClose();
   };
 
   const handleSendTest = async () => {
@@ -60,58 +71,82 @@ export default function PreviewDialog({
         throw new Error(errorData?.detail || "Test send failed");
       }
       setTestResult({ type: "success", message: "Test email sent successfully!" });
-    } catch (err: any) {
-      setTestResult({ type: "error", message: err.message });
+    } catch (error) {
+      setTestResult({
+        type: "error",
+        message: error instanceof Error ? error.message : "Test send failed",
+      });
     } finally {
       setTestSending(false);
     }
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-2xl max-h-[85vh] flex flex-col">
+    <Dialog
+      open={isOpen}
+      disablePointerDismissal
+      onOpenChange={(open) => {
+        if (!open) handleClose();
+      }}
+    >
+      <DialogContent showCloseButton={false} className="sm:max-w-2xl max-h-[85vh] flex flex-col">
         <DialogHeader>
           <div className="flex items-center justify-between gap-4">
             <DialogTitle>Email campaign preview</DialogTitle>
-            {previewRows.length > 0 && (
-              <div className="flex items-center gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  className="h-8 w-8"
-                  onClick={() => setPreviewIndex((idx) => Math.max(0, idx - 1))}
-                  disabled={previewIndex === 0}
-                  title="Previous preview"
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                </Button>
-                <span className="text-xs font-semibold text-slate-500 min-w-16 text-center">
-                  {previewIndex + 1} / {previewRows.length}
-                </span>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  className="h-8 w-8"
-                  onClick={() => setPreviewIndex((idx) => Math.min(previewRows.length - 1, idx + 1))}
-                  disabled={previewIndex >= previewRows.length - 1}
-                  title="Next preview"
-                >
-                  <ChevronRight className="w-4 h-4" />
-                </Button>
-              </div>
-            )}
+            <div className="flex items-center gap-2">
+              {previewTotal > 0 && (
+                <>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={() => setPreviewIndex((idx) => Math.max(0, idx - 1))}
+                    disabled={previewIndex === 0}
+                    title="Previous preview"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </Button>
+                  <span className="text-xs font-semibold text-slate-500 min-w-16 text-center">
+                    {previewIndex + 1} / {previewTotal}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={() => setPreviewIndex((idx) => Math.min(previewTotal - 1, idx + 1))}
+                    disabled={previewIndex >= previewTotal - 1}
+                    title="Next preview"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </Button>
+                </>
+              )}
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={handleClose}
+                title="Close preview"
+              >
+                <X className="w-4 h-4" />
+                <span className="sr-only">Close preview</span>
+              </Button>
+            </div>
           </div>
         </DialogHeader>
 
         <div className="flex-1 overflow-y-auto space-y-4 py-4 min-h-[300px]">
-          {!hasPreviews ? (
-            <div className="p-12 text-center text-slate-500 space-y-3">
-              <p>No preview rows generated. Previews must be generated before campaign sending.</p>
-              <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={handleGenerate}>
-                Generate previews
-              </Button>
+          {isLoading ? (
+            <div className="p-12 flex items-center justify-center text-sm text-slate-500">
+              <Loader2 className="w-4 h-4 animate-spin mr-2" />
+              Loading preview...
+            </div>
+          ) : !currentPreview ? (
+            <div className="p-12 text-center text-slate-500">
+              <p>Add at least one recipient to preview this campaign.</p>
             </div>
           ) : (
             <div className="border border-slate-200 rounded-lg bg-white overflow-hidden">
@@ -170,7 +205,7 @@ export default function PreviewDialog({
                 </div>
               )}
             </div>
-            <Button variant="outline" onClick={onClose} className="self-end sm:self-auto">Close</Button>
+            <Button variant="outline" onClick={handleClose} className="self-end sm:self-auto">Close</Button>
           </div>
         </div>
       </DialogContent>

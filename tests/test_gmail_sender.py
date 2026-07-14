@@ -2,7 +2,7 @@
 import email
 from email.message import EmailMessage
 from pathlib import Path
-from src.gmail_sender import build_message
+from src.gmail_sender import EmailAttachment, build_message
 
 def test_build_message_plain_text():
     raw_msg = build_message(
@@ -70,4 +70,26 @@ def test_build_message_with_attachment(tmp_path):
             
     assert pdf_part is not None
     assert pdf_part.get_filename() == "test.pdf"
+
+
+def test_build_message_with_stored_attachment():
+    raw_msg = build_message(
+        sender="test@example.com",
+        recipient="user@example.com",
+        subject="Stored attachment",
+        body="Check the attachment",
+        attachment=EmailAttachment(
+            filename="resume.pdf",
+            content_type="application/pdf",
+            content=b"%PDF-1.4 stored content",
+        ),
+    )
+
+    msg_bytes = base64.urlsafe_b64decode(raw_msg["raw"].encode("ascii"))
+    msg = email.message_from_bytes(msg_bytes)
+    pdf_parts = [part for part in msg.walk() if part.get_content_type() == "application/pdf"]
+
+    assert len(pdf_parts) == 1
+    assert pdf_parts[0].get_filename() == "resume.pdf"
+    assert pdf_parts[0].get_payload(decode=True) == b"%PDF-1.4 stored content"
 

@@ -10,12 +10,18 @@ export default function AttachmentDialog({
   isOpen,
   onClose,
   campaignId,
-  mutateSummary
+  mutateSummary,
+  currentAttachment,
 }: {
   isOpen: boolean;
   onClose: () => void;
   campaignId: string;
-  mutateSummary: () => void;
+  mutateSummary: () => void | Promise<unknown>;
+  currentAttachment?: {
+    filename?: string;
+    content_type?: string;
+    size_bytes?: number;
+  } | null;
 }) {
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -31,11 +37,13 @@ export default function AttachmentDialog({
         method: "POST",
         body: formData,
       });
-      if (!res.ok) throw new Error("Upload failed");
-      mutateSummary();
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(result.detail || "Upload failed");
+      await mutateSummary();
+      setFile(null);
       onClose();
-    } catch (err: any) {
-      alert(err.message);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Upload failed");
     } finally {
       setUploading(false);
     }
@@ -48,9 +56,24 @@ export default function AttachmentDialog({
           <DialogTitle>Add campaign attachment</DialogTitle>
         </DialogHeader>
         <div className="py-4 space-y-4">
+          {currentAttachment?.filename && (
+            <div className="flex items-center gap-3 border-b border-slate-100 pb-4">
+              <Paperclip className="w-4 h-4 text-blue-600 shrink-0" />
+              <div className="min-w-0">
+                <div className="text-xs font-semibold text-slate-500">Current attachment</div>
+                <div className="text-sm font-medium text-slate-800 truncate">{currentAttachment.filename}</div>
+                {currentAttachment.size_bytes !== undefined && (
+                  <div className="text-xs text-slate-400">
+                    {(currentAttachment.size_bytes / 1024 / 1024).toFixed(2)} MB
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
           <div className="border-2 border-dashed border-slate-200 hover:border-blue-400 rounded-lg p-8 text-center cursor-pointer relative">
             <input
               type="file"
+              accept=".pdf,.png,.jpg,.jpeg,.gif,.webp,.txt,.doc,.docx"
               onChange={(e) => setFile(e.target.files?.[0] || null)}
               className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
             />
@@ -58,13 +81,14 @@ export default function AttachmentDialog({
             <div className="text-sm font-semibold text-slate-700">
               {file ? file.name : "Click to select a file"}
             </div>
-            <p className="text-xs text-slate-400 mt-1">Supported formats: PDF, Images, Document up to 10MB</p>
+            <p className="text-xs text-slate-400 mt-1">PDF, image, text, or Word document up to 10 MB</p>
+            {file && <p className="text-xs text-slate-500 mt-1">{(file.size / 1024 / 1024).toFixed(2)} MB</p>}
           </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={uploading}>Cancel</Button>
           <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={handleUpload} disabled={uploading || !file}>
-            {uploading ? "Uploading..." : "Attach file"}
+            {uploading ? "Uploading..." : currentAttachment?.filename ? "Replace file" : "Attach file"}
           </Button>
         </DialogFooter>
       </DialogContent>

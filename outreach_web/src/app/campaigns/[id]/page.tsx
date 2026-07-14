@@ -231,19 +231,11 @@ export default function CampaignEditorPage() {
       });
       if (!saveRes.ok) throw new Error("Failed to save draft");
 
-      // 2. Generate previews
-      const genRes = await authFetch(`${API_URL}/api/campaigns/${campaignId}/preview/generate`, {
-        method: "POST",
-      });
-      if (!genRes.ok) throw new Error("Failed to compile previews");
-
-      // 3. Mutate SWR cache to update
-      await mutate(`${API_URL}/api/campaigns/${campaignId}`);
-      await mutateSummary();
-      await mutateValSummary();
-      await mutate(`${API_URL}/api/campaigns/${campaignId}/preview`);
-
-      // 4. Open preview modal
+      await mutate(
+        (key) => typeof key === "string" && key.startsWith(`${API_URL}/api/campaigns/${campaignId}/preview?`),
+        undefined,
+        { revalidate: false }
+      );
       setPreviewModalOpen(true);
     } catch (err: any) {
       alert("Failed to load preview: " + err.message);
@@ -402,7 +394,7 @@ export default function CampaignEditorPage() {
             ) : (
               <Eye className="w-4 h-4" />
             )}
-            <span>{isPreviewLoading ? "Compiling..." : "Show preview"}</span>
+            <span>{isPreviewLoading ? "Opening..." : "Show preview"}</span>
           </Button>
 
           <Button
@@ -591,7 +583,7 @@ export default function CampaignEditorPage() {
                       title="Add attachment"
                     >
                       <Paperclip className="w-4 h-4" />
-                      <span className="text-xs font-semibold">Attach</span>
+                      <span className="text-xs font-semibold">{summary?.attachment && summary.attachment !== "none" ? "Replace" : "Attach"}</span>
                     </button>
                     <button
                       type="button"
@@ -739,6 +731,7 @@ export default function CampaignEditorPage() {
         onClose={() => setAttachmentModalOpen(false)}
         campaignId={campaignId as string}
         mutateSummary={mutateSummary}
+        currentAttachment={summary?.attachment_details || null}
       />
 
       {/* F. Template Modal */}

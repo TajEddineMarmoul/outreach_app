@@ -34,6 +34,13 @@ class GmailSendResult:
 
 
 @dataclass(frozen=True)
+class EmailAttachment:
+    filename: str
+    content_type: str
+    content: bytes
+
+
+@dataclass(frozen=True)
 class GmailConnectionStatus:
     connected: bool
     status: str
@@ -215,6 +222,7 @@ def build_message(
     subject: str,
     body: str,
     attachment_path: str | Path | None = None,
+    attachment: EmailAttachment | None = None,
 ) -> dict[str, str]:
     message = EmailMessage()
     message["To"] = recipient
@@ -226,7 +234,16 @@ def build_message(
         message.set_content(body, subtype="html")
     else:
         message.set_content(body)
-    if attachment_path:
+    if attachment:
+        mime_type = attachment.content_type or mimetypes.guess_type(attachment.filename)[0]
+        maintype, subtype = (mime_type or "application/octet-stream").split("/", 1)
+        message.add_attachment(
+            attachment.content,
+            maintype=maintype,
+            subtype=subtype,
+            filename=attachment.filename,
+        )
+    elif attachment_path:
         path = db.resolve_project_path(attachment_path)
         if not path.exists():
             raise FileNotFoundError(f"Attachment not found: {path}")
@@ -251,10 +268,11 @@ def send_email(
     attachment_path: str | Path | None = None,
     token_path: str | Path | None = None,
     service=None,
+    attachment: EmailAttachment | None = None,
 ) -> GmailSendResult:
     if service is None:
         service = get_gmail_service(token_path=token_path)
-    message = build_message(sender, recipient, subject, body, attachment_path)
+    message = build_message(sender, recipient, subject, body, attachment_path, attachment)
     sent = service.users().messages().send(userId="me", body=message).execute()
     return GmailSendResult(
         message_id=sent["id"],
@@ -270,6 +288,7 @@ def fake_send_email(
     attachment_path: str | Path | None = None,
     token_path: str | Path | None = None,
     service=None,
+    attachment: EmailAttachment | None = None,
 ) -> GmailSendResult:
     return GmailSendResult(
         message_id=f"fake_{secrets.token_hex(8)}",

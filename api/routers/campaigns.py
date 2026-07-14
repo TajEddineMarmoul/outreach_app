@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
 
+import hashlib
+import mimetypes
 import sys
 import json
 import sqlite3
@@ -14,6 +16,7 @@ from io import StringIO
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from api.deps import PROJECT_ROOT, db, config_path, get_db, get_current_user_id
 from api.schemas import (
@@ -27,17 +30,21 @@ from api.schemas import (
     TestSendRequest,
     SenderUpdate,
 )
-from src.models import AppConfig, load_config, save_config, ContactStatus
+from src.models import load_config
 from src.gmail_sender import gmail_connection_status
 from src.google_sheets import get_public_sheet_csv, get_published_csv, list_public_sheet_tabs, parse_google_sheet_url_details
 from src.importer import import_dataframe, normalize_email, detect_columns
 from src.safety import campaign_checklist
 from src.scheduler import send_test_email
 from src.analytics import send_log_dataframe
+from src.platform.db import get_session
+from src.platform.models import Campaign as PlatformCampaign, CampaignAttachment
 
 router = APIRouter()
 
 EDIT_LOCKED_STATUSES = {"sending", "scheduled", "autopilot", "paused"}
+MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+ALLOWED_ATTACHMENT_SUFFIXES = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".txt", ".doc", ".docx"}
 
 
 def require_editable_campaign(conn, campaign_id: int, user_id: str):
@@ -165,6 +172,7 @@ def get_campaign_summary(campaign_id: int, conn=Depends(get_db), user_id: str = 
     sender_group_capacity = None
     sender_emails: list[str] = []
     send_settings: dict = {}
+    attachment_details: dict = {}
     autopilot_schedule: list[dict] = []
     user_timezone = "UTC"
     try:
@@ -182,6 +190,7 @@ def get_campaign_summary(campaign_id: int, conn=Depends(get_db), user_id: str = 
             )
             if platform_campaign:
                 send_settings = dict(platform_campaign.send_settings or {})
+                attachment_details = dict(platform_campaign.attachment_metadata or {})
                 autopilot_schedule = [
                     {
                         "day": item.day_of_week,
@@ -214,10 +223,14 @@ def get_campaign_summary(campaign_id: int, conn=Depends(get_db), user_id: str = 
     status = str(campaign["status"])
     recipient_count = db.campaign_contact_count(conn, campaign_id)
     
-    att_path = str(campaign["attachment_path"] or config.campaign.attachment_path or "")
-    att_resolved = db.resolve_project_path(att_path) if att_path else None
-    att_exists = bool(att_resolved and att_resolved.exists())
-    att_label = Path(att_path).name if att_exists else "none"
+    att_label = str(attachment_details.get("filename") or "")
+    if not att_label:
+        att_path = str(campaign["attachment_path"] or "")
+        att_resolved = db.resolve_project_path(att_path) if att_path else None
+        if att_resolved and att_resolved.exists():
+            att_label = Path(att_path).name
+    if not att_label:
+        att_label = "none"
 
     schedule_label = "not set"
     if status == "scheduled":
@@ -243,6 +256,7 @@ def get_campaign_summary(campaign_id: int, conn=Depends(get_db), user_id: str = 
         "recipients": recipient_count,
         "mode": status,
         "attachment": att_label,
+        "attachment_details": attachment_details,
         "daily_cap": config.sending.daily_cap,
         "schedule": schedule_label,
         "require_attachment": require_attachment,
@@ -267,54 +281,87 @@ def patch_composer(campaign_id: int, req: ComposerUpdate, conn=Depends(get_db), 
         req.fallback_body_template,
         str(campaign["attachment_path"] or ""),
     )
-    db.clear_campaign_previews(conn, campaign_id, user_id)
-    db.set_setting(conn, f"campaign_{campaign_id}_template_saved", True, user_id)
-    db.set_setting(conn, f"campaign_{campaign_id}_test_sent", False, user_id)
     db.set_setting(conn, f"campaign_{campaign_id}_require_attachment", "true" if req.require_attachment else "false", user_id)
-    
-    config = load_config(config_path())
-    config.campaign.attachment_path = str(campaign["attachment_path"] or "")
-    save_config(config, config_path())
     
     return {"status": "success"}
 
 @router.post("/api/campaigns/{campaign_id}/attachment")
-async def post_attachment(campaign_id: int, file: UploadFile = File(...), conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
-    campaign = require_editable_campaign(conn, campaign_id, user_id)
-        
-    upload_dir = PROJECT_ROOT / "data" / "uploads"
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    
-    file_path = upload_dir / file.filename
-    content = await file.read()
-    file_path.write_bytes(content)
-    
-    relative_path = str(file_path.relative_to(PROJECT_ROOT))
-    db.update_campaign(
-        conn,
-        campaign_id,
-        user_id,
-        str(campaign["subject_template"]),
-        str(campaign["body_template"]),
-        str(campaign["fallback_body_template"]),
-        relative_path,
-    )
-    
-    return {"filename": file.filename, "path": relative_path}
+async def post_attachment(
+    campaign_id: int,
+    file: UploadFile = File(...),
+    conn=Depends(get_db),
+    platform_session: Session = Depends(get_session),
+    user_id: str = Depends(get_current_user_id),
+):
+    require_editable_campaign(conn, campaign_id, user_id)
+
+    filename = (file.filename or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
+    suffix = Path(filename).suffix.lower()
+    if not filename or suffix not in ALLOWED_ATTACHMENT_SUFFIXES:
+        raise HTTPException(status_code=422, detail="Unsupported attachment type")
+    if len(filename) > 255:
+        raise HTTPException(status_code=422, detail="Attachment filename is too long")
+
+    content = await file.read(MAX_ATTACHMENT_BYTES + 1)
+    if not content:
+        raise HTTPException(status_code=422, detail="The attachment is empty")
+    if len(content) > MAX_ATTACHMENT_BYTES:
+        raise HTTPException(status_code=413, detail="Attachments must be 10 MB or smaller")
+
+    content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    metadata = {
+        "filename": filename,
+        "content_type": content_type,
+        "size_bytes": len(content),
+        "sha256": hashlib.sha256(content).hexdigest(),
+        "storage": "database",
+    }
+
+    platform_campaign = platform_session.get(PlatformCampaign, campaign_id)
+    if not platform_campaign or platform_campaign.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    stored = platform_session.get(CampaignAttachment, campaign_id)
+    if stored:
+        stored.filename = filename
+        stored.content_type = content_type
+        stored.size_bytes = len(content)
+        stored.sha256 = metadata["sha256"]
+        stored.content = content
+    else:
+        platform_session.add(
+            CampaignAttachment(
+                campaign_id=campaign_id,
+                filename=filename,
+                content_type=content_type,
+                size_bytes=len(content),
+                sha256=metadata["sha256"],
+                content=content,
+            )
+        )
+    platform_campaign.attachment_path = ""
+    platform_campaign.attachment_metadata = metadata
+    platform_session.commit()
+
+    return metadata
 
 @router.delete("/api/campaigns/{campaign_id}/attachment")
-def delete_attachment(campaign_id: int, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
-    campaign = require_editable_campaign(conn, campaign_id, user_id)
-        
-    db.update_campaign(
-        conn,
-        campaign_id,
-        user_id,
-        str(campaign["subject_template"]),
-        str(campaign["body_template"]),
-        str(campaign["fallback_body_template"]),
-        "",
-    )
+def delete_attachment(
+    campaign_id: int,
+    conn=Depends(get_db),
+    platform_session: Session = Depends(get_session),
+    user_id: str = Depends(get_current_user_id),
+):
+    require_editable_campaign(conn, campaign_id, user_id)
+
+    platform_campaign = platform_session.get(PlatformCampaign, campaign_id)
+    if not platform_campaign or platform_campaign.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    stored = platform_session.get(CampaignAttachment, campaign_id)
+    if stored:
+        platform_session.delete(stored)
+    platform_campaign.attachment_path = ""
+    platform_campaign.attachment_metadata = {}
+    platform_session.commit()
     return {"status": "success"}
 
 
@@ -555,51 +602,53 @@ def get_campaign_validation_summary(campaign_id: int, conn=Depends(get_db), user
 # ----------------------------------------------------
 
 @router.get("/api/campaigns/{campaign_id}/preview")
-def get_campaign_preview(campaign_id: int, limit: int = 1000, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
+def get_campaign_preview(
+    campaign_id: int,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=1, ge=1, le=25),
+    conn=Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
     campaign = db.get_campaign(conn, campaign_id, user_id)
-    att_name = ""
-    if campaign and campaign["attachment_path"]:
-        from pathlib import Path
-        att_name = Path(str(campaign["attachment_path"])).name
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
 
-    contacts = db.campaign_contacts(conn, campaign_id, user_id, limit=limit)
+    from src.template_engine import render_email
+
+    metadata = campaign.get("attachment_metadata") or {}
+    if isinstance(metadata, str):
+        metadata = json.loads(metadata)
+    att_name = str(metadata.get("filename") or "")
+
+    contacts = conn.execute(
+        """
+        SELECT c.*
+        FROM contacts AS c
+        INNER JOIN campaign_recipients AS cr ON cr.contact_id = c.id
+        WHERE cr.campaign_id = ? AND c.user_id = ?
+        ORDER BY c.id
+        LIMIT ? OFFSET ?
+        """,
+        (campaign_id, user_id, limit, offset),
+    ).fetchall()
+
     res = []
     for c in contacts:
+        rendered = render_email(c, campaign)
         res.append({
             "id": c["id"],
             "recipient_email": c["email"],
             "first_name": c["first_name"],
-            "subject": c["last_preview_subject"],
-            "body": c["last_preview_body"],
-            "generated_at": c["preview_generated_at"],
+            "subject": rendered.subject,
+            "body": rendered.body,
+            "generated_at": None,
             "attachment_name": att_name
         })
-    return res
-
-@router.post("/api/campaigns/{campaign_id}/preview/generate")
-def post_generate_previews(campaign_id: int, limit: Optional[int] = None, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
-    from src.preview import generate_preview
-    campaign = db.get_campaign(conn, campaign_id, user_id)
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-    contacts = db.campaign_contacts(conn, campaign_id, user_id, limit=limit)
-    count = 0
-    now = db.utcnow_iso()
-    for c in contacts:
-        preview = generate_preview(conn, int(c["id"]), user_id, campaign_id=campaign_id, mark=False)
-        conn.execute(
-            """
-            UPDATE contacts
-            SET preview_generated_at = ?, last_preview_subject = ?, last_preview_body = ?,
-                updated_at = ?
-            WHERE id = ? AND user_id = ?
-            """,
-            (now, preview.subject, preview.body, now, int(c["id"]), user_id),
-        )
-        count += 1
-    conn.commit()
     return {
-        "generated": count,
+        "items": res,
+        "total": db.campaign_contact_count(conn, campaign_id),
+        "offset": offset,
+        "limit": limit,
     }
 
 class RejectRecipientsRequest(BaseModel):
@@ -659,9 +708,9 @@ def post_test_send(campaign_id: int, req: TestSendRequest, conn=Depends(get_db),
             from datetime import datetime, timezone
             from sqlalchemy import select
             from src.platform.db import SessionLocal
-            from src.platform.models import Sender as PlatformSender, SendLog as PlatformSendLog
+            from src.platform.models import CampaignAttachment, Sender as PlatformSender, SendLog as PlatformSendLog
             from src.platform.gmail import gmail_service_for_sender
-            from src.gmail_sender import send_email as gmail_send
+            from src.gmail_sender import EmailAttachment, send_email as gmail_send
             from src.preview import generate_preview
 
             platform_session = SessionLocal()
@@ -685,11 +734,22 @@ def post_test_send(campaign_id: int, req: TestSendRequest, conn=Depends(get_db),
                 if not platform_sender:
                     raise HTTPException(status_code=400, detail="No connected Gmail sender found")
                 rendered = generate_preview(conn, contact_id, user_id, campaign_id=campaign_id, mark=False)
+                stored_attachment = platform_session.get(CampaignAttachment, campaign_id)
+                email_attachment = (
+                    EmailAttachment(
+                        filename=stored_attachment.filename,
+                        content_type=stored_attachment.content_type,
+                        content=stored_attachment.content,
+                    )
+                    if stored_attachment
+                    else None
+                )
                 result = gmail_send(
                     sender=platform_sender.email,
                     recipient=req.recipient_email,
                     subject=rendered.subject,
                     body=rendered.body,
+                    attachment=email_attachment,
                     service=gmail_service_for_sender(platform_session, platform_sender),
                 )
                 log = PlatformSendLog(
