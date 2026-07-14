@@ -5,8 +5,9 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
 from cryptography.fernet import Fernet
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
 from fastapi.testclient import TestClient
 
@@ -582,6 +583,122 @@ def test_reset_recipient_removes_terminal_job_and_starts_new_attempt_boundary(tm
         session.commit()
         retry = create_send_jobs_for_next_batch(session, user_id=USER_ID, campaign_id=campaign_id)
         assert retry["created"] == 1
+        session.close()
+    finally:
+        clear_session_override()
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "payload", "expected_status", "expected_recipient_status"),
+    [
+        ("send-now", {"delay_minutes": 0}, "queued", "queued"),
+        (
+            "schedule",
+            {"delay_minutes": 0, "scheduled_at": (utcnow() + timedelta(hours=1)).isoformat()},
+            "scheduled",
+            "approved",
+        ),
+        ("autopilot/start", {"delay_minutes": 0, "schedule": all_day_schedule()}, "autopilot", "approved"),
+    ],
+)
+def test_restarting_campaign_reopens_failed_recipients_only(
+    tmp_path,
+    endpoint,
+    payload,
+    expected_status,
+    expected_recipient_status,
+):
+    session_factory = make_session_factory(tmp_path)
+    install_session_override(session_factory)
+    try:
+        campaign_id, sender_ids, contact_ids = _seed_delivery_campaign(session_factory, recipient_count=2)
+        sent_contact_id, failed_contact_id = contact_ids
+        session = session_factory()
+        campaign = session.get(Campaign, campaign_id)
+        campaign.status = "ended"
+        sent_recipient = session.get(
+            CampaignRecipient,
+            {"campaign_id": campaign_id, "contact_id": sent_contact_id},
+        )
+        failed_recipient = session.get(
+            CampaignRecipient,
+            {"campaign_id": campaign_id, "contact_id": failed_contact_id},
+        )
+        sent_recipient.status = "sent"
+        failed_recipient.status = "failed"
+        session.add_all(
+            [
+                SendJob(
+                    user_id=USER_ID,
+                    campaign_id=campaign_id,
+                    recipient_id=sent_contact_id,
+                    sender_id=sender_ids[0],
+                    status="sent",
+                    scheduled_for=utcnow(),
+                    batch_id="completed-batch",
+                    idempotency_key=f"campaign:{campaign_id}:recipient:{sent_contact_id}",
+                ),
+                SendJob(
+                    user_id=USER_ID,
+                    campaign_id=campaign_id,
+                    recipient_id=failed_contact_id,
+                    sender_id=sender_ids[1],
+                    status="failed",
+                    attempts=3,
+                    scheduled_for=utcnow(),
+                    batch_id="failed-batch",
+                    idempotency_key=f"campaign:{campaign_id}:recipient:{failed_contact_id}",
+                ),
+                SendLog(
+                    user_id=USER_ID,
+                    campaign_id=campaign_id,
+                    contact_id=failed_contact_id,
+                    recipient_id=failed_contact_id,
+                    sender_id=sender_ids[1],
+                    recipient_email="lead2@example.com",
+                    sender_email="sender2@example.com",
+                    subject="Hello",
+                    body_snapshot="Body",
+                    status="failed",
+                    error_message="Previous delivery failed",
+                ),
+            ]
+        )
+        session.commit()
+        session.close()
+
+        response = TestClient(app).post(
+            f"/api/campaigns/{campaign_id}/{endpoint}",
+            json=payload,
+            headers=HEADERS,
+        )
+        assert response.status_code == 200
+        assert response.json()["status"] == expected_status
+        assert response.json()["retried_failed"] == 1
+
+        session = session_factory()
+        persisted_sent = session.get(
+            CampaignRecipient,
+            {"campaign_id": campaign_id, "contact_id": sent_contact_id},
+        )
+        persisted_failed = session.get(
+            CampaignRecipient,
+            {"campaign_id": campaign_id, "contact_id": failed_contact_id},
+        )
+        jobs = list(session.scalars(select(SendJob).where(SendJob.campaign_id == campaign_id)))
+        assert persisted_sent.status == "sent"
+        assert persisted_sent.reset_at is None
+        assert persisted_failed.status == expected_recipient_status
+        assert persisted_failed.reset_at is not None
+        assert any(job.recipient_id == sent_contact_id and job.status == "sent" for job in jobs)
+        replacement_jobs = [job for job in jobs if job.recipient_id == failed_contact_id]
+        if endpoint == "send-now":
+            assert len(replacement_jobs) == 1
+            assert replacement_jobs[0].status == "queued"
+            assert replacement_jobs[0].attempts == 0
+        else:
+            assert replacement_jobs == []
+        assert session.scalar(select(func.count()).select_from(SendLog).where(SendLog.campaign_id == campaign_id)) == 1
         session.close()
     finally:
         clear_session_override()

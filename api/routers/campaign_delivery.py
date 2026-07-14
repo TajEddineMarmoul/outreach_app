@@ -147,6 +147,51 @@ def queued_job_ids(session: Session, campaign_id: int, user_id: str) -> list[int
     )
 
 
+def require_connected_delivery_group(session: Session, campaign: Campaign, user_id: str):
+    if not campaign.selected_sender_group_id:
+        raise HTTPException(status_code=400, detail="Campaign does not have a sender group selected")
+    try:
+        group = require_group(session, user_id, campaign.selected_sender_group_id)
+    except LookupError:
+        raise HTTPException(status_code=400, detail="Selected sender group no longer exists")
+    if not connected_senders(group):
+        raise HTTPException(status_code=409, detail="Selected sender group has no connected senders")
+    return group
+
+
+def reopen_failed_recipients(session: Session, campaign_id: int, user_id: str) -> int:
+    failed_contact_ids = list(
+        session.scalars(
+            select(CampaignRecipient.contact_id)
+            .join(Contact, Contact.id == CampaignRecipient.contact_id)
+            .where(
+                CampaignRecipient.campaign_id == campaign_id,
+                CampaignRecipient.status == "failed",
+                Contact.user_id == user_id,
+                Contact.status.in_(("approved", "sent")),
+            )
+        )
+    )
+    if not failed_contact_ids:
+        return 0
+
+    session.execute(
+        delete(SendJob).where(
+            SendJob.campaign_id == campaign_id,
+            SendJob.recipient_id.in_(failed_contact_ids),
+        )
+    )
+    session.execute(
+        update(CampaignRecipient)
+        .where(
+            CampaignRecipient.campaign_id == campaign_id,
+            CampaignRecipient.contact_id.in_(failed_contact_ids),
+        )
+        .values(status="approved", reset_at=utcnow())
+    )
+    return len(failed_contact_ids)
+
+
 def ensure_campaign_shell(
     session: Session,
     *,
@@ -264,6 +309,7 @@ def post_send_now(
     logger.info("send-now start campaign=%s user=%s", campaign_id, user_id)
     campaign = require_campaign_editable(session, campaign_id, user_id)
     apply_request_timezone(session, user_id, req.timezone)
+    require_connected_delivery_group(session, campaign, user_id)
     previous_status = campaign.status
     logger.info("campaign id=%s status=%s sender_group_id=%s", campaign.id, campaign.status, campaign.selected_sender_group_id)
     try:
@@ -275,11 +321,17 @@ def post_send_now(
             "dry_run": req.dry_run,
             "pause_reason": None,
         }
+        retried_failed = reopen_failed_recipients(session, campaign_id, user_id)
         existing_ids = queued_job_ids(session, campaign_id, user_id)
         logger.info("existing queued/retry jobs count=%s", len(existing_ids))
         if existing_ids:
             session.commit()
-            return {"status": "queued", "queued": len(existing_ids), "mode": "resume"}
+            return {
+                "status": "queued",
+                "queued": len(existing_ids),
+                "mode": "resume",
+                "retried_failed": retried_failed,
+            }
 
         logger.info("creating new send jobs batch")
         result = create_send_jobs_for_next_batch(
@@ -315,7 +367,11 @@ def post_send_now(
         logger.error("send-now error: %s", exc)
         session.rollback()
         raise HTTPException(status_code=400, detail=str(exc))
-    return {"status": "queued" if result.get("queued") else campaign.status, **result}
+    return {
+        "status": "queued" if result.get("queued") else campaign.status,
+        **result,
+        "retried_failed": retried_failed,
+    }
 
 
 @router.post("/api/campaigns/{campaign_id}/schedule")
@@ -327,14 +383,8 @@ def post_schedule(
 ):
     campaign = require_campaign_editable(session, campaign_id, user_id)
     apply_request_timezone(session, user_id, req.timezone)
-    if not campaign.selected_sender_group_id:
-        raise HTTPException(status_code=400, detail="Campaign does not have a sender group selected")
-    try:
-        group = require_group(session, user_id, campaign.selected_sender_group_id)
-    except LookupError:
-        raise HTTPException(status_code=400, detail="Selected sender group no longer exists")
-    if not connected_senders(group):
-        raise HTTPException(status_code=409, detail="Selected sender group has no connected senders")
+    require_connected_delivery_group(session, campaign, user_id)
+    retried_failed = reopen_failed_recipients(session, campaign_id, user_id)
     approved_recipients = session.scalar(
         select(func.count())
         .select_from(CampaignRecipient)
@@ -360,7 +410,11 @@ def post_schedule(
         "pause_reason": None,
     }
     session.commit()
-    return {"status": "scheduled", "scheduled_at": campaign.scheduled_at.isoformat()}
+    return {
+        "status": "scheduled",
+        "scheduled_at": campaign.scheduled_at.isoformat(),
+        "retried_failed": retried_failed,
+    }
 
 
 @router.post("/api/campaigns/{campaign_id}/autopilot/start")
@@ -372,14 +426,8 @@ def post_autopilot_start(
 ):
     campaign = require_campaign_editable(session, campaign_id, user_id)
     apply_request_timezone(session, user_id, req.timezone)
-    if not campaign.selected_sender_group_id:
-        raise HTTPException(status_code=400, detail="Campaign does not have a sender group selected")
-    try:
-        group = require_group(session, user_id, campaign.selected_sender_group_id)
-    except LookupError:
-        raise HTTPException(status_code=400, detail="Selected sender group no longer exists")
-    if not connected_senders(group):
-        raise HTTPException(status_code=409, detail="Selected sender group has no connected senders")
+    require_connected_delivery_group(session, campaign, user_id)
+    retried_failed = reopen_failed_recipients(session, campaign_id, user_id)
     approved_recipients = session.scalar(
         select(func.count())
         .select_from(CampaignRecipient)
@@ -423,7 +471,11 @@ def post_autopilot_start(
     else:
         campaign.scheduled_at = next_autopilot_run(session, campaign, now=utcnow())
     session.commit()
-    return {"status": "autopilot", "scheduled_at": campaign.scheduled_at.isoformat()}
+    return {
+        "status": "autopilot",
+        "scheduled_at": campaign.scheduled_at.isoformat(),
+        "retried_failed": retried_failed,
+    }
 
 
 @router.post("/api/campaigns/{campaign_id}/pause")
