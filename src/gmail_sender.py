@@ -6,6 +6,7 @@ import os
 import re
 import secrets
 import shutil
+from collections.abc import Sequence
 from dataclasses import dataclass
 from email.message import EmailMessage
 from pathlib import Path
@@ -223,6 +224,7 @@ def build_message(
     body: str,
     attachment_path: str | Path | None = None,
     attachment: EmailAttachment | None = None,
+    attachments: Sequence[EmailAttachment] | None = None,
 ) -> dict[str, str]:
     message = EmailMessage()
     message["To"] = recipient
@@ -234,16 +236,19 @@ def build_message(
         message.set_content(body, subtype="html")
     else:
         message.set_content(body)
+    stored_attachments = list(attachments or ())
     if attachment:
-        mime_type = attachment.content_type or mimetypes.guess_type(attachment.filename)[0]
+        stored_attachments.append(attachment)
+    for stored_attachment in stored_attachments:
+        mime_type = stored_attachment.content_type or mimetypes.guess_type(stored_attachment.filename)[0]
         maintype, subtype = (mime_type or "application/octet-stream").split("/", 1)
         message.add_attachment(
-            attachment.content,
+            stored_attachment.content,
             maintype=maintype,
             subtype=subtype,
-            filename=attachment.filename,
+            filename=stored_attachment.filename,
         )
-    elif attachment_path:
+    if not stored_attachments and attachment_path:
         path = db.resolve_project_path(attachment_path)
         if not path.exists():
             raise FileNotFoundError(f"Attachment not found: {path}")
@@ -269,10 +274,19 @@ def send_email(
     token_path: str | Path | None = None,
     service=None,
     attachment: EmailAttachment | None = None,
+    attachments: Sequence[EmailAttachment] | None = None,
 ) -> GmailSendResult:
     if service is None:
         service = get_gmail_service(token_path=token_path)
-    message = build_message(sender, recipient, subject, body, attachment_path, attachment)
+    message = build_message(
+        sender,
+        recipient,
+        subject,
+        body,
+        attachment_path=attachment_path,
+        attachment=attachment,
+        attachments=attachments,
+    )
     sent = service.users().messages().send(userId="me", body=message).execute()
     return GmailSendResult(
         message_id=sent["id"],
@@ -289,6 +303,7 @@ def fake_send_email(
     token_path: str | Path | None = None,
     service=None,
     attachment: EmailAttachment | None = None,
+    attachments: Sequence[EmailAttachment] | None = None,
 ) -> GmailSendResult:
     return GmailSendResult(
         message_id=f"fake_{secrets.token_hex(8)}",

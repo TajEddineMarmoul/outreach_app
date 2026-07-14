@@ -32,7 +32,7 @@ from src.platform.time import utcnow
 
 
 TEMPLATE_ENV = Environment(autoescape=False)
-ATTACHMENT_CACHE_LIMIT = 4
+ATTACHMENT_CACHE_LIMIT = 32
 _attachment_cache: OrderedDict[tuple[int, str], EmailAttachment] = OrderedDict()
 _attachment_cache_lock = Lock()
 
@@ -46,33 +46,34 @@ def _render(template: str, context: dict) -> str:
     return TEMPLATE_ENV.from_string(template or "").render(**context)
 
 
-def _campaign_email_attachment(session: Session, campaign: Campaign) -> EmailAttachment | None:
-    metadata = dict(campaign.attachment_metadata or {})
-    checksum = str(metadata.get("sha256") or "")
-    if not metadata.get("filename") or not checksum:
-        return None
+def _campaign_email_attachments(session: Session, campaign: Campaign) -> tuple[EmailAttachment, ...]:
+    stored_attachments = session.scalars(
+        select(CampaignAttachment)
+        .where(CampaignAttachment.campaign_id == campaign.id)
+        .order_by(CampaignAttachment.id)
+    ).all()
+    attachments: list[EmailAttachment] = []
+    for stored in stored_attachments:
+        cache_key = (stored.id, stored.sha256)
+        with _attachment_cache_lock:
+            cached = _attachment_cache.get(cache_key)
+            if cached:
+                _attachment_cache.move_to_end(cache_key)
+                attachments.append(cached)
+                continue
 
-    cache_key = (campaign.id, checksum)
-    with _attachment_cache_lock:
-        cached = _attachment_cache.get(cache_key)
-        if cached:
+        attachment = EmailAttachment(
+            filename=stored.filename,
+            content_type=stored.content_type,
+            content=stored.content,
+        )
+        attachments.append(attachment)
+        with _attachment_cache_lock:
+            _attachment_cache[cache_key] = attachment
             _attachment_cache.move_to_end(cache_key)
-            return cached
-
-    stored = session.get(CampaignAttachment, campaign.id)
-    if not stored or stored.sha256 != checksum:
-        raise RuntimeError("Campaign attachment metadata does not match stored content")
-    attachment = EmailAttachment(
-        filename=stored.filename,
-        content_type=stored.content_type,
-        content=stored.content,
-    )
-    with _attachment_cache_lock:
-        _attachment_cache[cache_key] = attachment
-        _attachment_cache.move_to_end(cache_key)
-        while len(_attachment_cache) > ATTACHMENT_CACHE_LIMIT:
-            _attachment_cache.popitem(last=False)
-    return attachment
+            while len(_attachment_cache) > ATTACHMENT_CACHE_LIMIT:
+                _attachment_cache.popitem(last=False)
+    return tuple(attachments)
 
 
 def _has_unsent_approved_recipients(session: Session, campaign: Campaign) -> bool:
@@ -467,13 +468,13 @@ def perform_send_job(job_id: int, *, claimed: bool = False) -> dict:
 
         dry_run = (campaign.send_settings or {}).get("dry_run", False)
         send_fn = fake_send_email if dry_run else send_email
-        email_attachment = _campaign_email_attachment(session, campaign)
+        email_attachments = _campaign_email_attachments(session, campaign)
         result = send_fn(
             sender=sender.email,
             recipient=contact.email_normalized,
             subject=subject,
             body=body,
-            attachment=email_attachment,
+            attachments=email_attachments,
             service=None if dry_run else gmail_service_for_sender(session, sender),
         )
         now = utcnow()

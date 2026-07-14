@@ -49,7 +49,7 @@ import type { Editor } from "@tiptap/react";
 import ScheduleDialog from "@/components/campaigns/dialogs/ScheduleDialog";
 import SenderSelectionDialog from "@/components/campaigns/dialogs/SenderSelectionDialog";
 import PreviewDialog from "@/components/campaigns/dialogs/PreviewDialog";
-import AttachmentDialog from "@/components/campaigns/dialogs/AttachmentDialog";
+import AttachmentDialog, { type CampaignAttachmentSummary } from "@/components/campaigns/dialogs/AttachmentDialog";
 import LogsSection from "@/components/campaigns/LogsSection";
 import ProgressSection from "@/components/campaigns/ProgressSection";
 import RecipientsSection from "@/components/campaigns/RecipientsSection";
@@ -110,6 +110,9 @@ export default function CampaignEditorPage() {
     .map((sender: { email: string }) => sender.email)
     ?? summary?.sender_emails
     ?? [];
+  const campaignAttachments: CampaignAttachmentSummary[] = Array.isArray(summary?.attachments)
+    ? summary.attachments
+    : [];
 
   // ----------------------------------------------------
   // UI & Form States
@@ -167,6 +170,7 @@ export default function CampaignEditorPage() {
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
   const [attachmentModalOpen, setAttachmentModalOpen] = useState(false);
+  const [deletingAttachmentId, setDeletingAttachmentId] = useState<number | null>(null);
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
   
   // ----------------------------------------------------
@@ -241,6 +245,23 @@ export default function CampaignEditorPage() {
       alert("Failed to load preview: " + err.message);
     } finally {
       setIsPreviewLoading(false);
+    }
+  };
+
+  const handleRemoveAttachment = async (attachmentId: number) => {
+    setDeletingAttachmentId(attachmentId);
+    try {
+      const response = await authFetch(
+        `${API_URL}/api/campaigns/${campaignId}/attachments/${attachmentId}`,
+        { method: "DELETE" }
+      );
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.detail || "Failed to remove attachment");
+      await mutateSummary();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Failed to remove attachment");
+    } finally {
+      setDeletingAttachmentId(null);
     }
   };
 
@@ -580,10 +601,12 @@ export default function CampaignEditorPage() {
                       className="p-1.5 hover:bg-slate-200/60 rounded text-slate-500 hover:text-slate-800 transition-colors flex items-center gap-1"
                       onClick={() => setAttachmentModalOpen(true)}
                       disabled={editingLocked}
-                      title="Add attachment"
+                      title="Add attachments"
                     >
                       <Paperclip className="w-4 h-4" />
-                      <span className="text-xs font-semibold">{summary?.attachment && summary.attachment !== "none" ? "Replace" : "Attach"}</span>
+                      <span className="text-xs font-semibold">
+                        Attach{campaignAttachments.length > 0 ? ` (${campaignAttachments.length})` : ""}
+                      </span>
                     </button>
                     <button
                       type="button"
@@ -620,6 +643,40 @@ export default function CampaignEditorPage() {
                   </Popover>
                 </div>
 
+                {campaignAttachments.length > 0 && (
+                  <div className="border-b border-slate-100 max-h-32 overflow-y-auto">
+                    {campaignAttachments.map((attachment) => (
+                      <div
+                        key={attachment.id}
+                        className="flex items-center gap-3 px-4 py-2 border-b border-slate-100 last:border-b-0 bg-white"
+                      >
+                        <Paperclip className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                        <span className="text-xs font-semibold text-slate-700 truncate flex-1">
+                          {attachment.filename}
+                        </span>
+                        <span className="text-[11px] text-slate-400 shrink-0">
+                          {attachment.size_bytes < 1024 * 1024
+                            ? `${Math.max(1, Math.round(attachment.size_bytes / 1024))} KB`
+                            : `${(attachment.size_bytes / 1024 / 1024).toFixed(2)} MB`}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveAttachment(attachment.id)}
+                          disabled={editingLocked || deletingAttachmentId === attachment.id}
+                          className="text-slate-400 hover:text-red-600 disabled:opacity-50 transition-colors p-1"
+                          title={`Remove ${attachment.filename}`}
+                        >
+                          {deletingAttachmentId === attachment.id ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Trash2 className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 <RichTextEditor
                   content={body}
                   onChange={setBody}
@@ -638,25 +695,6 @@ export default function CampaignEditorPage() {
                   </div>
                 )}
 
-                {summary?.attachment && summary.attachment !== "none" && (
-                  <div className="mx-4 mb-4 p-2 bg-slate-50 border border-slate-100 rounded-lg flex items-center justify-between max-w-xs shadow-sm">
-                    <div className="flex items-center gap-2 text-xs font-semibold text-slate-600 truncate">
-                      <Paperclip className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-                      <span className="truncate">{summary.attachment}</span>
-                    </div>
-                    <button
-                      onClick={async () => {
-                        await authFetch(`${API_URL}/api/campaigns/${campaignId}/attachment`, { method: "DELETE" });
-                        mutateSummary();
-                      }}
-                      disabled={editingLocked}
-                      className="text-slate-400 hover:text-red-600 transition-colors p-1"
-                      title="Remove attachment"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                )}
               </div>
             </div>
           </TabsContent>
@@ -731,7 +769,9 @@ export default function CampaignEditorPage() {
         onClose={() => setAttachmentModalOpen(false)}
         campaignId={campaignId as string}
         mutateSummary={mutateSummary}
-        currentAttachment={summary?.attachment_details || null}
+        attachments={campaignAttachments}
+        deletingAttachmentId={deletingAttachmentId}
+        onRemoveAttachment={handleRemoveAttachment}
       />
 
       {/* F. Template Modal */}

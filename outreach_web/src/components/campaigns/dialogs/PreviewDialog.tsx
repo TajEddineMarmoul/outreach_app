@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { ChevronLeft, ChevronRight, Loader2, Paperclip, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useApiClient } from "@/lib/api";
+import type { CampaignAttachmentSummary } from "@/components/campaigns/dialogs/AttachmentDialog";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
@@ -15,6 +16,7 @@ interface PreviewEntry {
   subject: string;
   body: string;
   attachment_name: string;
+  attachments: CampaignAttachmentSummary[];
 }
 
 interface PreviewResponse {
@@ -170,10 +172,14 @@ export default function PreviewDialog({
                 "(empty body)"
               )}
             </div>
-            {currentPreview.attachment_name && currentPreview.attachment_name !== "none" && (
-              <div className="px-4 py-3 bg-slate-50 flex items-center gap-2 text-xs font-semibold text-slate-600">
-                <Paperclip className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-                <span>{currentPreview.attachment_name}</span>
+            {currentPreview.attachments?.length > 0 && (
+              <div className="px-4 py-3 bg-slate-50 space-y-2">
+                {currentPreview.attachments.map((attachment) => (
+                  <div key={attachment.id} className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+                    <Paperclip className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                    <span className="truncate">{attachment.filename}</span>
+                  </div>
+                ))}
               </div>
             )}
             </div>

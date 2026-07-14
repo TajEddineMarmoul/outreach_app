@@ -1968,13 +1968,11 @@ def test_send_now_http_runs_two_sender_batches_through_fake_gmail(tmp_path, monk
         session = session_factory()
         campaign = session.get(Campaign, campaign_id)
         campaign.attachment_metadata = {
-            "filename": "resume.pdf",
-            "content_type": "application/pdf",
-            "size_bytes": 18,
-            "sha256": "test-sha",
             "storage": "database",
+            "count": 2,
         }
-        session.add(
+        session.add_all(
+            [
             CampaignAttachment(
                 campaign_id=campaign_id,
                 filename="resume.pdf",
@@ -1982,7 +1980,16 @@ def test_send_now_http_runs_two_sender_batches_through_fake_gmail(tmp_path, monk
                 size_bytes=18,
                 sha256="test-sha",
                 content=b"%PDF stored resume",
-            )
+            ),
+            CampaignAttachment(
+                campaign_id=campaign_id,
+                filename="portfolio.pdf",
+                content_type="application/pdf",
+                size_bytes=21,
+                sha256="portfolio-sha",
+                content=b"%PDF stored portfolio",
+            ),
+            ]
         )
         session.commit()
         session.close()
@@ -1999,7 +2006,10 @@ def test_send_now_http_runs_two_sender_batches_through_fake_gmail(tmp_path, monk
             "sender1@example.com",
             "sender2@example.com",
         ]
-        assert all(request["attachment"].filename == "resume.pdf" for request in sent_requests)
+        assert all(
+            [attachment.filename for attachment in request["attachments"]] == ["resume.pdf", "portfolio.pdf"]
+            for request in sent_requests
+        )
 
         progress = TestClient(app).get(
             f"/api/campaigns/{campaign_id}/send-progress",

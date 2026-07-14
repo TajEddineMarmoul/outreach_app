@@ -95,10 +95,12 @@ class Campaign(Base, TimestampMixin):
 
 class CampaignAttachment(Base, TimestampMixin):
     __tablename__ = "campaign_attachments"
+    __table_args__ = (Index("ix_campaign_attachments_campaign", "campaign_id"),)
 
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     campaign_id: Mapped[int] = mapped_column(
         ForeignKey("campaigns.id", ondelete="CASCADE"),
-        primary_key=True,
+        nullable=False,
     )
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
     content_type: Mapped[str] = mapped_column(String(150), nullable=False)

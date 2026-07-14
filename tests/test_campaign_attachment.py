@@ -4,7 +4,7 @@ import asyncio
 from io import BytesIO
 
 from fastapi import UploadFile
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from starlette.datastructures import Headers
 
@@ -28,32 +28,90 @@ def make_session(tmp_path):
     return session, campaign.id
 
 
-def test_upload_persists_attachment_and_metadata(tmp_path, monkeypatch):
+def test_upload_persists_multiple_attachments_and_metadata(tmp_path, monkeypatch):
     session, campaign_id = make_session(tmp_path)
     monkeypatch.setattr(campaigns, "require_editable_campaign", lambda *_args: {"id": campaign_id})
-    upload = UploadFile(
-        filename="resume.pdf",
-        file=BytesIO(b"%PDF-1.4 durable content"),
-        headers=Headers({"content-type": "application/pdf"}),
-    )
+    uploads = [
+        UploadFile(
+            filename="resume.pdf",
+            file=BytesIO(b"%PDF-1.4 durable content"),
+            headers=Headers({"content-type": "application/pdf"}),
+        ),
+        UploadFile(
+            filename="portfolio.pdf",
+            file=BytesIO(b"%PDF-1.4 portfolio content"),
+            headers=Headers({"content-type": "application/pdf"}),
+        ),
+    ]
 
     result = asyncio.run(
-        campaigns.post_attachment(
+        campaigns.post_attachments(
             campaign_id=campaign_id,
-            file=upload,
+            files=uploads,
             conn=object(),
             platform_session=session,
             user_id=USER_ID,
         )
     )
 
-    stored = session.get(CampaignAttachment, campaign_id)
+    stored = session.scalars(
+        select(CampaignAttachment)
+        .where(CampaignAttachment.campaign_id == campaign_id)
+        .order_by(CampaignAttachment.id)
+    ).all()
     campaign = session.get(Campaign, campaign_id)
-    assert result["filename"] == "resume.pdf"
-    assert result["storage"] == "database"
-    assert stored.content == b"%PDF-1.4 durable content"
-    assert campaign.attachment_metadata["filename"] == "resume.pdf"
+    assert [item["filename"] for item in result["attachments"]] == ["resume.pdf", "portfolio.pdf"]
+    assert [item.content for item in stored] == [
+        b"%PDF-1.4 durable content",
+        b"%PDF-1.4 portfolio content",
+    ]
+    assert campaign.attachment_metadata["count"] == 2
+    assert [item["filename"] for item in campaign.attachment_metadata["attachments"]] == [
+        "resume.pdf",
+        "portfolio.pdf",
+    ]
     assert campaign.attachment_path == ""
+    session.close()
+
+
+def test_delete_removes_only_selected_attachment(tmp_path, monkeypatch):
+    session, campaign_id = make_session(tmp_path)
+    monkeypatch.setattr(campaigns, "require_editable_campaign", lambda *_args: {"id": campaign_id})
+    first = CampaignAttachment(
+        campaign_id=campaign_id,
+        filename="first.pdf",
+        content_type="application/pdf",
+        size_bytes=5,
+        sha256="first",
+        content=b"first",
+    )
+    second = CampaignAttachment(
+        campaign_id=campaign_id,
+        filename="second.pdf",
+        content_type="application/pdf",
+        size_bytes=6,
+        sha256="second",
+        content=b"second",
+    )
+    session.add_all([first, second])
+    session.commit()
+
+    result = campaigns.delete_attachment(
+        campaign_id=campaign_id,
+        attachment_id=first.id,
+        conn=object(),
+        platform_session=session,
+        user_id=USER_ID,
+    )
+
+    remaining = session.scalars(
+        select(CampaignAttachment).where(CampaignAttachment.campaign_id == campaign_id)
+    ).all()
+    campaign = session.get(Campaign, campaign_id)
+    assert result == {"status": "success"}
+    assert [attachment.filename for attachment in remaining] == ["second.pdf"]
+    assert campaign.attachment_metadata["count"] == 1
+    assert campaign.attachment_metadata["attachments"][0]["filename"] == "second.pdf"
     session.close()
 
 
@@ -113,11 +171,13 @@ def test_preview_renders_only_requested_recipient(tmp_path, monkeypatch):
         offset=500,
         limit=1,
         conn=conn,
+        platform_session=session,
         user_id=USER_ID,
     )
 
     assert result["total"] == 1000
     assert len(result["items"]) == 1
     assert result["items"][0]["subject"] == "Hello Sandy"
+    assert result["items"][0]["attachments"] == []
     assert conn.query_count == 1
     session.close()

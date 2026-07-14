@@ -93,3 +93,31 @@ def test_build_message_with_stored_attachment():
     assert pdf_parts[0].get_filename() == "resume.pdf"
     assert pdf_parts[0].get_payload(decode=True) == b"%PDF-1.4 stored content"
 
+
+def test_build_message_with_multiple_stored_attachments():
+    raw_msg = build_message(
+        sender="test@example.com",
+        recipient="user@example.com",
+        subject="Multiple attachments",
+        body="Check the attachments",
+        attachments=[
+            EmailAttachment(
+                filename="resume.pdf",
+                content_type="application/pdf",
+                content=b"resume",
+            ),
+            EmailAttachment(
+                filename="portfolio.txt",
+                content_type="text/plain",
+                content=b"portfolio",
+            ),
+        ],
+    )
+
+    msg_bytes = base64.urlsafe_b64decode(raw_msg["raw"].encode("ascii"))
+    msg = email.message_from_bytes(msg_bytes)
+    attachment_parts = [part for part in msg.walk() if part.get_filename()]
+
+    assert [part.get_filename() for part in attachment_parts] == ["resume.pdf", "portfolio.txt"]
+    assert [part.get_payload(decode=True) for part in attachment_parts] == [b"resume", b"portfolio"]
+

@@ -16,6 +16,7 @@ from io import StringIO
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from api.deps import PROJECT_ROOT, db, config_path, get_db, get_current_user_id
@@ -44,7 +45,33 @@ router = APIRouter()
 
 EDIT_LOCKED_STATUSES = {"sending", "scheduled", "autopilot", "paused"}
 MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+MAX_CAMPAIGN_ATTACHMENT_BYTES = 20 * 1024 * 1024
 ALLOWED_ATTACHMENT_SUFFIXES = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".txt", ".doc", ".docx"}
+
+
+def serialize_attachment(attachment: CampaignAttachment) -> dict:
+    return {
+        "id": attachment.id,
+        "filename": attachment.filename,
+        "content_type": attachment.content_type,
+        "size_bytes": attachment.size_bytes,
+        "sha256": attachment.sha256,
+    }
+
+
+def sync_attachment_metadata(session: Session, campaign: PlatformCampaign) -> list[CampaignAttachment]:
+    attachments = session.scalars(
+        select(CampaignAttachment)
+        .where(CampaignAttachment.campaign_id == campaign.id)
+        .order_by(CampaignAttachment.id)
+    ).all()
+    campaign.attachment_path = ""
+    campaign.attachment_metadata = {
+        "storage": "database",
+        "count": len(attachments),
+        "attachments": [serialize_attachment(attachment) for attachment in attachments],
+    }
+    return list(attachments)
 
 
 def require_editable_campaign(conn, campaign_id: int, user_id: str):
@@ -172,12 +199,10 @@ def get_campaign_summary(campaign_id: int, conn=Depends(get_db), user_id: str = 
     sender_group_capacity = None
     sender_emails: list[str] = []
     send_settings: dict = {}
-    attachment_details: dict = {}
+    attachments: list[dict] = []
     autopilot_schedule: list[dict] = []
     user_timezone = "UTC"
     try:
-        from sqlalchemy import select
-        from sqlalchemy.exc import SQLAlchemyError
         from src.platform.db import SessionLocal
         from src.platform.models import AutopilotDaySchedule, Campaign as PlatformCampaign
         from src.platform.services import require_group, serialize_group, user_zone
@@ -190,7 +215,14 @@ def get_campaign_summary(campaign_id: int, conn=Depends(get_db), user_id: str = 
             )
             if platform_campaign:
                 send_settings = dict(platform_campaign.send_settings or {})
-                attachment_details = dict(platform_campaign.attachment_metadata or {})
+                attachments = [
+                    serialize_attachment(attachment)
+                    for attachment in platform_session.scalars(
+                        select(CampaignAttachment)
+                        .where(CampaignAttachment.campaign_id == platform_campaign.id)
+                        .order_by(CampaignAttachment.id)
+                    )
+                ]
                 autopilot_schedule = [
                     {
                         "day": item.day_of_week,
@@ -223,7 +255,9 @@ def get_campaign_summary(campaign_id: int, conn=Depends(get_db), user_id: str = 
     status = str(campaign["status"])
     recipient_count = db.campaign_contact_count(conn, campaign_id)
     
-    att_label = str(attachment_details.get("filename") or "")
+    att_label = attachments[0]["filename"] if len(attachments) == 1 else ""
+    if len(attachments) > 1:
+        att_label = f"{len(attachments)} attachments"
     if not att_label:
         att_path = str(campaign["attachment_path"] or "")
         att_resolved = db.resolve_project_path(att_path) if att_path else None
@@ -256,7 +290,8 @@ def get_campaign_summary(campaign_id: int, conn=Depends(get_db), user_id: str = 
         "recipients": recipient_count,
         "mode": status,
         "attachment": att_label,
-        "attachment_details": attachment_details,
+        "attachment_details": attachments[0] if len(attachments) == 1 else {},
+        "attachments": attachments,
         "daily_cap": config.sending.daily_cap,
         "schedule": schedule_label,
         "require_attachment": require_attachment,
@@ -285,68 +320,77 @@ def patch_composer(campaign_id: int, req: ComposerUpdate, conn=Depends(get_db), 
     
     return {"status": "success"}
 
-@router.post("/api/campaigns/{campaign_id}/attachment")
-async def post_attachment(
+@router.post("/api/campaigns/{campaign_id}/attachments")
+async def post_attachments(
     campaign_id: int,
-    file: UploadFile = File(...),
+    files: list[UploadFile] = File(...),
     conn=Depends(get_db),
     platform_session: Session = Depends(get_session),
     user_id: str = Depends(get_current_user_id),
 ):
     require_editable_campaign(conn, campaign_id, user_id)
 
-    filename = (file.filename or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
-    suffix = Path(filename).suffix.lower()
-    if not filename or suffix not in ALLOWED_ATTACHMENT_SUFFIXES:
-        raise HTTPException(status_code=422, detail="Unsupported attachment type")
-    if len(filename) > 255:
-        raise HTTPException(status_code=422, detail="Attachment filename is too long")
-
-    content = await file.read(MAX_ATTACHMENT_BYTES + 1)
-    if not content:
-        raise HTTPException(status_code=422, detail="The attachment is empty")
-    if len(content) > MAX_ATTACHMENT_BYTES:
-        raise HTTPException(status_code=413, detail="Attachments must be 10 MB or smaller")
-
-    content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
-    metadata = {
-        "filename": filename,
-        "content_type": content_type,
-        "size_bytes": len(content),
-        "sha256": hashlib.sha256(content).hexdigest(),
-        "storage": "database",
-    }
-
     platform_campaign = platform_session.get(PlatformCampaign, campaign_id)
     if not platform_campaign or platform_campaign.user_id != user_id:
         raise HTTPException(status_code=404, detail="Campaign not found")
-    stored = platform_session.get(CampaignAttachment, campaign_id)
-    if stored:
-        stored.filename = filename
-        stored.content_type = content_type
-        stored.size_bytes = len(content)
-        stored.sha256 = metadata["sha256"]
-        stored.content = content
-    else:
+
+    existing_size = int(
+        platform_session.scalar(
+            select(func.coalesce(func.sum(CampaignAttachment.size_bytes), 0)).where(
+                CampaignAttachment.campaign_id == campaign_id
+            )
+        )
+        or 0
+    )
+    pending: list[dict] = []
+    pending_size = 0
+    for file in files:
+        filename = (file.filename or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
+        suffix = Path(filename).suffix.lower()
+        if not filename or suffix not in ALLOWED_ATTACHMENT_SUFFIXES:
+            raise HTTPException(status_code=422, detail=f"Unsupported attachment type: {filename or 'unnamed file'}")
+        if len(filename) > 255:
+            raise HTTPException(status_code=422, detail=f"Attachment filename is too long: {filename}")
+
+        content = await file.read(MAX_ATTACHMENT_BYTES + 1)
+        if not content:
+            raise HTTPException(status_code=422, detail=f"Attachment is empty: {filename}")
+        if len(content) > MAX_ATTACHMENT_BYTES:
+            raise HTTPException(status_code=413, detail=f"Attachment must be 10 MB or smaller: {filename}")
+        pending_size += len(content)
+        if existing_size + pending_size > MAX_CAMPAIGN_ATTACHMENT_BYTES:
+            raise HTTPException(status_code=413, detail="Campaign attachments must total 20 MB or less")
+
+        pending.append(
+            {
+                "filename": filename,
+                "content_type": mimetypes.guess_type(filename)[0] or "application/octet-stream",
+                "size_bytes": len(content),
+                "sha256": hashlib.sha256(content).hexdigest(),
+                "content": content,
+            }
+        )
+
+    for item in pending:
         platform_session.add(
             CampaignAttachment(
                 campaign_id=campaign_id,
-                filename=filename,
-                content_type=content_type,
-                size_bytes=len(content),
-                sha256=metadata["sha256"],
-                content=content,
+                **item,
             )
         )
-    platform_campaign.attachment_path = ""
-    platform_campaign.attachment_metadata = metadata
+    platform_session.flush()
+    attachments = sync_attachment_metadata(platform_session, platform_campaign)
     platform_session.commit()
 
-    return metadata
+    return {
+        "attachments": [serialize_attachment(attachment) for attachment in attachments],
+        "total_size_bytes": existing_size + pending_size,
+    }
 
-@router.delete("/api/campaigns/{campaign_id}/attachment")
+@router.delete("/api/campaigns/{campaign_id}/attachments/{attachment_id}")
 def delete_attachment(
     campaign_id: int,
+    attachment_id: int,
     conn=Depends(get_db),
     platform_session: Session = Depends(get_session),
     user_id: str = Depends(get_current_user_id),
@@ -356,11 +400,17 @@ def delete_attachment(
     platform_campaign = platform_session.get(PlatformCampaign, campaign_id)
     if not platform_campaign or platform_campaign.user_id != user_id:
         raise HTTPException(status_code=404, detail="Campaign not found")
-    stored = platform_session.get(CampaignAttachment, campaign_id)
-    if stored:
-        platform_session.delete(stored)
-    platform_campaign.attachment_path = ""
-    platform_campaign.attachment_metadata = {}
+    stored = platform_session.scalar(
+        select(CampaignAttachment).where(
+            CampaignAttachment.id == attachment_id,
+            CampaignAttachment.campaign_id == campaign_id,
+        )
+    )
+    if not stored:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    platform_session.delete(stored)
+    platform_session.flush()
+    sync_attachment_metadata(platform_session, platform_campaign)
     platform_session.commit()
     return {"status": "success"}
 
@@ -607,6 +657,7 @@ def get_campaign_preview(
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=1, ge=1, le=25),
     conn=Depends(get_db),
+    platform_session: Session = Depends(get_session),
     user_id: str = Depends(get_current_user_id),
 ):
     campaign = db.get_campaign(conn, campaign_id, user_id)
@@ -615,10 +666,13 @@ def get_campaign_preview(
 
     from src.template_engine import render_email
 
-    metadata = campaign.get("attachment_metadata") or {}
-    if isinstance(metadata, str):
-        metadata = json.loads(metadata)
-    att_name = str(metadata.get("filename") or "")
+    stored_attachments = platform_session.scalars(
+        select(CampaignAttachment)
+        .where(CampaignAttachment.campaign_id == campaign_id)
+        .order_by(CampaignAttachment.id)
+    ).all()
+    attachment_details = [serialize_attachment(attachment) for attachment in stored_attachments]
+    attachment_names = [attachment["filename"] for attachment in attachment_details]
 
     contacts = conn.execute(
         """
@@ -642,7 +696,8 @@ def get_campaign_preview(
             "subject": rendered.subject,
             "body": rendered.body,
             "generated_at": None,
-            "attachment_name": att_name
+            "attachment_name": ", ".join(attachment_names),
+            "attachments": attachment_details,
         })
     return {
         "items": res,
@@ -734,22 +789,25 @@ def post_test_send(campaign_id: int, req: TestSendRequest, conn=Depends(get_db),
                 if not platform_sender:
                     raise HTTPException(status_code=400, detail="No connected Gmail sender found")
                 rendered = generate_preview(conn, contact_id, user_id, campaign_id=campaign_id, mark=False)
-                stored_attachment = platform_session.get(CampaignAttachment, campaign_id)
-                email_attachment = (
+                stored_attachments = platform_session.scalars(
+                    select(CampaignAttachment)
+                    .where(CampaignAttachment.campaign_id == campaign_id)
+                    .order_by(CampaignAttachment.id)
+                ).all()
+                email_attachments = [
                     EmailAttachment(
                         filename=stored_attachment.filename,
                         content_type=stored_attachment.content_type,
                         content=stored_attachment.content,
                     )
-                    if stored_attachment
-                    else None
-                )
+                    for stored_attachment in stored_attachments
+                ]
                 result = gmail_send(
                     sender=platform_sender.email,
                     recipient=req.recipient_email,
                     subject=rendered.subject,
                     body=rendered.body,
-                    attachment=email_attachment,
+                    attachments=email_attachments,
                     service=gmail_service_for_sender(platform_session, platform_sender),
                 )
                 log = PlatformSendLog(
