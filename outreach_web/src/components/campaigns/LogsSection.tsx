@@ -14,6 +14,8 @@ interface LogEntry {
   subject: string;
   status: string;
   error_message: string | null;
+  attempt_number: number;
+  attempt_count: number;
   sent_at: string | null;
   created_at: string | null;
 }
@@ -111,15 +113,16 @@ export default function LogsSection({ campaignId }: { campaignId: string }) {
           </button>
         </div>
       </div>
-      <div className="max-h-[calc(100vh-280px)] overflow-y-auto border border-slate-200 rounded-xl">
+      <div className="max-h-[calc(100vh-280px)] overflow-y-auto border border-slate-200 rounded-lg">
         <table className="w-full text-xs">
           <thead className="bg-slate-50 sticky top-0">
             <tr className="text-left text-slate-500 font-semibold">
               <th className="px-4 py-2.5">Recipient</th>
               <th className="px-4 py-2.5">Sender</th>
               <th className="px-4 py-2.5">Subject</th>
-              <th className="px-4 py-2.5">Status</th>
-              <th className="px-4 py-2.5">Sent At</th>
+              <th className="px-4 py-2.5">Result</th>
+              <th className="px-4 py-2.5">Error</th>
+              <th className="px-4 py-2.5">Time</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -137,9 +140,21 @@ export default function LogsSection({ campaignId }: { campaignId: string }) {
                   }`}>
                     {log.status}
                   </span>
+                  {log.status === "failed" && log.attempt_count > 1 && (
+                    <div className="mt-1 text-[10px] text-slate-400">
+                      Attempt {log.attempt_number}/{log.attempt_count}
+                    </div>
+                  )}
+                </td>
+                <td className="px-4 py-2.5 text-red-600 max-w-[280px]">
+                  <span className="block truncate" title={log.error_message || undefined}>
+                    {log.error_message || "-"}
+                  </span>
                 </td>
                 <td className="px-4 py-2.5 text-slate-400">
-                  {log.sent_at ? new Date(log.sent_at).toLocaleString() : "-"}
+                  {log.sent_at || log.created_at
+                    ? new Date(log.sent_at || log.created_at || "").toLocaleString()
+                    : "-"}
                 </td>
               </tr>
             ))}

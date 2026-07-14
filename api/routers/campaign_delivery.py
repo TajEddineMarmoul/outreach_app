@@ -700,11 +700,24 @@ def get_campaign_send_logs(
         select(func.count()).select_from(SendLog)
         .where(SendLog.campaign_id == campaign_id, SendLog.user_id == user_id)
     ) or 0
+    attempt_partition = (SendLog.campaign_id, SendLog.recipient_id, SendLog.status)
+    ranked_logs = (
+        select(
+            SendLog.id.label("log_id"),
+            func.row_number().over(
+                partition_by=attempt_partition,
+                order_by=(SendLog.created_at, SendLog.id),
+            ).label("attempt_number"),
+            func.count().over(partition_by=attempt_partition).label("attempt_count"),
+        )
+        .where(SendLog.campaign_id == campaign_id, SendLog.user_id == user_id)
+        .subquery()
+    )
     logs = list(
-        session.scalars(
-            select(SendLog)
-            .where(SendLog.campaign_id == campaign_id, SendLog.user_id == user_id)
-            .order_by(SendLog.created_at.desc())
+        session.execute(
+            select(SendLog, ranked_logs.c.attempt_number, ranked_logs.c.attempt_count)
+            .join(ranked_logs, ranked_logs.c.log_id == SendLog.id)
+            .order_by(SendLog.created_at.desc(), SendLog.id.desc())
             .offset((page - 1) * page_size)
             .limit(page_size)
         )
@@ -718,10 +731,12 @@ def get_campaign_send_logs(
                 "subject": log.subject,
                 "status": log.status,
                 "error_message": log.error_message,
+                "attempt_number": attempt_number,
+                "attempt_count": attempt_count,
                 "sent_at": log.sent_at.isoformat() if log.sent_at else None,
                 "created_at": log.created_at.isoformat() if log.created_at else None,
             }
-            for log in logs
+            for log, attempt_number, attempt_count in logs
         ],
         "total": total,
         "page": page,

@@ -52,6 +52,7 @@ jobs:
             --project="$PROJECT_ID" \
             --region="$REGION" \
             --image="$BACKEND_IMAGE:${GITHUB_SHA}" \
+            --update-env-vars="APP_ENV=production,APP_ENCRYPTION_KEY=${{ secrets.APP_ENCRYPTION_KEY }}" \
             --quiet
           gcloud run services update-traffic "$BACKEND_SERVICE" \
             --project="$PROJECT_ID" \

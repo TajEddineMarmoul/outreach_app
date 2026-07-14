@@ -4,7 +4,7 @@ import base64
 import hashlib
 import os
 
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 
 
 def _fernet_key_from_env() -> bytes:
@@ -29,4 +29,9 @@ def encrypt_text(value: str) -> str:
 
 
 def decrypt_text(value: str) -> str:
-    return Fernet(_fernet_key_from_env()).decrypt(value.encode("utf-8")).decode("utf-8")
+    try:
+        return Fernet(_fernet_key_from_env()).decrypt(value.encode("utf-8")).decode("utf-8")
+    except InvalidToken as exc:
+        raise RuntimeError(
+            "Encrypted credentials cannot be decrypted because APP_ENCRYPTION_KEY does not match."
+        ) from exc

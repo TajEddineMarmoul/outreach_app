@@ -32,6 +32,11 @@ from src.platform.time import utcnow
 TEMPLATE_ENV = Environment(autoescape=False)
 
 
+def _exception_detail(exc: BaseException) -> str:
+    detail = str(exc).strip()
+    return detail or f"{type(exc).__name__}: {exc!r}"
+
+
 def _render(template: str, context: dict) -> str:
     return TEMPLATE_ENV.from_string(template or "").render(**context)
 
@@ -420,13 +425,19 @@ def perform_send_job(job_id: int, *, claimed: bool = False) -> dict:
         logger.info("perform_send_job success job_id=%s gmail_id=%s", job_id, result.message_id)
         return {"status": "sent", "job_id": job_id}
     except Exception as exc:
-        logger.error("perform_send_job failed job_id=%s error=%s", job_id, exc)
+        error_detail = _exception_detail(exc)
+        logger.exception(
+            "perform_send_job failed job_id=%s error_type=%s error=%s",
+            job_id,
+            type(exc).__name__,
+            error_detail,
+        )
         session.rollback()
         job = session.get(SendJob, job_id)
         if job:
             final_failure = job.attempts >= job.max_attempts
             job.status = "failed" if final_failure else "retry"
-            job.error_message = str(exc)
+            job.error_message = error_detail
             job.locked_at = None
             if not final_failure:
                 backoff = timedelta(minutes=min(2 ** max(job.attempts - 1, 0), 15))
@@ -435,10 +446,10 @@ def perform_send_job(job_id: int, *, claimed: bool = False) -> dict:
                 attempt_log = session.get(SendLog, attempt_log_id)
                 if attempt_log:
                     attempt_log.status = "failed"
-                    attempt_log.error_message = str(exc)
+                    attempt_log.error_message = error_detail
             sender = session.get(Sender, job.sender_id)
             if sender:
-                sender.last_error = str(exc)
+                sender.last_error = error_detail
                 sender.recent_error_at = utcnow()
             if final_failure:
                 recipient = session.get(

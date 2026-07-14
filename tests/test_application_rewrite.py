@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from cryptography.fernet import Fernet
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from fastapi.testclient import TestClient
@@ -19,7 +20,7 @@ from src.platform import services as platform_services
 from src.platform import worker as platform_worker
 from src.platform.jobs import WEEKDAY_NAMES, create_send_jobs_for_next_batch
 from src.platform.models import AutopilotDaySchedule, Base, Campaign, CampaignRecipient, Contact, OAuthState, Sender, SenderGroup, SendJob, SendLog, UserSettings
-from src.platform.security import decrypt_text
+from src.platform.security import decrypt_text, encrypt_text
 from src.platform.services import ensure_user
 from src.platform.time import utcnow
 from src.db.contact_repo import insert_contact
@@ -1085,6 +1086,49 @@ def test_timezone_sync_keeps_exhausted_autopilot_on_next_local_day(tmp_path, mon
         assert campaign.send_settings["pause_reason"] == "campaign_daily_cap_reached"
         assert list(session.scalars(select(SendJob).where(SendJob.campaign_id == campaign_id))) == []
         session.close()
+    finally:
+        clear_session_override()
+
+
+def test_send_logs_identify_retry_attempts(tmp_path):
+    session_factory = make_session_factory(tmp_path)
+    install_session_override(session_factory)
+    try:
+        campaign_id, sender_ids, contact_ids = _seed_delivery_campaign(
+            session_factory,
+            recipient_count=1,
+        )
+        session = session_factory()
+        started_at = datetime(2026, 7, 14, 7, 0, tzinfo=timezone.utc)
+        for index in range(3):
+            session.add(
+                SendLog(
+                    user_id=USER_ID,
+                    campaign_id=campaign_id,
+                    contact_id=contact_ids[0],
+                    recipient_id=contact_ids[0],
+                    sender_id=sender_ids[0],
+                    recipient_email="lead1@example.com",
+                    sender_email="sender1@example.com",
+                    subject="Subject",
+                    status="failed",
+                    error_message="Temporary Gmail error",
+                    created_at=started_at + timedelta(minutes=index * 15),
+                    updated_at=started_at + timedelta(minutes=index * 15),
+                )
+            )
+        session.commit()
+        session.close()
+
+        response = TestClient(app).get(
+            f"/api/campaigns/{campaign_id}/send-logs",
+            headers=HEADERS,
+        )
+        assert response.status_code == 200
+        items = response.json()["items"]
+        assert [item["attempt_number"] for item in items] == [3, 2, 1]
+        assert {item["attempt_count"] for item in items} == {3}
+        assert {item["error_message"] for item in items} == {"Temporary Gmail error"}
     finally:
         clear_session_override()
 
@@ -2163,3 +2207,19 @@ def test_database_url_uses_postgres_in_development(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "postgresql://user:pass@localhost/outreach")
     monkeypatch.setenv("APP_ENV", "development")
     assert platform_db.get_database_url() == "postgresql+psycopg2://user:pass@localhost/outreach"
+
+
+def test_credential_decryption_reports_key_mismatch(monkeypatch):
+    monkeypatch.setenv("APP_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
+    encrypted = encrypt_text("oauth-credentials")
+    monkeypatch.setenv("APP_ENCRYPTION_KEY", Fernet.generate_key().decode("ascii"))
+
+    try:
+        decrypt_text(encrypted)
+        assert False, "Expected a key mismatch"
+    except RuntimeError as exc:
+        assert "APP_ENCRYPTION_KEY does not match" in str(exc)
+
+
+def test_empty_delivery_exception_gets_actionable_detail():
+    assert platform_jobs._exception_detail(RuntimeError()) == "RuntimeError: RuntimeError()"
