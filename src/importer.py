@@ -144,10 +144,10 @@ def import_dataframe(
             status = ContactStatus.DO_NOT_CONTACT.value
             result.do_not_contact += 1
 
-        # Capture the entire row as dynamic variables (normalized keys)
+        # Preserve headers exactly so similarly named CSV columns stay distinct.
         row_dict = {}
         for col in frame.columns:
-            cleaned_key = str(col).strip().replace(" ", "_").replace("-", "_")
+            cleaned_key = str(col).strip()
             row_dict[cleaned_key] = clean_cell(row.get(col))
         custom_fields_json = json.dumps(row_dict)
 

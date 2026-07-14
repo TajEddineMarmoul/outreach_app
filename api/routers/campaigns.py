@@ -37,6 +37,7 @@ from src.google_sheets import get_public_sheet_csv, get_published_csv, list_publ
 from src.importer import import_dataframe, normalize_email, detect_columns
 from src.safety import campaign_checklist
 from src.scheduler import send_test_email
+from src.template_engine import extract_template_variables
 from src.analytics import send_log_dataframe
 from src.platform.db import get_session
 from src.platform.models import Campaign as PlatformCampaign, CampaignAttachment
@@ -609,24 +610,10 @@ def get_campaign_validation_summary(campaign_id: int, conn=Depends(get_db), user
             if val is None or str(val).strip() == "":
                 column_empty_counts[key] += 1
                 
-    from src.template_engine import sanitize_template_variables
-    from jinja2 import Environment, meta
-    
-    ENV = Environment()
     used_vars = set()
     for template_str in [campaign["subject_template"], campaign["body_template"]]:
         if template_str:
-            try:
-                sanitized = sanitize_template_variables(str(template_str))
-                parsed = ENV.parse(sanitized)
-                used_vars.update(meta.find_undeclared_variables(parsed))
-            except Exception:
-                pass
-                
-    if "keyword_sentence" in used_vars:
-        used_vars.add("keyword_1")
-        used_vars.add("keyword_2")
-        used_vars.add("keyword_3")
+            used_vars.update(extract_template_variables(str(template_str)))
         
     used_warnings = []
     other_warnings = []

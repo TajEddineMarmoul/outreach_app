@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from cryptography.fernet import Fernet
+from fastapi import HTTPException
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
 from fastapi.testclient import TestClient
@@ -168,6 +169,38 @@ def test_campaign_selects_sender_group_not_sender(tmp_path):
         session.close()
     finally:
         clear_session_override()
+
+
+def test_delivery_validation_uses_exact_csv_header_names(tmp_path):
+    session_factory = make_session_factory(tmp_path)
+    session = session_factory()
+    ensure_user(session, USER_ID)
+    campaign = Campaign(
+        user_id=USER_ID,
+        name="Exact headers",
+        subject_template="{{ First Name }} / {{ First_Name }}",
+        body_template="Body",
+    )
+    contact = Contact(
+        user_id=USER_ID,
+        email_normalized="lead@example.com",
+        status="approved",
+        custom_fields={"First Name": "Sandy", "First_Name": "Sandra"},
+    )
+    session.add_all([campaign, contact])
+    session.flush()
+    session.add(CampaignRecipient(campaign_id=campaign.id, contact_id=contact.id))
+    session.commit()
+
+    campaign_delivery.require_known_template_variables(session, campaign)
+    campaign.subject_template = "{{ First-Name }}"
+
+    with pytest.raises(HTTPException) as exc_info:
+        campaign_delivery.require_known_template_variables(session, campaign)
+
+    assert getattr(exc_info.value, "status_code", None) == 409
+    assert "First-Name" in str(getattr(exc_info.value, "detail", ""))
+    session.close()
 
 
 def test_group_oauth_connect_delete_and_reconnect_stays_in_database(tmp_path, monkeypatch):
@@ -1032,7 +1065,7 @@ def test_perform_send_job_sends_and_persists_delivery_state(tmp_path, monkeypatc
         user_id=USER_ID,
         selected_sender_group_id=group.id,
         name="Delivery test",
-        subject_template="Hello {{ first_name }}",
+        subject_template="Hello {{ First Name }} / {{ First_Name }}",
         body_template="Message for {{ email }}",
         fallback_body_template="Fallback",
         status="sending",
@@ -1041,7 +1074,7 @@ def test_perform_send_job_sends_and_persists_delivery_state(tmp_path, monkeypatc
         user_id=USER_ID,
         email_normalized="lead@example.com",
         status="approved",
-        custom_fields={"first_name": "Ada"},
+        custom_fields={"First Name": "Ada", "First_Name": "Grace"},
     )
     session.add_all([sender, campaign, contact])
     session.flush()
@@ -1063,11 +1096,13 @@ def test_perform_send_job_sends_and_persists_delivery_state(tmp_path, monkeypatc
 
     monkeypatch.setattr(platform_jobs, "SessionLocal", session_factory)
     monkeypatch.setattr(platform_jobs, "gmail_service_for_sender", lambda _session, _sender: object())
-    monkeypatch.setattr(
-        platform_jobs,
-        "send_email",
-        lambda **_kwargs: SimpleNamespace(message_id="gmail-message", thread_id="gmail-thread"),
-    )
+    sent_payload: dict = {}
+
+    def fake_send(**kwargs):
+        sent_payload.update(kwargs)
+        return SimpleNamespace(message_id="gmail-message", thread_id="gmail-thread")
+
+    monkeypatch.setattr(platform_jobs, "send_email", fake_send)
 
     assert platform_jobs.perform_send_job(job_id)["status"] == "sent"
 
@@ -1080,6 +1115,7 @@ def test_perform_send_job_sends_and_persists_delivery_state(tmp_path, monkeypatc
     log = session.scalar(select(SendLog).where(SendLog.campaign_id == campaign.id))
     assert persisted_job.status == "sent"
     assert persisted_job.attempts == 1
+    assert sent_payload["subject"] == "Hello Ada / Grace"
     assert persisted_recipient.status == "sent"
     persisted_campaign = session.get(Campaign, campaign.id)
     assert persisted_campaign.status == "ended"
@@ -1088,6 +1124,144 @@ def test_perform_send_job_sends_and_persists_delivery_state(tmp_path, monkeypatc
     assert log.status == "sent"
     assert log.contact_id == contact.id
     assert log.gmail_message_id == "gmail-message"
+    session.close()
+
+
+def test_pre_send_failure_persists_attempts_and_stops_retrying(tmp_path, monkeypatch):
+    session_factory = make_session_factory(tmp_path)
+    session = session_factory()
+    ensure_user(session, USER_ID)
+    group = SenderGroup(user_id=USER_ID, name="Render failure")
+    sender = Sender(
+        user_id=USER_ID,
+        group=group,
+        email="sender@example.com",
+        status="connected",
+        daily_cap=10,
+        encrypted_oauth_credentials="encrypted",
+    )
+    campaign = Campaign(
+        user_id=USER_ID,
+        selected_sender_group=group,
+        name="Render failure",
+        subject_template="Subject",
+        body_template="Body",
+        status="sending",
+    )
+    contact = Contact(
+        user_id=USER_ID,
+        email_normalized="lead@example.com",
+        status="approved",
+        custom_fields={},
+    )
+    session.add_all([group, sender, campaign, contact])
+    session.flush()
+    recipient = CampaignRecipient(campaign_id=campaign.id, contact_id=contact.id, status="queued")
+    job = SendJob(
+        user_id=USER_ID,
+        campaign_id=campaign.id,
+        recipient_id=contact.id,
+        sender_id=sender.id,
+        status="queued",
+        max_attempts=2,
+        scheduled_for=utcnow(),
+        batch_id="render-failure",
+        idempotency_key=f"campaign:{campaign.id}:recipient:{contact.id}",
+    )
+    session.add_all([recipient, job])
+    session.commit()
+    job_id = job.id
+    campaign_id = campaign.id
+    contact_id = contact.id
+    session.close()
+
+    monkeypatch.setattr(platform_jobs, "SessionLocal", session_factory)
+    monkeypatch.setattr(platform_jobs, "_render", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("render failed")))
+
+    platform_jobs.perform_send_job(job_id)
+    session = session_factory()
+    retry_job = session.get(SendJob, job_id)
+    assert retry_job.status == "retry"
+    assert retry_job.attempts == 1
+    retry_job.scheduled_for = utcnow()
+    retry_sender = session.get(Sender, retry_job.sender_id)
+    retry_sender.last_error = None
+    retry_sender.recent_error_at = None
+    session.commit()
+    session.close()
+
+    platform_jobs.perform_send_job(job_id)
+    session = session_factory()
+    assert session.get(SendJob, job_id).status == "failed"
+    assert session.get(SendJob, job_id).attempts == 2
+    assert session.get(CampaignRecipient, {"campaign_id": campaign_id, "contact_id": contact_id}).status == "failed"
+    session.close()
+
+
+def test_missing_exact_template_header_stops_campaign_before_gmail(tmp_path, monkeypatch):
+    session_factory = make_session_factory(tmp_path)
+    session = session_factory()
+    ensure_user(session, USER_ID)
+    group = SenderGroup(user_id=USER_ID, name="Missing header")
+    sender = Sender(
+        user_id=USER_ID,
+        group=group,
+        email="sender@example.com",
+        status="connected",
+        daily_cap=10,
+        encrypted_oauth_credentials="encrypted",
+    )
+    campaign = Campaign(
+        user_id=USER_ID,
+        selected_sender_group=group,
+        name="Missing header",
+        subject_template="Hello {{ First Name }}",
+        body_template="Body",
+        status="sending",
+    )
+    contact = Contact(
+        user_id=USER_ID,
+        email_normalized="lead@example.com",
+        status="approved",
+        custom_fields={"First_Name": "Ada"},
+    )
+    session.add_all([group, sender, campaign, contact])
+    session.flush()
+    recipient = CampaignRecipient(campaign_id=campaign.id, contact_id=contact.id, status="queued")
+    job = SendJob(
+        user_id=USER_ID,
+        campaign_id=campaign.id,
+        recipient_id=contact.id,
+        sender_id=sender.id,
+        status="queued",
+        scheduled_for=utcnow(),
+        batch_id="missing-header",
+        idempotency_key=f"campaign:{campaign.id}:recipient:{contact.id}",
+    )
+    session.add_all([recipient, job])
+    session.commit()
+    job_id = job.id
+    campaign_id = campaign.id
+    contact_id = contact.id
+    sender_id = sender.id
+    session.close()
+
+    monkeypatch.setattr(platform_jobs, "SessionLocal", session_factory)
+
+    result = platform_jobs.perform_send_job(job_id)
+
+    assert result["status"] == "failed"
+    session = session_factory()
+    assert session.get(SendJob, job_id).attempts == 1
+    assert session.get(SendJob, job_id).status == "failed"
+    assert session.get(CampaignRecipient, {"campaign_id": campaign_id, "contact_id": contact_id}).status == "failed"
+    stopped_campaign = session.get(Campaign, campaign_id)
+    assert stopped_campaign.status == "stopped"
+    assert stopped_campaign.send_settings["pause_reason"] == "template_variables_missing"
+    assert session.get(Sender, sender_id).last_error is None
+    failed_log = session.scalar(select(SendLog).where(SendLog.campaign_id == campaign_id))
+    assert failed_log.status == "failed"
+    assert "First Name" in failed_log.error_message
     session.close()
 
 

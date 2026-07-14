@@ -5,62 +5,42 @@ import re
 import sqlite3
 from typing import Any
 
-from jinja2 import Environment, meta
-
 from .models import RenderedEmail
 
 
-ENV = Environment(autoescape=False, trim_blocks=False, lstrip_blocks=False)
+TEMPLATE_VARIABLE_PATTERN = re.compile(r"\{\{\s*([^{}]+?)\s*\}\}")
 
 
-def sanitize_template_variables(template: str) -> str:
-    def replace_spaces(match):
-        content = match.group(1)
-        sanitized = content.strip().replace(" ", "_")
-        return f"{{{{ {sanitized} }}}}"
-    return re.sub(r"\{\{\s*(.*?)\s*\}\}", replace_spaces, template)
+class MissingTemplateVariablesError(ValueError):
+    def __init__(self, variables: list[str]):
+        self.variables = tuple(variables)
+        super().__init__(f"Missing CSV values for template variables: {', '.join(variables)}")
+
+
+def extract_template_variables(template: str) -> list[str]:
+    return [
+        name
+        for match in TEMPLATE_VARIABLE_PATTERN.finditer(template or "")
+        if (name := match.group(1).strip())
+    ]
+
+
+def missing_template_variables(template: str, context: dict[str, Any]) -> list[str]:
+    missing: list[str] = []
+    for name in extract_template_variables(template):
+        value = context.get(name)
+        if (name not in context or value is None or str(value).strip() == "") and name not in missing:
+            missing.append(name)
+    return missing
 
 
 def row_to_dict(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
     return dict(row)
 
 
-def keyword_sentence(contact: dict[str, Any]) -> str:
-    keywords = [
-        str(contact.get("keyword_1") or "").strip(),
-        str(contact.get("keyword_2") or "").strip(),
-        str(contact.get("keyword_3") or "").strip(),
-    ]
-    keywords = [keyword for keyword in keywords if keyword]
-    if len(keywords) == 1:
-        return keywords[0]
-    if len(keywords) == 2:
-        return f"{keywords[0]} and {keywords[1]}"
-    if len(keywords) >= 3:
-        return f"{keywords[0]}, {keywords[1]}, and {keywords[2]}"
-    return ""
-
-
 def contact_context(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
     contact = row_to_dict(row)
-    context = dict(contact)
-    aliases = {
-        "First_Name": contact.get("first_name", ""),
-        "Last_Name": contact.get("last_name", ""),
-        "Full_Name": contact.get("full_name", ""),
-        "Email": contact.get("email", ""),
-        "Company_Name": contact.get("company_name", ""),
-        "Company_Website": contact.get("company_website", ""),
-        "LinkedIn": contact.get("linkedin", ""),
-        "Title": contact.get("title", ""),
-        "Industry": contact.get("industry", ""),
-        "Keywords": contact.get("keywords", ""),
-        "Country": contact.get("country", ""),
-    }
-    context.update(aliases)
-    context["keyword_sentence"] = keyword_sentence(contact)
-
-    # Dynamically load all columns present in the imported sheet/CSV (no hardcoding)
+    context: dict[str, Any] = {}
     custom_str = contact.get("custom_fields") or "{}"
     try:
         custom_data = custom_str if isinstance(custom_str, dict) else json.loads(custom_str)
@@ -68,24 +48,24 @@ def contact_context(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
     except Exception:
         pass
 
+    context.setdefault("email", contact.get("email") or contact.get("email_normalized") or "")
+
     return context
 
 
-def render_template(template: str, context: dict[str, Any]) -> str:
-    sanitized = sanitize_template_variables(template)
-    try:
-        parsed_content = ENV.parse(sanitized)
-        referenced_vars = meta.find_undeclared_variables(parsed_content)
-    except Exception:
-        referenced_vars = set()
-        
-    render_context = dict(context)
-    for var in referenced_vars:
-        val = context.get(var)
-        if val is None or str(val).strip() == "":
-            render_context[var] = f"[missing {var}]"
-            
-    return ENV.from_string(sanitized).render(**render_context).strip()
+def render_template(template: str, context: dict[str, Any], *, strict: bool = False) -> str:
+    missing = missing_template_variables(template, context)
+    if strict and missing:
+        raise MissingTemplateVariablesError(missing)
+
+    def replace_variable(match: re.Match[str]) -> str:
+        name = match.group(1).strip()
+        value = context.get(name)
+        if name not in context or value is None or str(value).strip() == "":
+            return f"[missing {name}]"
+        return str(value)
+
+    return TEMPLATE_VARIABLE_PATTERN.sub(replace_variable, template or "").strip()
 
 
 def render_email(contact: sqlite3.Row | dict[str, Any], campaign: sqlite3.Row | dict[str, Any]) -> RenderedEmail:
@@ -93,7 +73,7 @@ def render_email(contact: sqlite3.Row | dict[str, Any], campaign: sqlite3.Row | 
     campaign_dict = row_to_dict(campaign)
     context = contact_context(contact_dict)
     return RenderedEmail(
-        recipient_email=str(contact_dict["email"]),
+        recipient_email=str(contact_dict.get("email") or contact_dict.get("email_normalized") or ""),
         subject=render_template(str(campaign_dict["subject_template"]), context),
         body=render_template(str(campaign_dict["body_template"]), context),
         used_fallback=False,

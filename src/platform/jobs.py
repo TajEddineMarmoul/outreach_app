@@ -7,7 +7,6 @@ from collections import OrderedDict
 from datetime import datetime, timedelta
 from threading import Lock
 
-from jinja2 import Environment
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -29,9 +28,9 @@ from src.platform.services import (
     sender_sent_count_today,
 )
 from src.platform.time import utcnow
+from src.template_engine import MissingTemplateVariablesError, render_template
 
 
-TEMPLATE_ENV = Environment(autoescape=False)
 ATTACHMENT_CACHE_LIMIT = 32
 _attachment_cache: OrderedDict[tuple[int, str], EmailAttachment] = OrderedDict()
 _attachment_cache_lock = Lock()
@@ -43,7 +42,7 @@ def _exception_detail(exc: BaseException) -> str:
 
 
 def _render(template: str, context: dict) -> str:
-    return TEMPLATE_ENV.from_string(template or "").render(**context)
+    return render_template(template or "", context, strict=True)
 
 
 def _campaign_email_attachments(session: Session, campaign: Campaign) -> tuple[EmailAttachment, ...]:
@@ -442,6 +441,9 @@ def perform_send_job(job_id: int, *, claimed: bool = False) -> dict:
             job.status = "running"
             job.locked_at = now
         job.attempts += 1
+        # Persist the attempt before rendering or calling Gmail. A rollback must
+        # not turn a permanent pre-send failure into an infinite retry loop.
+        session.commit()
         custom_fields = contact.custom_fields or {}
         if isinstance(custom_fields, str):
             custom_fields = json.loads(custom_fields)
@@ -503,7 +505,8 @@ def perform_send_job(job_id: int, *, claimed: bool = False) -> dict:
         session.rollback()
         job = session.get(SendJob, job_id)
         if job:
-            final_failure = job.attempts >= job.max_attempts
+            template_failure = isinstance(exc, MissingTemplateVariablesError)
+            final_failure = template_failure or job.attempts >= job.max_attempts
             job.status = "failed" if final_failure else "retry"
             job.error_message = error_detail
             job.locked_at = None
@@ -516,7 +519,7 @@ def perform_send_job(job_id: int, *, claimed: bool = False) -> dict:
                     attempt_log.status = "failed"
                     attempt_log.error_message = error_detail
             sender = session.get(Sender, job.sender_id)
-            if sender:
+            if sender and not template_failure:
                 sender.last_error = error_detail
                 sender.recent_error_at = utcnow()
             if final_failure:
@@ -526,7 +529,34 @@ def perform_send_job(job_id: int, *, claimed: bool = False) -> dict:
                 )
                 if recipient:
                     recipient.status = "failed"
-            _schedule_after_finished_batch(session, job, utcnow())
+            if template_failure:
+                campaign = session.get(Campaign, job.campaign_id)
+                contact = session.get(Contact, job.recipient_id)
+                if campaign:
+                    campaign.status = "stopped"
+                    campaign.scheduled_at = None
+                    campaign.send_settings = {
+                        **(campaign.send_settings or {}),
+                        "pause_reason": "template_variables_missing",
+                    }
+                if not attempt_log_id and campaign and contact:
+                    session.add(
+                        SendLog(
+                            user_id=job.user_id,
+                            campaign_id=job.campaign_id,
+                            contact_id=job.recipient_id,
+                            recipient_id=job.recipient_id,
+                            sender_id=job.sender_id,
+                            recipient_email=contact.email_normalized,
+                            sender_email=sender.email if sender else "",
+                            subject=campaign.subject_template,
+                            body_snapshot=campaign.body_template,
+                            status="failed",
+                            error_message=error_detail,
+                        )
+                    )
+            else:
+                _schedule_after_finished_batch(session, job, utcnow())
             session.commit()
         return {"status": "failed", "job_id": job_id, "error": str(exc)}
     finally:

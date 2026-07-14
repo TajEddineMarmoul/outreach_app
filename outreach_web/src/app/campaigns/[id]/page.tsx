@@ -54,9 +54,9 @@ import LogsSection from "@/components/campaigns/LogsSection";
 import ProgressSection from "@/components/campaigns/ProgressSection";
 import RecipientsSection from "@/components/campaigns/RecipientsSection";
 import { useApiClient } from "@/lib/api";
+import { extractTemplateVariables, templateVariableName } from "@/lib/templateVariables";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
-const TEMPLATE_VARIABLE_PATTERN = /\{\{\s*([^{}]+?)\s*\}\}/g;
 const EDIT_LOCKED_STATUSES = new Set(["sending", "scheduled", "autopilot", "paused"]);
 
 interface ComposerDraft {
@@ -70,16 +70,6 @@ type DraftSaveStatus = "idle" | "unsaved" | "saving" | "saved" | "error";
 
 function composerDraftFingerprint(draft: ComposerDraft): string {
   return JSON.stringify(draft);
-}
-
-function normalizeTemplateVariable(variable: string): string {
-  return variable.trim().replace(/\s+/g, "_");
-}
-
-function extractTemplateVariables(template: string): string[] {
-  return [...template.matchAll(TEMPLATE_VARIABLE_PATTERN)].map((match) =>
-    normalizeTemplateVariable(match[1])
-  );
 }
 
 export default function CampaignEditorPage() {
@@ -171,7 +161,7 @@ export default function CampaignEditorPage() {
 
   const activeVariables = useMemo(() => {
     const columns: unknown[] = Array.isArray(valSummary?.all_columns) ? valSummary.all_columns : [];
-    return [...new Set(columns.map((column) => normalizeTemplateVariable(String(column))))].sort();
+    return [...new Set(columns.map((column) => templateVariableName(String(column))))].sort();
   }, [valSummary]);
 
   const unknownVariables = useMemo(() => {

@@ -9,6 +9,7 @@ import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { Bold, Italic, Underline as UnderlineIcon, AlignLeft, AlignCenter, AlignRight } from "lucide-react";
 import { useEffect, useRef } from "react";
+import { TEMPLATE_VARIABLE_PATTERN, templateVariableName } from "@/lib/templateVariables";
 
 interface RichTextEditorProps {
   content: string;
@@ -18,12 +19,6 @@ interface RichTextEditorProps {
   onEditorReady?: (editor: Editor | null) => void;
   onBlur?: () => void;
   readOnly?: boolean;
-}
-
-const TEMPLATE_VARIABLE_PATTERN = /\{\{\s*([^{}]+?)\s*\}\}/g;
-
-function normalizeTemplateVariable(variable: string): string {
-  return variable.trim().replace(/\s+/g, "_");
 }
 
 const variableValidationPluginKey = new PluginKey<Set<string>>("variableValidation");
@@ -52,7 +47,7 @@ const VariableValidation = Extension.create({
 
               for (const match of node.text.matchAll(TEMPLATE_VARIABLE_PATTERN)) {
                 const fullMatch = match[0];
-                const variable = normalizeTemplateVariable(match[1]);
+                const variable = templateVariableName(match[1]);
 
                 if (validVariables.has(variable)) continue;
 
@@ -154,7 +149,7 @@ export default function RichTextEditor({ content, onChange, placeholder, validVa
     editor.view.dispatch(
       editor.state.tr.setMeta(
         variableValidationPluginKey,
-        validVariables.map((variable) => normalizeTemplateVariable(variable))
+        validVariables.map((variable) => templateVariableName(variable))
       )
     );
   }, [editor, validVariables]);

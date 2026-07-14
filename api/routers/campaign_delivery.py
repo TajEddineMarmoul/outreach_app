@@ -19,6 +19,7 @@ from src.platform.scheduler import WEEKDAY_NAMES, next_autopilot_run
 from src.platform.services import campaign_sent_today, connected_senders, ensure_user, require_group, serialize_group, set_user_timezone, user_zone
 from src.platform.time import utcnow
 from src.platform.worker import recover_stale_jobs, run_worker_cycle
+from src.template_engine import extract_template_variables
 
 
 router = APIRouter(tags=["campaign-delivery"])
@@ -157,6 +158,34 @@ def require_connected_delivery_group(session: Session, campaign: Campaign, user_
     if not connected_senders(group):
         raise HTTPException(status_code=409, detail="Selected sender group has no connected senders")
     return group
+
+
+def require_known_template_variables(session: Session, campaign: Campaign) -> None:
+    available_headers: set[str] = {"email"}
+    custom_fields_rows = session.scalars(
+        select(Contact.custom_fields)
+        .join(CampaignRecipient, CampaignRecipient.contact_id == Contact.id)
+        .where(CampaignRecipient.campaign_id == campaign.id)
+    )
+    for custom_fields in custom_fields_rows:
+        if isinstance(custom_fields, dict):
+            available_headers.update(str(header) for header in custom_fields)
+
+    used_variables = {
+        variable
+        for template in (
+            campaign.subject_template,
+            campaign.body_template,
+            campaign.fallback_body_template,
+        )
+        for variable in extract_template_variables(template or "")
+    }
+    unknown = sorted(used_variables - available_headers)
+    if unknown:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Unknown CSV template variables: {', '.join(unknown)}",
+        )
 
 
 def reopen_failed_recipients(session: Session, campaign_id: int, user_id: str) -> int:
@@ -310,6 +339,7 @@ def post_send_now(
     campaign = require_campaign_editable(session, campaign_id, user_id)
     apply_request_timezone(session, user_id, req.timezone)
     require_connected_delivery_group(session, campaign, user_id)
+    require_known_template_variables(session, campaign)
     previous_status = campaign.status
     logger.info("campaign id=%s status=%s sender_group_id=%s", campaign.id, campaign.status, campaign.selected_sender_group_id)
     try:
@@ -384,6 +414,7 @@ def post_schedule(
     campaign = require_campaign_editable(session, campaign_id, user_id)
     apply_request_timezone(session, user_id, req.timezone)
     require_connected_delivery_group(session, campaign, user_id)
+    require_known_template_variables(session, campaign)
     retried_failed = reopen_failed_recipients(session, campaign_id, user_id)
     approved_recipients = session.scalar(
         select(func.count())
@@ -427,6 +458,7 @@ def post_autopilot_start(
     campaign = require_campaign_editable(session, campaign_id, user_id)
     apply_request_timezone(session, user_id, req.timezone)
     require_connected_delivery_group(session, campaign, user_id)
+    require_known_template_variables(session, campaign)
     retried_failed = reopen_failed_recipients(session, campaign_id, user_id)
     approved_recipients = session.scalar(
         select(func.count())

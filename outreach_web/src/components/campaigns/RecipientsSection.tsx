@@ -34,8 +34,26 @@ const STATUS_BADGES: Record<string, string> = {
   pending: "bg-amber-100 text-amber-700",
 };
 
+const STATUS_LABELS: Record<string, string> = {
+  approved: "Ready",
+  queued: "Waiting to send",
+  sent: "Sent",
+  failed: "Failed",
+  rejected: "Skipped",
+  pending: "Ready",
+};
+
+const STATUS_DESCRIPTIONS: Record<string, string> = {
+  approved: "Ready for a future sending batch",
+  queued: "Reserved for the delivery worker; no email has been sent yet",
+  sent: "Email sent successfully",
+  failed: "Delivery failed and can be retried",
+  rejected: "Recipient is not eligible for delivery",
+  pending: "Ready for a future sending batch",
+};
+
 function displayFieldName(name: string): string {
-  return name.replace(/_/g, " ").replace(/\s+/g, " ").trim();
+  return name.trim();
 }
 
 function displayFieldValue(value: unknown): string {
@@ -187,8 +205,11 @@ export default function RecipientsSection({
                           </div>
                         </td>
                         <td className="px-4 py-2.5">
-                          <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${STATUS_BADGES[r.status] || "bg-slate-100 text-slate-600"}`}>
-                            {r.status}
+                          <span
+                            className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${STATUS_BADGES[r.status] || "bg-slate-100 text-slate-600"}`}
+                            title={STATUS_DESCRIPTIONS[r.status] || r.status}
+                          >
+                            {STATUS_LABELS[r.status] || r.status}
                           </span>
                         </td>
                         <td className="px-4 py-2.5 text-right">

@@ -53,6 +53,7 @@ def test_imported_contacts_are_approved_and_keep_every_csv_field(monkeypatch):
         [
             {
                 "First Name": "Sandy",
+                "First_Name": "Sandra",
                 "Email": "sandy@example.com",
                 "Languages": "English, French",
                 "Organization Description": "Commerce platform",
@@ -76,9 +77,10 @@ def test_imported_contacts_are_approved_and_keep_every_csv_field(monkeypatch):
     fields = json.loads(inserted["custom_fields"])
     assert result.imported == 1
     assert inserted["status"] == ContactStatus.APPROVED.value
-    assert fields["First_Name"] == "Sandy"
+    assert fields["First Name"] == "Sandy"
+    assert fields["First_Name"] == "Sandra"
     assert fields["Languages"] == "English, French"
-    assert fields["Organization_Description"] == "Commerce platform"
+    assert fields["Organization Description"] == "Commerce platform"
 
 
 class _Cursor:
