@@ -1210,6 +1210,8 @@ def test_missing_exact_template_header_stops_campaign_before_gmail(tmp_path, mon
         status="connected",
         daily_cap=10,
         encrypted_oauth_credentials="encrypted",
+        last_error="expected token 'end of print statement', got 'Name'",
+        recent_error_at=utcnow(),
     )
     campaign = Campaign(
         user_id=USER_ID,
@@ -1258,7 +1260,9 @@ def test_missing_exact_template_header_stops_campaign_before_gmail(tmp_path, mon
     stopped_campaign = session.get(Campaign, campaign_id)
     assert stopped_campaign.status == "stopped"
     assert stopped_campaign.send_settings["pause_reason"] == "template_variables_missing"
-    assert session.get(Sender, sender_id).last_error is None
+    recovered_sender = session.get(Sender, sender_id)
+    assert recovered_sender.last_error is None
+    assert recovered_sender.recent_error_at is None
     failed_log = session.scalar(select(SendLog).where(SendLog.campaign_id == campaign_id))
     assert failed_log.status == "failed"
     assert "First Name" in failed_log.error_message

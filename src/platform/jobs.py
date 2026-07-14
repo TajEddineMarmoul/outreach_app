@@ -28,7 +28,7 @@ from src.platform.services import (
     sender_sent_count_today,
 )
 from src.platform.time import utcnow
-from src.template_engine import MissingTemplateVariablesError, render_template
+from src.template_engine import MissingTemplateVariablesError, missing_template_variables, render_template
 
 
 ATTACHMENT_CACHE_LIMIT = 32
@@ -418,6 +418,21 @@ def perform_send_job(job_id: int, *, claimed: bool = False) -> dict:
                 "reason": "The assigned sender is no longer connected",
             }
 
+        custom_fields = contact.custom_fields or {}
+        if isinstance(custom_fields, str):
+            custom_fields = json.loads(custom_fields)
+        context = dict(custom_fields)
+        context.setdefault("email", contact.email_normalized)
+        missing_variables: list[str] = []
+        for template in (campaign.subject_template, campaign.body_template or campaign.fallback_body_template):
+            for variable in missing_template_variables(template, context):
+                if variable not in missing_variables:
+                    missing_variables.append(variable)
+        if missing_variables:
+            job.attempts += 1
+            session.commit()
+            raise MissingTemplateVariablesError(missing_variables)
+
         now = utcnow()
         job.scheduled_for = now
         session.flush()
@@ -444,11 +459,6 @@ def perform_send_job(job_id: int, *, claimed: bool = False) -> dict:
         # Persist the attempt before rendering or calling Gmail. A rollback must
         # not turn a permanent pre-send failure into an infinite retry loop.
         session.commit()
-        custom_fields = contact.custom_fields or {}
-        if isinstance(custom_fields, str):
-            custom_fields = json.loads(custom_fields)
-        context = dict(custom_fields)
-        context.setdefault("email", contact.email_normalized)
         subject = _render(campaign.subject_template, context)
         body = _render(campaign.body_template or campaign.fallback_body_template, context)
         log = SendLog(
@@ -519,9 +529,13 @@ def perform_send_job(job_id: int, *, claimed: bool = False) -> dict:
                     attempt_log.status = "failed"
                     attempt_log.error_message = error_detail
             sender = session.get(Sender, job.sender_id)
-            if sender and not template_failure:
-                sender.last_error = error_detail
-                sender.recent_error_at = utcnow()
+            if sender:
+                if template_failure:
+                    sender.last_error = None
+                    sender.recent_error_at = None
+                else:
+                    sender.last_error = error_detail
+                    sender.recent_error_at = utcnow()
             if final_failure:
                 recipient = session.get(
                     CampaignRecipient,
