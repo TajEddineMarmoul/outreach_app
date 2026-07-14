@@ -59,6 +59,19 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 const TEMPLATE_VARIABLE_PATTERN = /\{\{\s*([^{}]+?)\s*\}\}/g;
 const EDIT_LOCKED_STATUSES = new Set(["sending", "scheduled", "autopilot", "paused"]);
 
+interface ComposerDraft {
+  subject_template: string;
+  body_template: string;
+  fallback_body_template: string;
+  require_attachment: boolean;
+}
+
+type DraftSaveStatus = "idle" | "unsaved" | "saving" | "saved" | "error";
+
+function composerDraftFingerprint(draft: ComposerDraft): string {
+  return JSON.stringify(draft);
+}
+
 function normalizeTemplateVariable(variable: string): string {
   return variable.trim().replace(/\s+/g, "_");
 }
@@ -113,6 +126,7 @@ export default function CampaignEditorPage() {
   const campaignAttachments: CampaignAttachmentSummary[] = Array.isArray(summary?.attachments)
     ? summary.attachments
     : [];
+  const editingLocked = Boolean(campaign && EDIT_LOCKED_STATUSES.has(campaign.status));
 
   // ----------------------------------------------------
   // UI & Form States
@@ -125,7 +139,35 @@ export default function CampaignEditorPage() {
   const [trackingEnabled, setTrackingEnabled] = useState(true);
   const [unsubscribeLink, setUnsubscribeLink] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [draftSaveStatus, setDraftSaveStatus] = useState<DraftSaveStatus>("idle");
   const [showAllWarnings, setShowAllWarnings] = useState(false);
+  const hydratedCampaignIdRef = useRef<string | null>(null);
+  const lastSavedDraftFingerprintRef = useRef("");
+  const lastQueuedDraftFingerprintRef = useRef("");
+  const currentDraftRef = useRef<ComposerDraft>({
+    subject_template: "",
+    body_template: "",
+    fallback_body_template: "",
+    require_attachment: false,
+  });
+  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const latestSavePromiseRef = useRef<Promise<void>>(Promise.resolve());
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const composerDraft = useMemo<ComposerDraft>(() => ({
+    subject_template: subject,
+    body_template: body,
+    fallback_body_template: fallback,
+    require_attachment: requireAttachment,
+  }), [body, fallback, requireAttachment, subject]);
+  const composerDraftKey = useMemo(
+    () => composerDraftFingerprint(composerDraft),
+    [composerDraft]
+  );
+
+  useEffect(() => {
+    currentDraftRef.current = composerDraft;
+  }, [composerDraft]);
 
   const activeVariables = useMemo(() => {
     const columns: unknown[] = Array.isArray(valSummary?.all_columns) ? valSummary.all_columns : [];
@@ -149,18 +191,123 @@ export default function CampaignEditorPage() {
     }
   }, [valSummary]);
   
-  // Sync state once data loads
+  // Hydrate once per campaign. Later SWR refreshes must not replace active edits.
   useEffect(() => {
-    if (campaign) {
-      setName(campaign.name || "");
-      setSubject(campaign.subject_template || "");
-      setBody(campaign.body_template || "");
-      setFallback(campaign.fallback_body_template || "");
-      setRequireAttachment(campaign.require_attachment || false);
-      setTrackingEnabled(campaign.tracking_enabled !== false);
-      setUnsubscribeLink(campaign.unsubscribe_link !== false);
+    if (!campaign) return;
+    const campaignKey = String(campaign.id ?? campaignId);
+    if (hydratedCampaignIdRef.current === campaignKey) return;
+
+    const serverDraft: ComposerDraft = {
+      subject_template: campaign.subject_template || "",
+      body_template: campaign.body_template || "",
+      fallback_body_template: campaign.fallback_body_template || "",
+      require_attachment: campaign.require_attachment || false,
+    };
+    const serverFingerprint = composerDraftFingerprint(serverDraft);
+    hydratedCampaignIdRef.current = campaignKey;
+    lastSavedDraftFingerprintRef.current = serverFingerprint;
+    lastQueuedDraftFingerprintRef.current = serverFingerprint;
+    currentDraftRef.current = serverDraft;
+    setName(campaign.name || "");
+    setSubject(serverDraft.subject_template);
+    setBody(serverDraft.body_template);
+    setFallback(serverDraft.fallback_body_template);
+    setRequireAttachment(serverDraft.require_attachment);
+    setTrackingEnabled(campaign.tracking_enabled !== false);
+    setUnsubscribeLink(campaign.unsubscribe_link !== false);
+    setDraftSaveStatus("saved");
+  }, [campaign, campaignId]);
+
+  const persistComposerDraft = useCallback(async (draft: ComposerDraft) => {
+    const targetFingerprint = composerDraftFingerprint(draft);
+    setDraftSaveStatus("saving");
+    const response = await authFetch(`${API_URL}/api/campaigns/${campaignId}/composer`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(draft),
+    });
+    if (!response.ok) {
+      const result = await response.json().catch(() => ({}));
+      throw new Error(result.detail || "Failed to save draft");
     }
-  }, [campaign]);
+
+    lastSavedDraftFingerprintRef.current = targetFingerprint;
+    const currentFingerprint = composerDraftFingerprint(currentDraftRef.current);
+    setDraftSaveStatus(
+      currentFingerprint === targetFingerprint && lastQueuedDraftFingerprintRef.current === targetFingerprint
+        ? "saved"
+        : "unsaved"
+    );
+  }, [authFetch, campaignId]);
+
+  const queueComposerDraftSave = useCallback((draft: ComposerDraft): Promise<void> => {
+    const targetFingerprint = composerDraftFingerprint(draft);
+    if (targetFingerprint === lastQueuedDraftFingerprintRef.current) {
+      return latestSavePromiseRef.current;
+    }
+
+    lastQueuedDraftFingerprintRef.current = targetFingerprint;
+    const operation = saveQueueRef.current.then(() => persistComposerDraft(draft));
+    latestSavePromiseRef.current = operation;
+    saveQueueRef.current = operation.catch(() => undefined);
+    operation.catch(() => {
+      if (lastQueuedDraftFingerprintRef.current === targetFingerprint) {
+        lastQueuedDraftFingerprintRef.current = lastSavedDraftFingerprintRef.current;
+        setDraftSaveStatus("error");
+      }
+    });
+    return operation;
+  }, [persistComposerDraft]);
+
+  const flushComposerDraft = useCallback(async () => {
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+    await queueComposerDraftSave(currentDraftRef.current);
+  }, [queueComposerDraftSave]);
+
+  useEffect(() => {
+    const campaignKey = campaign ? String(campaign.id ?? campaignId) : null;
+    if (!campaignKey || hydratedCampaignIdRef.current !== campaignKey || editingLocked) return;
+
+    const draft = currentDraftRef.current;
+    const fingerprint = composerDraftFingerprint(draft);
+    if (fingerprint === lastQueuedDraftFingerprintRef.current) return;
+
+    autoSaveTimerRef.current = setTimeout(() => {
+      autoSaveTimerRef.current = null;
+      void queueComposerDraftSave(draft).catch(() => undefined);
+    }, 600);
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = null;
+      }
+    };
+  }, [campaign, campaignId, composerDraftKey, editingLocked, queueComposerDraftSave]);
+
+  useEffect(() => {
+    const saveWhenHidden = () => {
+      if (document.visibilityState === "hidden" && !editingLocked) {
+        void flushComposerDraft().catch(() => undefined);
+      }
+    };
+    document.addEventListener("visibilitychange", saveWhenHidden);
+    return () => document.removeEventListener("visibilitychange", saveWhenHidden);
+  }, [editingLocked, flushComposerDraft]);
+
+  const updateSubjectDraft = useCallback((value: string) => {
+    currentDraftRef.current = { ...currentDraftRef.current, subject_template: value };
+    setSubject(value);
+    setDraftSaveStatus("unsaved");
+  }, []);
+
+  const updateBodyDraft = useCallback((value: string) => {
+    currentDraftRef.current = { ...currentDraftRef.current, body_template: value };
+    setBody(value);
+    setDraftSaveStatus("unsaved");
+  }, []);
 
   // Modal open states
   const [sendModalOpen, setSendModalOpen] = useState(false);
@@ -186,7 +333,7 @@ export default function CampaignEditorPage() {
     const editor = tiptapEditorRef.current;
     const placeholder = `{{ ${variable} }}`;
     if (!editor || editor.isDestroyed || typeof editor.chain !== "function") {
-      setBody((current) => `${current || ""}${placeholder}`);
+      updateBodyDraft(`${currentDraftRef.current.body_template || ""}${placeholder}`);
       return;
     }
     editor.chain().focus().insertContent(placeholder).run();
@@ -198,22 +345,14 @@ export default function CampaignEditorPage() {
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      const res = await authFetch(`${API_URL}/api/campaigns/${campaignId}/composer`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          subject_template: subject,
-          body_template: body,
-          fallback_body_template: fallback,
-          require_attachment: requireAttachment,
-        }),
-      });
-      if (!res.ok) throw new Error("Save draft failed");
-      mutate(`${API_URL}/api/campaigns/${campaignId}`);
-      mutateSummary();
-      mutateValSummary();
-    } catch (err: any) {
-      alert(err.message || "Failed to save draft");
+      await flushComposerDraft();
+      await Promise.all([
+        mutate(`${API_URL}/api/campaigns/${campaignId}`),
+        mutateSummary(),
+        mutateValSummary(),
+      ]);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Failed to save draft");
     } finally {
       setIsSaving(false);
     }
@@ -222,18 +361,7 @@ export default function CampaignEditorPage() {
   const handleOpenPreview = async () => {
     setIsPreviewLoading(true);
     try {
-      // 1. Save draft
-      const saveRes = await authFetch(`${API_URL}/api/campaigns/${campaignId}/composer`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          subject_template: subject,
-          body_template: body,
-          fallback_body_template: fallback,
-          require_attachment: requireAttachment,
-        }),
-      });
-      if (!saveRes.ok) throw new Error("Failed to save draft");
+      await flushComposerDraft();
 
       await mutate(
         (key) => typeof key === "string" && key.startsWith(`${API_URL}/api/campaigns/${campaignId}/preview?`),
@@ -241,8 +369,9 @@ export default function CampaignEditorPage() {
         { revalidate: false }
       );
       setPreviewModalOpen(true);
-    } catch (err: any) {
-      alert("Failed to load preview: " + err.message);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      alert("Failed to load preview: " + message);
     } finally {
       setIsPreviewLoading(false);
     }
@@ -348,8 +477,6 @@ export default function CampaignEditorPage() {
       alert(err.message);
     }
   };
-
-  const editingLocked = Boolean(campaign && EDIT_LOCKED_STATUSES.has(campaign.status));
 
   if (campLoading) {
     return (
@@ -555,15 +682,37 @@ export default function CampaignEditorPage() {
                         No sender connected. Click to Connect ▾
                       </Button>
                     )}
-                    <button
-                      type="button"
-                      onClick={handleSave}
-                      disabled={isSaving}
-                      className="p-1.5 hover:bg-slate-200/60 rounded text-slate-400 hover:text-slate-600 transition-colors cursor-pointer shrink-0"
-                      title="Save draft"
-                    >
-                      <Save className="w-4 h-4" />
-                    </button>
+                    <div className="flex items-center gap-1.5 ml-auto">
+                      <span className={cn(
+                        "text-[11px] font-medium",
+                        draftSaveStatus === "error" ? "text-red-600" : "text-slate-400"
+                      )}>
+                        {draftSaveStatus === "saving" || isSaving
+                          ? "Saving..."
+                          : draftSaveStatus === "error"
+                            ? "Save failed"
+                            : draftSaveStatus === "unsaved"
+                              ? "Unsaved"
+                              : "Saved"}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleSave}
+                        disabled={editingLocked || isSaving}
+                        className="p-1.5 hover:bg-slate-200/60 rounded text-slate-400 hover:text-slate-600 disabled:opacity-50 transition-colors cursor-pointer shrink-0"
+                        title={draftSaveStatus === "error" ? "Retry saving draft" : "Save draft now"}
+                      >
+                        {draftSaveStatus === "saving" || isSaving ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : draftSaveStatus === "saved" ? (
+                          <Check className="w-4 h-4 text-emerald-600" />
+                        ) : draftSaveStatus === "error" ? (
+                          <AlertTriangle className="w-4 h-4 text-red-600" />
+                        ) : (
+                          <Save className="w-4 h-4" />
+                        )}
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -585,7 +734,8 @@ export default function CampaignEditorPage() {
                   <input
                     type="text"
                     value={subject}
-                    onChange={(e) => setSubject(e.target.value)}
+                    onChange={(e) => updateSubjectDraft(e.target.value)}
+                    onBlur={() => void flushComposerDraft().catch(() => undefined)}
                     disabled={editingLocked}
                     placeholder="Enter email subject template"
                     className="flex-1 text-slate-900 border-none outline-none focus:ring-0 placeholder-slate-400 py-1 bg-transparent text-sm font-medium"
@@ -679,7 +829,8 @@ export default function CampaignEditorPage() {
 
                 <RichTextEditor
                   content={body}
-                  onChange={setBody}
+                  onChange={updateBodyDraft}
+                  onBlur={() => void flushComposerDraft().catch(() => undefined)}
                   placeholder="Compose your email or select a template..."
                   validVariables={activeVariables}
                   onEditorReady={handleEditorReady}
@@ -779,8 +930,8 @@ export default function CampaignEditorPage() {
         isOpen={templateModalOpen}
         onClose={() => setTemplateModalOpen(false)}
         onSelect={(tplSub, tplBody) => {
-          setSubject(tplSub);
-          setBody(tplBody);
+          updateSubjectDraft(tplSub);
+          updateBodyDraft(tplBody);
           setTemplateModalOpen(false);
         }}
       />

@@ -16,6 +16,7 @@ interface RichTextEditorProps {
   placeholder?: string;
   validVariables?: string[];
   onEditorReady?: (editor: Editor | null) => void;
+  onBlur?: () => void;
   readOnly?: boolean;
 }
 
@@ -82,7 +83,7 @@ function ensureHTML(content: string): string {
     .join("");
 }
 
-export default function RichTextEditor({ content, onChange, placeholder, validVariables = [], onEditorReady, readOnly = false }: RichTextEditorProps) {
+export default function RichTextEditor({ content, onChange, placeholder, validVariables = [], onEditorReady, onBlur, readOnly = false }: RichTextEditorProps) {
   const isUpdatingRef = useRef(false);
 
   const editor = useEditor({
@@ -115,6 +116,9 @@ export default function RichTextEditor({ content, onChange, placeholder, validVa
       if (!isUpdatingRef.current) {
         onChange(editor.getHTML());
       }
+    },
+    onBlur: () => {
+      onBlur?.();
     },
     editorProps: {
       attributes: {

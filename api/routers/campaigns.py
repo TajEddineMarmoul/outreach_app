@@ -117,9 +117,9 @@ def get_campaign(campaign_id: int, conn=Depends(get_db), user_id: str = Depends(
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")
     res = dict(campaign)
-    res["require_attachment"] = db.get_setting(conn, f"campaign_{campaign_id}_require_attachment", "false") == "true"
-    res["tracking_enabled"] = db.get_setting(conn, f"campaign_{campaign_id}_tracking_enabled", "true") == "true"
-    res["unsubscribe_link"] = db.get_setting(conn, f"campaign_{campaign_id}_unsubscribe_link", "true") == "true"
+    res["require_attachment"] = db.get_setting(conn, f"campaign_{campaign_id}_require_attachment", "false", user_id) == "true"
+    res["tracking_enabled"] = db.get_setting(conn, f"campaign_{campaign_id}_tracking_enabled", "true", user_id) == "true"
+    res["unsubscribe_link"] = db.get_setting(conn, f"campaign_{campaign_id}_unsubscribe_link", "true", user_id) == "true"
     return res
 
 @router.patch("/api/campaigns/{campaign_id}")
