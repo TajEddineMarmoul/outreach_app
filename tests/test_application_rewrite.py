@@ -1036,6 +1036,9 @@ def test_perform_send_job_sends_and_persists_delivery_state(tmp_path, monkeypatc
     assert persisted_job.status == "sent"
     assert persisted_job.attempts == 1
     assert persisted_recipient.status == "sent"
+    persisted_campaign = session.get(Campaign, campaign.id)
+    assert persisted_campaign.status == "ended"
+    assert persisted_campaign.scheduled_at is None
     assert session.get(Contact, contact.id).status == "approved"
     assert log.status == "sent"
     assert log.contact_id == contact.id
@@ -1967,6 +1970,9 @@ def test_send_now_http_runs_two_sender_batches_through_fake_gmail(tmp_path, monk
         assert len(logs) == 4
         assert all(log.status == "sent" and log.gmail_message_id for log in logs)
         assert len(sent_requests) == 4
+        campaign = session.get(Campaign, campaign_id)
+        assert campaign.status == "ended"
+        assert campaign.scheduled_at is None
         session.close()
     finally:
         clear_session_override()
@@ -2030,7 +2036,8 @@ def test_autopilot_http_starts_and_sends_due_batch_through_fake_gmail(tmp_path, 
         session = session_factory()
         campaign = session.get(Campaign, campaign_id)
         assert len(sent_requests) == 2
-        assert campaign.status == "autopilot"
+        assert campaign.status == "ended"
+        assert campaign.scheduled_at is None
         assert campaign.send_settings["mode"] == "autopilot"
         assert campaign.send_settings["delay_minutes"] == 6
         assert len(list(session.scalars(select(SendLog).where(SendLog.campaign_id == campaign_id)))) == 2
@@ -2312,7 +2319,9 @@ def test_autopilot_compressed_day_resumes_after_five_minutes(tmp_path, monkeypat
         assert len(sent_requests) == 2
 
         session = session_factory()
-        assert session.get(Campaign, campaign_id).status == "autopilot"
+        completed_campaign = session.get(Campaign, campaign_id)
+        assert completed_campaign.status == "ended"
+        assert completed_campaign.scheduled_at is None
         assert len(list(session.scalars(select(SendLog).where(SendLog.campaign_id == campaign_id)))) == 2
         session.close()
     finally:

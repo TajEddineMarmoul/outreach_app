@@ -57,6 +57,7 @@ import { useApiClient } from "@/lib/api";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 const TEMPLATE_VARIABLE_PATTERN = /\{\{\s*([^{}]+?)\s*\}\}/g;
+const EDIT_LOCKED_STATUSES = new Set(["sending", "scheduled", "autopilot", "paused"]);
 
 function normalizeTemplateVariable(variable: string): string {
   return variable.trim().replace(/\s+/g, "_");
@@ -78,7 +79,10 @@ export default function CampaignEditorPage() {
   // SWR Hooks for Data Fetching
   // ----------------------------------------------------
   const { data: campaign, error: campError, isLoading: campLoading } = useSWR(
-    campaignId ? `${API_URL}/api/campaigns/${campaignId}` : null
+    campaignId ? `${API_URL}/api/campaigns/${campaignId}` : null,
+    {
+      refreshInterval: (latest) => EDIT_LOCKED_STATUSES.has(latest?.status) ? 3000 : 0,
+    }
   );
   
   const { data: summary, mutate: mutateSummary } = useSWR(
@@ -332,7 +336,7 @@ export default function CampaignEditorPage() {
     }
   };
 
-  const editingLocked = Boolean(campaign && ["sending", "scheduled", "autopilot", "paused"].includes(campaign.status));
+  const editingLocked = Boolean(campaign && EDIT_LOCKED_STATUSES.has(campaign.status));
 
   if (campLoading) {
     return (

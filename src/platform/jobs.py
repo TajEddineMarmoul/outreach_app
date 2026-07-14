@@ -41,20 +41,52 @@ def _render(template: str, context: dict) -> str:
     return TEMPLATE_ENV.from_string(template or "").render(**context)
 
 
+def _has_unsent_approved_recipients(session: Session, campaign: Campaign) -> bool:
+    existing_job = (
+        select(SendJob.id)
+        .where(
+            SendJob.campaign_id == campaign.id,
+            SendJob.recipient_id == CampaignRecipient.contact_id,
+            SendJob.status.in_(("queued", "running", "retry", "sent", "failed")),
+        )
+        .exists()
+    )
+    return session.scalar(
+        select(CampaignRecipient.contact_id)
+        .join(Contact, Contact.id == CampaignRecipient.contact_id)
+        .where(
+            CampaignRecipient.campaign_id == campaign.id,
+            CampaignRecipient.status == "approved",
+            Contact.user_id == campaign.user_id,
+            Contact.status.in_(("approved", "sent")),
+            ~existing_job,
+        )
+        .limit(1)
+    ) is not None
+
+
 def _schedule_after_finished_batch(session: Session, job: SendJob, finished_at: datetime) -> None:
     session.flush()
-    active_in_batch = session.scalar(
+    active_jobs = session.scalar(
         select(func.count())
         .select_from(SendJob)
         .where(
-            SendJob.batch_id == job.batch_id,
+            SendJob.campaign_id == job.campaign_id,
             SendJob.status.in_(("queued", "running", "retry")),
         )
     ) or 0
-    if active_in_batch:
+    if active_jobs:
         return
     campaign = session.get(Campaign, job.campaign_id)
     if not campaign or campaign.status in {"paused", "stopped", "ended"}:
+        return
+    if not _has_unsent_approved_recipients(session, campaign):
+        campaign.status = "ended"
+        campaign.scheduled_at = None
+        campaign.send_settings = {
+            **(campaign.send_settings or {}),
+            "pause_reason": None,
+        }
         return
     delay_minutes = int((campaign.send_settings or {}).get("delay_minutes", 5))
     next_due = finished_at + timedelta(minutes=delay_minutes)
