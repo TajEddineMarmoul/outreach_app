@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import useSWR from "swr";
-import { Loader2, Search, Trash2, RotateCcw, UserPlus } from "lucide-react";
+import { Check, CheckCheck, Loader2, Search, Trash2, RotateCcw, UserPlus } from "lucide-react";
 import { useApiClient } from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -47,6 +47,7 @@ export default function RecipientsSection({
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [actionLoading, setActionLoading] = useState<number | null>(null);
+  const [bulkApproving, setBulkApproving] = useState(false);
   const { authFetch } = useApiClient();
 
   const { data, isLoading, mutate } = useSWR<RecipientsResponse>(
@@ -63,17 +64,21 @@ export default function RecipientsSection({
     return () => clearTimeout(timer);
   };
 
-  const handleReset = async (contactId: number) => {
-    if (!confirm("Reset this recipient to Approved? This will remove any queued jobs.")) return;
+  const handleReset = async (contactId: number, status: string) => {
+    const isPending = status === "pending";
+    const message = isPending
+      ? "Approve this recipient for sending?"
+      : "Reset this recipient to Approved? This will remove any queued jobs.";
+    if (!confirm(message)) return;
     setActionLoading(contactId);
     try {
       const res = await authFetch(`${API_URL}/api/campaigns/${campaignId}/recipients/${contactId}/reset`, {
         method: "PATCH",
       });
-      if (!res.ok) throw new Error("Reset failed");
+      if (!res.ok) throw new Error(isPending ? "Approval failed" : "Reset failed");
       mutate();
     } catch {
-      alert("Failed to reset recipient");
+      alert(isPending ? "Failed to approve recipient" : "Failed to reset recipient");
     } finally {
       setActionLoading(null);
     }
@@ -92,6 +97,24 @@ export default function RecipientsSection({
       alert("Failed to delete recipient");
     } finally {
       setActionLoading(null);
+    }
+  };
+
+  const handleApprovePending = async () => {
+    if (!confirm("Approve all pending recipients in this campaign for sending?")) return;
+    setBulkApproving(true);
+    try {
+      const res = await authFetch(`${API_URL}/api/campaigns/${campaignId}/recipients/approve`, {
+        method: "PATCH",
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(result.detail || "Bulk approval failed");
+      await mutate();
+      alert(`${result.approved ?? 0} pending recipient${result.approved === 1 ? "" : "s"} approved.`);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Failed to approve pending recipients");
+    } finally {
+      setBulkApproving(false);
     }
   };
 
@@ -116,6 +139,16 @@ export default function RecipientsSection({
             className="pl-9 h-9 text-sm"
           />
         </div>
+        <Button
+          size="sm"
+          variant="outline"
+          className="gap-1.5"
+          onClick={handleApprovePending}
+          disabled={readOnly || bulkApproving}
+        >
+          {bulkApproving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCheck className="w-4 h-4" />}
+          Approve pending
+        </Button>
         <Button size="sm" className="gap-1.5" onClick={onOpenImport} disabled={readOnly}>
           <UserPlus className="w-4 h-4" />
           Add recipients
@@ -142,6 +175,7 @@ export default function RecipientsSection({
                 {data.items.map((r) => {
                   const fields = r.custom_fields || {};
                   const detailParts = [fields.first_name, fields.last_name, fields.company].filter(Boolean);
+                  const canReset = ["pending", "sent", "failed"].includes(r.status);
                   return (
                     <tr key={r.contact_id} className="border-b last:border-0 hover:bg-slate-50">
                       <td className="px-4 py-2.5">
@@ -157,14 +191,16 @@ export default function RecipientsSection({
                       </td>
                       <td className="px-4 py-2.5 text-right">
                         <div className="flex items-center justify-end gap-1">
-                          <button
-                            onClick={() => handleReset(r.contact_id)}
-                            disabled={readOnly || actionLoading === r.contact_id}
-                            className="p-1.5 rounded hover:bg-slate-200 text-slate-500 hover:text-blue-600 disabled:opacity-40"
-                            title="Reset to Approved"
-                          >
-                            <RotateCcw className="w-4 h-4" />
-                          </button>
+                          {canReset && (
+                            <button
+                              onClick={() => handleReset(r.contact_id, r.status)}
+                              disabled={readOnly || actionLoading === r.contact_id}
+                              className="p-1.5 rounded hover:bg-slate-200 text-slate-500 hover:text-blue-600 disabled:opacity-40"
+                              title={r.status === "pending" ? "Approve recipient" : "Reset to Approved"}
+                            >
+                              {r.status === "pending" ? <Check className="w-4 h-4" /> : <RotateCcw className="w-4 h-4" />}
+                            </button>
+                          )}
                           <button
                             onClick={() => handleDelete(r.contact_id)}
                             disabled={readOnly || actionLoading === r.contact_id}
