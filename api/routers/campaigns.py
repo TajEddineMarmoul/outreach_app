@@ -335,22 +335,46 @@ def list_senders(conn=Depends(get_db), user_id: str = Depends(get_current_user_i
     return [dict(s) for s in senders]
 
 
-def import_and_attach_df(conn, campaign_id: int, df: pd.DataFrame, mapping: dict, source_type: str, url: str = "", user_id: str = "default_user"):
+def resolve_import_mapping(df: pd.DataFrame, mapping: dict | None = None) -> dict[str, str]:
+    resolved = detect_columns(list(df.columns))
+    for field, column in (mapping or {}).items():
+        if not isinstance(column, str) or column not in df.columns:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Mapped column '{column}' for '{field}' was not found in the import",
+            )
+        resolved[field] = column
+    if "email" not in resolved:
+        raise HTTPException(status_code=422, detail="The import must contain an email column")
+    return resolved
+
+
+def import_and_attach_df(conn, campaign_id: int, df: pd.DataFrame, mapping: dict | None, source_type: str, url: str = "", user_id: str = "default_user"):
+    if df.empty:
+        raise HTTPException(status_code=422, detail="The import contains no recipient rows")
+
+    resolved_mapping = resolve_import_mapping(df, mapping)
     result = import_dataframe(
         df,
         conn,
         user_id=user_id,
-        column_mapping=mapping,
+        column_mapping=resolved_mapping,
         source_type=source_type,
         source_url=url,
     )
-    # Extract emails
-    email_column = mapping.get("email")
-    emails = []
-    if email_column and email_column in df.columns:
-        emails = [normalize_email(val) for val in df[email_column].tolist() if normalize_email(val)]
+    if result.errors:
+        raise HTTPException(status_code=422, detail="; ".join(result.errors))
+
+    email_column = resolved_mapping["email"]
+    emails = list(
+        dict.fromkeys(
+            email
+            for value in df[email_column].tolist()
+            if (email := normalize_email(value))
+        )
+    )
     attached = db.add_campaign_recipients_by_emails(conn, campaign_id, emails, user_id)
-    return {"imported": result.imported, "attached": attached}
+    return {**result.model_dump(), "attached": attached}
 
 @router.post("/api/campaigns/{campaign_id}/recipients/csv")
 async def post_recipients_csv(
@@ -362,20 +386,31 @@ async def post_recipients_csv(
 ):
     campaign = require_editable_campaign(conn, campaign_id, user_id)
         
-    mapping = json.loads(mapping_json)
+    try:
+        mapping = json.loads(mapping_json)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=422, detail="Invalid column mapping") from exc
+    if not isinstance(mapping, dict):
+        raise HTTPException(status_code=422, detail="Column mapping must be an object")
+
     content = await file.read()
-    df = pd.read_csv(StringIO(content.decode("utf-8")))
+    try:
+        df = pd.read_csv(StringIO(content.decode("utf-8-sig")))
+    except (UnicodeDecodeError, pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
+        raise HTTPException(status_code=422, detail=f"Could not read CSV: {exc}") from exc
     
-    res = import_and_attach_df(conn, campaign_id, df, mapping, "csv", file.filename, user_id)
+    res = import_and_attach_df(conn, campaign_id, df, mapping, "csv", file.filename or "", user_id)
     return res
 
 @router.post("/api/campaigns/{campaign_id}/recipients/paste")
 def post_recipients_paste(campaign_id: int, req: RecipientsPaste, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
     campaign = require_editable_campaign(conn, campaign_id, user_id)
         
-    df = pd.read_csv(StringIO(req.raw))
-    mapping = detect_columns(list(df.columns))
-    res = import_and_attach_df(conn, campaign_id, df, mapping, "paste", user_id=user_id)
+    try:
+        df = pd.read_csv(StringIO(req.raw))
+    except (pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
+        raise HTTPException(status_code=422, detail=f"Could not read pasted recipients: {exc}") from exc
+    res = import_and_attach_df(conn, campaign_id, df, None, "paste", user_id=user_id)
     return res
 
 @router.post("/api/campaigns/{campaign_id}/recipients/google-sheet")
@@ -566,53 +601,6 @@ def post_generate_previews(campaign_id: int, limit: Optional[int] = None, conn=D
     return {
         "generated": count,
     }
-
-class ApproveRecipientsRequest(BaseModel):
-    contact_ids: Optional[list[int]] = None
-
-@router.post("/api/campaigns/{campaign_id}/recipients/approve")
-def post_approve_recipients(campaign_id: int, req: ApproveRecipientsRequest, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
-    from src.preview import approve_contacts
-    campaign = require_editable_campaign(conn, campaign_id, user_id)
-    if req.contact_ids is not None:
-        requested_ids = [int(contact_id) for contact_id in req.contact_ids]
-        placeholders = ",".join("?" for _ in requested_ids)
-        attached_ids = {
-            int(row["contact_id"])
-            for row in conn.execute(
-                f"SELECT contact_id FROM campaign_recipients WHERE campaign_id = ? AND contact_id IN ({placeholders})",
-                [campaign_id, *requested_ids],
-            ).fetchall()
-        } if requested_ids else set()
-        approved = approve_contacts(conn, list(attached_ids), user_id)
-        approved_ids = {
-            int(row["id"])
-            for row in conn.execute(
-                f"SELECT id FROM contacts WHERE user_id = ? AND status = 'approved' AND id IN ({','.join('?' for _ in attached_ids)})",
-                [user_id, *attached_ids],
-            ).fetchall()
-        } if attached_ids else set()
-    else:
-        pending = [
-            row["id"] for row in db.campaign_contacts(conn, campaign_id, user_id, statuses=("pending",))
-            if row["preview_generated_at"] is not None
-        ]
-        approved = approve_contacts(conn, pending, user_id)
-        approved_ids = {
-            int(row["id"])
-            for row in conn.execute(
-                f"SELECT id FROM contacts WHERE user_id = ? AND status = 'approved' AND id IN ({','.join('?' for _ in pending)})",
-                [user_id, *pending],
-            ).fetchall()
-        } if pending else set()
-    if approved_ids:
-        placeholders = ",".join("?" for _ in approved_ids)
-        conn.execute(
-            f"UPDATE campaign_recipients SET status = 'approved' WHERE campaign_id = ? AND contact_id IN ({placeholders})",
-            [campaign_id, *approved_ids],
-        )
-        conn.commit()
-    return {"approved": approved}
 
 class RejectRecipientsRequest(BaseModel):
     contact_ids: list[int]

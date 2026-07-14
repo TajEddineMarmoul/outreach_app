@@ -100,7 +100,18 @@ def add_campaign_recipients(
         ).fetchone()
         if not contact:
             continue
-        recipient_status = str(contact["status"] or ContactStatus.PENDING.value)
+        contact_status = str(contact["status"] or ContactStatus.PENDING.value)
+        if contact_status == ContactStatus.PENDING.value:
+            contact_status = ContactStatus.APPROVED.value
+            conn.execute(
+                "UPDATE contacts SET status = ?, updated_at = ? WHERE id = ?",
+                (contact_status, now, normalized_contact_id),
+            )
+        recipient_status = (
+            ContactStatus.APPROVED.value
+            if contact_status in {ContactStatus.APPROVED.value, ContactStatus.SENT.value}
+            else contact_status
+        )
         existing = conn.execute(
             """
             SELECT 1

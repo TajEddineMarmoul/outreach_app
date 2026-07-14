@@ -633,62 +633,6 @@ def test_approving_pending_recipient_updates_contact_and_campaign_status(tmp_pat
         clear_session_override()
 
 
-def test_bulk_approval_updates_only_pending_recipients_in_campaign(tmp_path):
-    session_factory = make_session_factory(tmp_path)
-    install_session_override(session_factory)
-    try:
-        session = session_factory()
-        ensure_user(session, USER_ID)
-        campaign = Campaign(user_id=USER_ID, name="Bulk approval", status="draft")
-        other_campaign = Campaign(user_id=USER_ID, name="Other campaign", status="draft")
-        pending = Contact(user_id=USER_ID, email_normalized="bulk-pending@example.com", status="pending")
-        blocked = Contact(user_id=USER_ID, email_normalized="bulk-blocked@example.com", status="do_not_contact")
-        other_pending = Contact(user_id=USER_ID, email_normalized="other-pending@example.com", status="pending")
-        session.add_all([campaign, other_campaign, pending, blocked, other_pending])
-        session.flush()
-        session.add_all(
-            [
-                CampaignRecipient(campaign_id=campaign.id, contact_id=pending.id, status="pending"),
-                CampaignRecipient(campaign_id=campaign.id, contact_id=blocked.id, status="pending"),
-                CampaignRecipient(campaign_id=other_campaign.id, contact_id=other_pending.id, status="pending"),
-            ]
-        )
-        session.commit()
-        campaign_id = campaign.id
-        other_campaign_id = other_campaign.id
-        pending_id = pending.id
-        blocked_id = blocked.id
-        other_pending_id = other_pending.id
-        session.close()
-
-        response = TestClient(app).patch(
-            f"/api/campaigns/{campaign_id}/recipients/approve",
-            headers=HEADERS,
-        )
-        assert response.status_code == 200
-        assert response.json() == {"approved": 1}
-
-        session = session_factory()
-        assert session.get(Contact, pending_id).status == "approved"
-        assert session.get(
-            CampaignRecipient,
-            {"campaign_id": campaign_id, "contact_id": pending_id},
-        ).status == "approved"
-        assert session.get(Contact, blocked_id).status == "do_not_contact"
-        assert session.get(
-            CampaignRecipient,
-            {"campaign_id": campaign_id, "contact_id": blocked_id},
-        ).status == "pending"
-        assert session.get(Contact, other_pending_id).status == "pending"
-        assert session.get(
-            CampaignRecipient,
-            {"campaign_id": other_campaign_id, "contact_id": other_pending_id},
-        ).status == "pending"
-        session.close()
-    finally:
-        clear_session_override()
-
-
 @pytest.mark.parametrize(
     ("endpoint", "payload", "expected_status", "expected_recipient_status"),
     [

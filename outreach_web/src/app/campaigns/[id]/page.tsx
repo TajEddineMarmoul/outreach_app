@@ -783,6 +783,16 @@ function RecipientsDialog({
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const { authFetch } = useApiClient();
 
+  const refreshImportedRecipients = async () => {
+    await Promise.all([
+      mutate(
+        (key) => typeof key === "string" && key.startsWith(`${API_URL}/api/campaigns/${campaignId}/recipients?`)
+      ),
+      mutateSummary(),
+      mutateValSummary(),
+    ]);
+  };
+
   useEffect(() => {
     const trimmedUrl = sheetUrl.trim();
     if (!trimmedUrl) {
@@ -820,7 +830,6 @@ function RecipientsDialog({
 
   const handlePasteSubmit = async () => {
     if (!rawPaste.trim()) return;
-    console.log("[paste] raw text:", rawPaste.slice(0, 200));
     setIsSubmitting(true);
     try {
       const res = await authFetch(`${API_URL}/api/campaigns/${campaignId}/recipients/paste`, {
@@ -828,12 +837,12 @@ function RecipientsDialog({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ raw: rawPaste }),
       });
-      const data = await res.json();
-      console.log("[paste] response:", data);
-      if (!res.ok) throw new Error("Import failed");
-      await mutateSummary();
-      await mutateValSummary();
-      console.log("[paste] valSummary refreshed");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "Import failed");
+      await refreshImportedRecipients();
+      if (data.attached === 0) {
+        alert("No new recipients were added. The valid emails are already in this campaign.");
+      }
       onClose();
     } catch (err: any) {
       alert(err.message);
@@ -844,7 +853,6 @@ function RecipientsDialog({
 
   const handleCSVSubmit = async () => {
     if (!csvFile) return;
-    console.log("[csv] file:", csvFile.name, csvFile.size, "bytes");
     setIsSubmitting(true);
     try {
       const formData = new FormData();
@@ -855,12 +863,12 @@ function RecipientsDialog({
         method: "POST",
         body: formData,
       });
-      const data = await res.json();
-      console.log("[csv] response:", data);
-      if (!res.ok) throw new Error("CSV Upload failed");
-      await mutateSummary();
-      await mutateValSummary();
-      console.log("[csv] valSummary refreshed");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "CSV upload failed");
+      await refreshImportedRecipients();
+      if (data.attached === 0) {
+        alert("No new recipients were added. The valid emails are already in this campaign.");
+      }
       onClose();
     } catch (err: any) {
       alert(err.message);
@@ -871,7 +879,6 @@ function RecipientsDialog({
 
   const handleSheetSubmit = async () => {
     if (!sheetUrl.trim()) return;
-    console.log("[sheet] url:", sheetUrl, "tab:", tabName);
     setIsSubmitting(true);
     try {
       const res = await authFetch(`${API_URL}/api/campaigns/${campaignId}/recipients/google-sheet`, {
@@ -884,11 +891,12 @@ function RecipientsDialog({
           mapping: {}
         }),
       });
-      const data = await res.json();
-      console.log("[sheet] response:", data);
-      if (!res.ok) throw new Error("Google sheet fetch failed");
-      await mutateSummary();
-      await mutateValSummary();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "Google Sheet import failed");
+      await refreshImportedRecipients();
+      if (data.attached === 0) {
+        alert("No new recipients were added. The valid emails are already in this campaign.");
+      }
       onClose();
     } catch (err: any) {
       alert(err.message);

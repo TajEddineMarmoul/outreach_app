@@ -139,7 +139,7 @@ def import_dataframe(
         if not keyword_1 and not keyword_2 and not keyword_3:
             keyword_1, keyword_2, keyword_3 = extract_keywords(keywords)
             
-        status = ContactStatus.PENDING.value
+        status = ContactStatus.APPROVED.value
         if is_do_not_contact(conn, email, user_id):
             status = ContactStatus.DO_NOT_CONTACT.value
             result.do_not_contact += 1
@@ -153,6 +153,14 @@ def import_dataframe(
 
         existing = db.fetch_contact_by_email(conn, email, user_id)
         if existing:
+            existing_status = str(existing["status"] or ContactStatus.PENDING.value)
+            updated_status = (
+                ContactStatus.DO_NOT_CONTACT.value
+                if status == ContactStatus.DO_NOT_CONTACT.value
+                else ContactStatus.APPROVED.value
+                if existing_status == ContactStatus.PENDING.value
+                else existing_status
+            )
             last_name = clean_cell(row.get(detected.get("last_name"), ""))
             full_name = clean_cell(row.get(detected.get("full_name"), ""))
             company_website = clean_cell(row.get(detected.get("company_website"), ""))
@@ -176,7 +184,7 @@ def import_dataframe(
                     company_website = ?, linkedin = ?, title = ?, industry = ?,
                     keywords = ?, keyword_1 = ?, keyword_2 = ?, keyword_3 = ?,
                     country = ?, source_type = ?, source_url = ?, sheet_id = ?,
-                    sheet_name = ?, preview_generated_at = ?, last_synced_at = ?,
+                    sheet_name = ?, status = ?, preview_generated_at = ?, last_synced_at = ?,
                     custom_fields = ?, updated_at = ?
                 WHERE id = ? AND user_id = ?
                 """,
@@ -185,7 +193,7 @@ def import_dataframe(
                     company_website, linkedin, title, industry,
                     keywords, keyword_1, keyword_2, keyword_3,
                     country, source_type, source_url, sheet_id,
-                    sheet_name, preview_gen,
+                    sheet_name, updated_status, preview_gen,
                     db.utcnow_iso() if source_type == "google_sheet" else existing["last_synced_at"],
                     custom_fields_json, db.utcnow_iso(), existing["id"], user_id
                 )

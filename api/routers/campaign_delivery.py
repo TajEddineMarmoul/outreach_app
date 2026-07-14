@@ -872,45 +872,6 @@ def patch_recipient_reset(
     return {"status": "success", "reset_at": recipient.reset_at.isoformat()}
 
 
-@router.patch("/api/campaigns/{campaign_id}/recipients/approve")
-def patch_approve_pending_recipients(
-    campaign_id: int,
-    session: Session = Depends(get_session),
-    user_id: str = Depends(get_current_user_id),
-):
-    require_campaign_editable(session, campaign_id, user_id)
-    campaign_pending_contact_ids = select(CampaignRecipient.contact_id).where(
-        CampaignRecipient.campaign_id == campaign_id,
-        CampaignRecipient.status == "pending",
-    )
-    session.execute(
-        update(Contact)
-        .where(
-            Contact.id.in_(campaign_pending_contact_ids),
-            Contact.user_id == user_id,
-            Contact.status == "pending",
-        )
-        .values(status="approved")
-        .execution_options(synchronize_session=False)
-    )
-    approved_contact_ids = select(Contact.id).where(
-        Contact.user_id == user_id,
-        Contact.status.in_(("approved", "sent")),
-    )
-    result = session.execute(
-        update(CampaignRecipient)
-        .where(
-            CampaignRecipient.campaign_id == campaign_id,
-            CampaignRecipient.status == "pending",
-            CampaignRecipient.contact_id.in_(approved_contact_ids),
-        )
-        .values(status="approved")
-        .execution_options(synchronize_session=False)
-    )
-    session.commit()
-    return {"approved": int(result.rowcount or 0)}
-
-
 @router.delete("/api/campaigns/{campaign_id}/recipients/{contact_id}")
 def delete_campaign_recipient(
     campaign_id: int,
