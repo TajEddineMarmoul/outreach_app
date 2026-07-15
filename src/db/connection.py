@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import psycopg2
-from psycopg2.extras import RealDictCursor
+from psycopg2.extras import RealDictCursor, execute_batch
 
 
 def _convert_placeholders(sql: str) -> str:
@@ -67,6 +67,8 @@ class PGCursor:
 
 
 class PGConnection:
+    supports_bulk_operations = True
+
     def __init__(self, dsn: str):
         self.conn = psycopg2.connect(dsn)
         self.conn.autocommit = False
@@ -76,6 +78,16 @@ class PGConnection:
         cur = self.conn.cursor(cursor_factory=RealDictCursor)
         try:
             cur.execute(sql, params)
+            return PGCursor(cur, self.conn)
+        except Exception:
+            cur.close()
+            raise
+
+    def executemany(self, sql: str, params: Any, page_size: int = 500):
+        sql = _convert_placeholders(sql)
+        cur = self.conn.cursor(cursor_factory=RealDictCursor)
+        try:
+            execute_batch(cur, sql, params, page_size=page_size)
             return PGCursor(cur, self.conn)
         except Exception:
             cur.close()

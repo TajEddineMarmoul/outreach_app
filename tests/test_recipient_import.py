@@ -3,6 +3,10 @@ from __future__ import annotations
 import json
 
 import pandas as pd
+import requests
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.testclient import TestClient
 
 from api.routers import campaigns
 from src import importer
@@ -118,3 +122,111 @@ def test_previously_sent_contact_is_approved_for_a_new_campaign():
 
     assert attached == 1
     assert conn.inserted_status == ContactStatus.APPROVED.value
+
+
+class _BulkCursor:
+    def __init__(self, rows=None, rowcount=0):
+        self._rows = rows or []
+        self.rowcount = rowcount
+
+    def fetchall(self):
+        return self._rows
+
+
+class _BulkImportConnection:
+    supports_bulk_operations = True
+
+    def __init__(self):
+        self.executed: list[str] = []
+        self.batches: list[tuple[str, list[dict]]] = []
+        self.commits = 0
+
+    def execute(self, sql, params=None):
+        normalized = " ".join(sql.split())
+        self.executed.append(normalized)
+        if normalized.startswith("SELECT * FROM contacts"):
+            return _BulkCursor()
+        if normalized.startswith("SELECT email FROM do_not_contact"):
+            return _BulkCursor()
+        if normalized.startswith("UPDATE contacts"):
+            return _BulkCursor()
+        if normalized.startswith("INSERT INTO campaign_recipients"):
+            return _BulkCursor(rowcount=len(params) - 4)
+        raise AssertionError(f"Unexpected SQL: {normalized}")
+
+    def executemany(self, sql, params, page_size=500):
+        values = list(params)
+        self.batches.append((" ".join(sql.split()), values))
+        return _BulkCursor(rowcount=len(values))
+
+    def commit(self):
+        self.commits += 1
+
+
+def test_500_recipient_import_uses_batched_database_operations():
+    frame = pd.DataFrame(
+        [
+            {
+                "First Name": f"Lead {index}",
+                "First_Name": f"Distinct {index}",
+                "Email": f"lead{index}@example.com",
+            }
+            for index in range(500)
+        ]
+    )
+    conn = _BulkImportConnection()
+
+    result = campaigns.import_and_attach_df(
+        conn,
+        campaign_id=78,
+        df=frame,
+        mapping={},
+        source_type="google_sheet",
+        user_id="user-1",
+    )
+
+    assert result["imported"] == 500
+    assert result["attached"] == 500
+    assert conn.commits == 2
+    assert len(conn.batches) == 1
+    assert len(conn.batches[0][1]) == 500
+    assert len(conn.executed) == 4
+    custom_fields = json.loads(conn.batches[0][1][0]["custom_fields"])
+    assert custom_fields["First Name"] == "Lead 0"
+    assert custom_fields["First_Name"] == "Distinct 0"
+
+
+def test_google_sheet_timeout_returns_a_controlled_http_error(monkeypatch):
+    monkeypatch.setattr(campaigns, "require_editable_campaign", lambda *_args: {"id": 78})
+    monkeypatch.setattr(
+        campaigns,
+        "get_public_sheet_csv",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(requests.Timeout("slow")),
+    )
+    app = FastAPI()
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=".*",
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    app.include_router(campaigns.router)
+    app.dependency_overrides[campaigns.get_db] = lambda: object()
+    app.dependency_overrides[campaigns.get_current_user_id] = lambda: "user-1"
+    origin = "https://outreach-frontend-166059707324.us-central1.run.app"
+
+    response = TestClient(app).post(
+        "/api/campaigns/78/recipients/google-sheet",
+        json={
+            "url": "https://docs.google.com/spreadsheets/d/example-sheet-id/edit",
+            "tab_name": "Sheet1",
+            "header_row": 1,
+            "mapping": {},
+        },
+        headers={"Origin": origin},
+    )
+
+    assert response.status_code == 504
+    assert response.json()["detail"] == "Google Sheets did not respond within 20 seconds"
+    assert response.headers["access-control-allow-origin"] == origin

@@ -141,12 +141,69 @@ def add_campaign_recipients_by_emails(
     emails: Iterable[str],
     user_id: str = "default_user",
 ) -> int:
+    normalized_emails = list(dict.fromkeys(str(email).strip().lower() for email in emails if str(email).strip()))
+    if getattr(conn, "supports_bulk_operations", False):
+        return _add_campaign_recipients_by_emails_bulk(
+            conn,
+            campaign_id,
+            normalized_emails,
+            user_id,
+        )
+
     contact_ids: list[int] = []
-    for email in emails:
+    for email in normalized_emails:
         contact = fetch_contact_by_email(conn, email, user_id)
         if contact:
             contact_ids.append(int(contact["id"]))
     return add_campaign_recipients(conn, campaign_id, contact_ids)
+
+
+def _add_campaign_recipients_by_emails_bulk(
+    conn,
+    campaign_id: int,
+    emails: list[str],
+    user_id: str,
+) -> int:
+    if not emails:
+        return 0
+
+    now = utcnow_iso()
+    attached = 0
+    chunk_size = 500
+    for offset in range(0, len(emails), chunk_size):
+        chunk = emails[offset : offset + chunk_size]
+        placeholders = ",".join("?" for _ in chunk)
+        conn.execute(
+            f"""
+            UPDATE contacts
+            SET status = 'approved', updated_at = ?
+            WHERE user_id = ?
+              AND email_normalized IN ({placeholders})
+              AND status = 'pending'
+            """,
+            [now, user_id, *chunk],
+        )
+        cursor = conn.execute(
+            f"""
+            INSERT INTO campaign_recipients(
+                campaign_id, contact_id, status, created_at, updated_at
+            )
+            SELECT ?, c.id,
+                CASE
+                    WHEN c.status IN ('approved', 'sent') THEN 'approved'
+                    ELSE c.status
+                END,
+                ?, ?
+            FROM contacts c
+            WHERE c.user_id = ?
+              AND c.email_normalized IN ({placeholders})
+            ON CONFLICT(campaign_id, contact_id) DO NOTHING
+            """,
+            [campaign_id, now, now, user_id, *chunk],
+        )
+        attached += max(cursor.rowcount, 0)
+    conn.commit()
+    return attached
 
 
 def campaign_contacts(

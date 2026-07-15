@@ -11,6 +11,7 @@ import sqlite3
 from pathlib import Path
 from typing import Optional, List, Dict
 import pandas as pd
+import requests
 from io import StringIO
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
@@ -523,17 +524,29 @@ def post_recipients_sheet(campaign_id: int, req: RecipientsGoogleSheet, conn=Dep
     if use_private:
         raise HTTPException(status_code=400, detail="Private Google Sheets import is not supported. Use a public or published sheet link.")
     
-    # Load sheet rows
-    if "output=csv" in sheet_url or "/pub?" in sheet_url or "format=csv" in sheet_url:
-        df = get_published_csv(sheet_url, header_row=header_row)
-    else:
-        sheet = parse_google_sheet_url_details(sheet_url)
-        df = get_public_sheet_csv(
-            sheet.sheet_id,
-            gid=sheet.gid,
-            header_row=header_row,
-            sheet_name=tab_name.strip() or None,
-        )
+    try:
+        if "output=csv" in sheet_url or "/pub?" in sheet_url or "format=csv" in sheet_url:
+            df = get_published_csv(sheet_url, header_row=header_row)
+        else:
+            sheet = parse_google_sheet_url_details(sheet_url)
+            df = get_public_sheet_csv(
+                sheet.sheet_id,
+                gid=sheet.gid,
+                header_row=header_row,
+                sheet_name=tab_name.strip() or None,
+            )
+    except requests.Timeout as exc:
+        raise HTTPException(status_code=504, detail="Google Sheets did not respond within 20 seconds") from exc
+    except requests.HTTPError as exc:
+        status = exc.response.status_code if exc.response is not None else "unknown"
+        raise HTTPException(
+            status_code=422,
+            detail=f"Google Sheets export failed with HTTP {status}. Confirm the sheet is publicly readable.",
+        ) from exc
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail="Could not connect to Google Sheets") from exc
+    except (ValueError, pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
+        raise HTTPException(status_code=422, detail=f"Could not read Google Sheet: {exc}") from exc
             
     res = import_and_attach_df(conn, campaign_id, df, mapping, "google_sheet", sheet_url, user_id)
     return res

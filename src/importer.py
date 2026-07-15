@@ -107,15 +107,42 @@ def import_dataframe(
     detected = detect_columns(list(frame.columns))
     if column_mapping:
         detected.update(column_mapping)
-        
-    result = ImportResult()
-    seen_in_file: set[str] = set()
 
-    required_fields = ["email"]
-    missing_columns = [field for field in required_fields if field not in detected]
+    result = ImportResult()
+    missing_columns = [field for field in ["email"] if field not in detected]
     if missing_columns:
         result.errors.append(f"Missing required CSV columns: {', '.join(missing_columns)}")
         return result
+
+    contacts = _prepare_import_contacts(
+        frame,
+        detected,
+        result,
+        source_type=source_type,
+        source_url=source_url,
+        sheet_id=sheet_id,
+        sheet_name=sheet_name,
+    )
+    if getattr(conn, "supports_bulk_operations", False):
+        _import_contacts_bulk(conn, contacts, user_id, result)
+    else:
+        _import_contacts_rowwise(conn, contacts, user_id, result)
+    return result
+
+
+def _prepare_import_contacts(
+    frame: pd.DataFrame,
+    detected: dict[str, str],
+    result: ImportResult,
+    *,
+    source_type: str,
+    source_url: str,
+    sheet_id: str,
+    sheet_name: str,
+) -> list[dict[str, Any]]:
+    contacts: list[dict[str, Any]] = []
+    seen_in_file: set[str] = set()
+    synced_at = db.utcnow_iso() if source_type == "google_sheet" else None
 
     for _, row in frame.iterrows():
         email = normalize_email(row.get(detected["email"]))
@@ -139,75 +166,18 @@ def import_dataframe(
         if not keyword_1 and not keyword_2 and not keyword_3:
             keyword_1, keyword_2, keyword_3 = extract_keywords(keywords)
             
-        status = ContactStatus.APPROVED.value
-        if is_do_not_contact(conn, email, user_id):
-            status = ContactStatus.DO_NOT_CONTACT.value
-            result.do_not_contact += 1
-
         # Preserve headers exactly so similarly named CSV columns stay distinct.
-        row_dict = {}
+        row_dict: dict[str, str] = {}
         for col in frame.columns:
             cleaned_key = str(col).strip()
             row_dict[cleaned_key] = clean_cell(row.get(col))
-        custom_fields_json = json.dumps(row_dict)
-
-        existing = db.fetch_contact_by_email(conn, email, user_id)
-        if existing:
-            existing_status = str(existing["status"] or ContactStatus.PENDING.value)
-            updated_status = (
-                ContactStatus.DO_NOT_CONTACT.value
-                if status == ContactStatus.DO_NOT_CONTACT.value
-                else ContactStatus.APPROVED.value
-                if existing_status == ContactStatus.PENDING.value
-                else existing_status
-            )
-            last_name = clean_cell(row.get(detected.get("last_name"), ""))
-            full_name = clean_cell(row.get(detected.get("full_name"), ""))
-            company_website = clean_cell(row.get(detected.get("company_website"), ""))
-            linkedin = clean_cell(row.get(detected.get("linkedin"), ""))
-            title = clean_cell(row.get(detected.get("title"), ""))
-            industry = clean_cell(row.get(detected.get("industry"), ""))
-            country = clean_cell(row.get(detected.get("country"), ""))
-            
-            preview_gen = existing["preview_generated_at"]
-            if (existing["keyword_1"] != keyword_1 or 
-                existing["keyword_2"] != keyword_2 or 
-                existing["keyword_3"] != keyword_3 or 
-                existing["company_name"] != company_name or 
-                existing["first_name"] != first_name):
-                preview_gen = None
-                
-            conn.execute(
-                """
-                UPDATE contacts
-                SET first_name = ?, last_name = ?, full_name = ?, company_name = ?,
-                    company_website = ?, linkedin = ?, title = ?, industry = ?,
-                    keywords = ?, keyword_1 = ?, keyword_2 = ?, keyword_3 = ?,
-                    country = ?, source_type = ?, source_url = ?, sheet_id = ?,
-                    sheet_name = ?, status = ?, preview_generated_at = ?, last_synced_at = ?,
-                    custom_fields = ?, updated_at = ?
-                WHERE id = ? AND user_id = ?
-                """,
-                (
-                    first_name, last_name, full_name, company_name,
-                    company_website, linkedin, title, industry,
-                    keywords, keyword_1, keyword_2, keyword_3,
-                    country, source_type, source_url, sheet_id,
-                    sheet_name, updated_status, preview_gen,
-                    db.utcnow_iso() if source_type == "google_sheet" else existing["last_synced_at"],
-                    custom_fields_json, db.utcnow_iso(), existing["id"], user_id
-                )
-            )
-            result.imported += 1
-            continue
-
-        inserted = db.insert_contact(
-            conn,
+        contacts.append(
             {
                 "first_name": first_name,
                 "last_name": clean_cell(row.get(detected.get("last_name"), "")),
                 "full_name": clean_cell(row.get(detected.get("full_name"), "")),
                 "email": email,
+                "email_normalized": email,
                 "company_name": company_name,
                 "company_website": clean_cell(row.get(detected.get("company_website"), "")),
                 "linkedin": clean_cell(row.get(detected.get("linkedin"), "")),
@@ -222,18 +192,163 @@ def import_dataframe(
                 "source_url": source_url,
                 "sheet_id": sheet_id,
                 "sheet_name": sheet_name,
-                "last_synced_at": db.utcnow_iso() if source_type == "google_sheet" else None,
-                "custom_fields": custom_fields_json,
-                "status": status,
-            },
-            user_id,
+                "last_synced_at": synced_at,
+                "custom_fields": json.dumps(row_dict),
+            }
         )
+    return contacts
+
+
+def _status_for_import(existing_status: str | None, do_not_contact: bool) -> str:
+    if do_not_contact:
+        return ContactStatus.DO_NOT_CONTACT.value
+    if not existing_status or existing_status == ContactStatus.PENDING.value:
+        return ContactStatus.APPROVED.value
+    return existing_status
+
+
+def _updated_contact(contact: dict[str, Any], existing: Any, status: str, user_id: str, now: str) -> dict[str, Any]:
+    preview_generated_at = existing["preview_generated_at"]
+    preview_fields = ("keyword_1", "keyword_2", "keyword_3", "company_name", "first_name")
+    if any(str(existing[field] or "") != str(contact[field] or "") for field in preview_fields):
+        preview_generated_at = None
+
+    return {
+        **contact,
+        "id": existing["id"],
+        "user_id": user_id,
+        "status": status,
+        "preview_generated_at": preview_generated_at,
+        "last_synced_at": contact["last_synced_at"] or existing["last_synced_at"],
+        "updated_at": now,
+    }
+
+
+def _import_contacts_rowwise(
+    conn: Any,
+    contacts: list[dict[str, Any]],
+    user_id: str,
+    result: ImportResult,
+) -> None:
+    for contact in contacts:
+        blocked = is_do_not_contact(conn, contact["email"], user_id)
+        if blocked:
+            result.do_not_contact += 1
+        existing = db.fetch_contact_by_email(conn, contact["email"], user_id)
+        status = _status_for_import(existing["status"] if existing else None, blocked)
+        if existing:
+            values = _updated_contact(contact, existing, status, user_id, db.utcnow_iso())
+            conn.execute(_CONTACT_UPDATE_SQL, values)
+            result.imported += 1
+            continue
+
+        inserted = db.insert_contact(conn, {**contact, "status": status}, user_id)
         if inserted:
             result.imported += 1
         else:
             result.duplicates += 1
 
-    return result
+
+def _chunks(values: list[str], size: int = 500):
+    for offset in range(0, len(values), size):
+        yield values[offset : offset + size]
+
+
+def _fetch_existing_contacts_bulk(conn: Any, emails: list[str], user_id: str) -> dict[str, Any]:
+    existing: dict[str, Any] = {}
+    for chunk in _chunks(emails):
+        placeholders = ",".join("?" for _ in chunk)
+        rows = conn.execute(
+            f"SELECT * FROM contacts WHERE user_id = ? AND email_normalized IN ({placeholders})",
+            [user_id, *chunk],
+        ).fetchall()
+        existing.update({str(row["email_normalized"]): row for row in rows})
+    return existing
+
+
+def _fetch_do_not_contact_bulk(conn: Any, emails: list[str], user_id: str) -> set[str]:
+    blocked: set[str] = set()
+    for chunk in _chunks(emails):
+        placeholders = ",".join("?" for _ in chunk)
+        rows = conn.execute(
+            f"SELECT email FROM do_not_contact WHERE user_id = ? AND email IN ({placeholders})",
+            [user_id, *chunk],
+        ).fetchall()
+        blocked.update(str(row["email"]).strip().lower() for row in rows)
+    return blocked
+
+
+def _import_contacts_bulk(
+    conn: Any,
+    contacts: list[dict[str, Any]],
+    user_id: str,
+    result: ImportResult,
+) -> None:
+    if not contacts:
+        return
+
+    emails = [str(contact["email_normalized"]) for contact in contacts]
+    existing = _fetch_existing_contacts_bulk(conn, emails, user_id)
+    blocked = _fetch_do_not_contact_bulk(conn, emails, user_id)
+    result.do_not_contact += len(blocked)
+    now = db.utcnow_iso()
+    inserts: list[dict[str, Any]] = []
+    updates: list[dict[str, Any]] = []
+
+    for contact in contacts:
+        email = str(contact["email_normalized"])
+        stored = existing.get(email)
+        status = _status_for_import(stored["status"] if stored else None, email in blocked)
+        if stored:
+            updates.append(_updated_contact(contact, stored, status, user_id, now))
+        else:
+            inserts.append(
+                {
+                    **contact,
+                    "user_id": user_id,
+                    "status": status,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            )
+
+    if updates:
+        conn.executemany(_CONTACT_UPDATE_SQL, updates)
+    if inserts:
+        conn.executemany(_CONTACT_INSERT_SQL, inserts)
+    conn.commit()
+    result.imported += len(updates) + len(inserts)
+
+
+_CONTACT_UPDATE_SQL = """
+    UPDATE contacts
+    SET first_name = :first_name, last_name = :last_name, full_name = :full_name,
+        company_name = :company_name, company_website = :company_website,
+        linkedin = :linkedin, title = :title, industry = :industry,
+        keywords = :keywords, keyword_1 = :keyword_1, keyword_2 = :keyword_2,
+        keyword_3 = :keyword_3, country = :country, source_type = :source_type,
+        source_url = :source_url, sheet_id = :sheet_id, sheet_name = :sheet_name,
+        status = :status, preview_generated_at = :preview_generated_at,
+        last_synced_at = :last_synced_at, custom_fields = :custom_fields,
+        updated_at = :updated_at
+    WHERE id = :id AND user_id = :user_id
+"""
+
+
+_CONTACT_INSERT_SQL = """
+    INSERT INTO contacts (
+        first_name, last_name, full_name, email, email_normalized, company_name,
+        company_website, linkedin, title, industry, keywords, keyword_1,
+        keyword_2, keyword_3, country, source_type, source_url, sheet_id,
+        sheet_name, last_synced_at, status, custom_fields, created_at, updated_at, user_id
+    ) VALUES (
+        :first_name, :last_name, :full_name, :email, :email_normalized, :company_name,
+        :company_website, :linkedin, :title, :industry, :keywords, :keyword_1,
+        :keyword_2, :keyword_3, :country, :source_type, :source_url, :sheet_id,
+        :sheet_name, :last_synced_at, :status, :custom_fields, :created_at, :updated_at, :user_id
+    )
+    ON CONFLICT DO NOTHING
+"""
 
 
 def is_do_not_contact(conn, email: str, user_id: str) -> bool:

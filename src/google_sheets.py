@@ -24,6 +24,8 @@ from .importer import detect_columns, import_dataframe
 from .models import ImportResult
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+PUBLIC_SHEET_TIMEOUT = (5, 20)
+MAX_PUBLIC_SHEET_BYTES = 20 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -78,14 +80,21 @@ def get_public_sheet_csv(
     else:
         params = f"&gid={gid}" if gid else ""
         url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv{params}"
-    response = requests.get(url, timeout=30)
-    response.raise_for_status()
-    return pd.read_csv(StringIO(response.text), header=max(header_row - 1, 0))
+    return _read_public_csv(url, header_row)
 
 
 def get_published_csv(url: str, header_row: int = 1) -> pd.DataFrame:
-    response = requests.get(url, timeout=30)
+    return _read_public_csv(url, header_row)
+
+
+def _read_public_csv(url: str, header_row: int) -> pd.DataFrame:
+    response = requests.get(url, timeout=PUBLIC_SHEET_TIMEOUT)
     response.raise_for_status()
+    if len(response.content) > MAX_PUBLIC_SHEET_BYTES:
+        raise ValueError("The Google Sheet export exceeds the 20 MB import limit")
+    content_type = response.headers.get("content-type", "").lower()
+    if "text/html" in content_type:
+        raise ValueError("Google returned an HTML page instead of CSV. Make the sheet publicly readable.")
     return pd.read_csv(StringIO(response.text), header=max(header_row - 1, 0))
 
 
