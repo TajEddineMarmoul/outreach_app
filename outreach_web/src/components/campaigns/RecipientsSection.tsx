@@ -1,13 +1,24 @@
 "use client";
 
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import useSWR from "swr";
-import { ChevronDown, ChevronUp, Loader2, Search, Trash2, RotateCcw, UserPlus } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  Loader2,
+  Search,
+  Trash2,
+  RotateCcw,
+  UserPlus,
+} from "lucide-react";
 import { useApiClient } from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+const RECIPIENTS_PAGE_SIZE = 10;
 
 interface RecipientEntry {
   contact_id: number;
@@ -89,17 +100,22 @@ export default function RecipientsSection({
   const { authFetch } = useApiClient();
 
   const { data, isLoading, mutate } = useSWR<RecipientsResponse>(
-    `${API_URL}/api/campaigns/${campaignId}/recipients?search=${encodeURIComponent(debouncedSearch)}&page=${page}&page_size=50`,
+    `${API_URL}/api/campaigns/${campaignId}/recipients?search=${encodeURIComponent(debouncedSearch)}&page=${page}&page_size=${RECIPIENTS_PAGE_SIZE}`,
     { refreshInterval: 0 }
   );
 
-  const handleSearch = (value: string) => {
-    setSearch(value);
+  useEffect(() => {
     const timer = setTimeout(() => {
-      setDebouncedSearch(value);
+      setDebouncedSearch(search.trim());
       setPage(1);
+      setExpandedRecipients(new Set());
     }, 300);
     return () => clearTimeout(timer);
+  }, [search]);
+
+  const goToPage = (nextPage: number) => {
+    setPage(nextPage);
+    setExpandedRecipients(new Set());
   };
 
   const handleReset = async (contactId: number) => {
@@ -110,7 +126,7 @@ export default function RecipientsSection({
         method: "PATCH",
       });
       if (!res.ok) throw new Error("Reset failed");
-      mutate();
+      await mutate();
     } catch {
       alert("Failed to reset recipient");
     } finally {
@@ -126,7 +142,10 @@ export default function RecipientsSection({
         method: "DELETE",
       });
       if (!res.ok) throw new Error("Delete failed");
-      mutate();
+      const updated = await mutate();
+      if (updated && updated.items.length === 0 && page > 1) {
+        goToPage(page - 1);
+      }
     } catch {
       alert("Failed to delete recipient");
     } finally {
@@ -160,7 +179,7 @@ export default function RecipientsSection({
           <Input
             placeholder="Search by email..."
             value={search}
-            onChange={(e) => handleSearch(e.target.value)}
+            onChange={(e) => setSearch(e.target.value)}
             className="pl-9 h-9 text-sm"
           />
         </div>
@@ -176,11 +195,44 @@ export default function RecipientsSection({
         </div>
       ) : (
         <>
-          <div className="border rounded-lg overflow-hidden">
-            <table className="w-full text-sm">
+          <div className="flex items-center justify-between gap-4 text-sm text-slate-500">
+            <span>
+              Showing {(data.page - 1) * data.page_size + 1}-{Math.min(data.page * data.page_size, data.total)} of {data.total}
+            </span>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="icon-sm"
+                onClick={() => goToPage(Math.max(1, data.page - 1))}
+                disabled={data.page <= 1}
+                title="Previous page"
+                aria-label="Previous page"
+              >
+                <ChevronLeft />
+              </Button>
+              <span className="min-w-24 text-center font-medium text-slate-700">
+                Page {data.page} of {data.pages}
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon-sm"
+                onClick={() => goToPage(Math.min(data.pages, data.page + 1))}
+                disabled={data.page >= data.pages}
+                title="Next page"
+                aria-label="Next page"
+              >
+                <ChevronRight />
+              </Button>
+            </div>
+          </div>
+
+          <div className="border rounded-lg overflow-x-auto">
+            <table className="w-full min-w-[760px] table-fixed text-sm">
               <thead>
                 <tr className="bg-slate-50 border-b">
-                  <th className="text-left px-4 py-2.5 font-semibold text-slate-600">Email</th>
+                  <th className="w-[36%] text-left px-4 py-2.5 font-semibold text-slate-600">Email</th>
                   <th className="text-left px-4 py-2.5 font-semibold text-slate-600">Details</th>
                   <th className="text-left px-4 py-2.5 font-semibold text-slate-600 w-24">Status</th>
                   <th className="text-right px-4 py-2.5 font-semibold text-slate-600 w-24">Actions</th>
@@ -265,29 +317,6 @@ export default function RecipientsSection({
               </tbody>
             </table>
           </div>
-
-          {data.pages > 1 && (
-            <div className="flex items-center justify-between text-xs text-slate-500">
-              <span>{data.total} total recipients</span>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  disabled={page <= 1}
-                  className="px-2 py-1 rounded hover:bg-slate-100 disabled:opacity-30"
-                >
-                  Previous
-                </button>
-                <span className="font-medium">Page {page} of {data.pages}</span>
-                <button
-                  onClick={() => setPage((p) => Math.min(data.pages, p + 1))}
-                  disabled={page >= data.pages}
-                  className="px-2 py-1 rounded hover:bg-slate-100 disabled:opacity-30"
-                >
-                  Next
-                </button>
-              </div>
-            </div>
-          )}
         </>
       )}
     </div>
