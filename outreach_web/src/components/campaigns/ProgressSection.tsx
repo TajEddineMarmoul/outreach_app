@@ -20,6 +20,7 @@ interface ProgressData {
   current_recipient: string | null;
   next_batch_at: string | null;
   delay_minutes: number;
+  pacing_mode: "fixed_delay" | "spread_evenly";
   pause_reason: string | null;
   campaign_daily_cap: number | null;
   campaign_sent_today: number | null;
@@ -139,7 +140,11 @@ export default function ProgressSection({ campaignId }: { campaignId: string }) 
             {waitingReason && <div className="text-xs text-amber-700 mt-0.5">{waitingReason}</div>}
             <div className="text-xs text-amber-700 mt-0.5">
               Next check: {data.next_batch_at ? new Date(data.next_batch_at).toLocaleString(undefined, { timeZoneName: "short" }) : "pending worker check"}
-              {data.delay_minutes > 0 ? ` · ${data.delay_minutes} minute delay between batches` : ""}
+              {data.pacing_mode === "spread_evenly"
+                ? " · spread evenly across today's window"
+                : data.delay_minutes > 0
+                  ? ` · ${data.delay_minutes} minute delay between batches`
+                  : ""}
             </div>
           </div>
         </div>
@@ -165,7 +170,9 @@ export default function ProgressSection({ campaignId }: { campaignId: string }) 
         <div>
           <div className="flex items-center justify-between gap-3 mb-2">
             <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Autopilot schedule</h3>
-            <span className="text-xs text-slate-500">{data.timezone}</span>
+            <span className="text-xs text-slate-500">
+              {data.pacing_mode === "spread_evenly" ? "Spread evenly" : "Fixed delay"} · {data.timezone}
+            </span>
           </div>
           <div className="space-y-1.5">
             {data.campaign_daily_cap != null && (

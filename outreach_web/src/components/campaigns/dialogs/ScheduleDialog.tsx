@@ -33,7 +33,13 @@ export default function ScheduleDialog({
   defaultTab: string;
   mutateAll: () => void;
   summary?: {
-    send_settings?: { delay_minutes?: number; dry_run?: boolean; mode?: string; draft_scheduled_at?: string };
+    send_settings?: {
+      delay_minutes?: number;
+      dry_run?: boolean;
+      mode?: string;
+      pacing_mode?: "fixed_delay" | "spread_evenly";
+      draft_scheduled_at?: string;
+    };
     autopilot_schedule?: { day: string; cap: number; start: string; end: string }[];
     timezone?: string;
   };
@@ -58,6 +64,7 @@ export default function ScheduleDialog({
     sunday: { active: false, cap: "10", start: "09:00", end: "17:00" },
   });
   const [autoDelay, setAutoDelay] = useState(5);
+  const [autoPacing, setAutoPacing] = useState<"fixed_delay" | "spread_evenly">("fixed_delay");
   const [autoStartAt, setAutoStartAt] = useState("");
   const [timezone, setTimezone] = useState("UTC");
 
@@ -85,6 +92,7 @@ export default function ScheduleDialog({
       const savedDelay = Number(settings.delay_minutes ?? 5);
       setBulkDelay(savedDelay);
       setAutoDelay(savedDelay);
+      setAutoPacing(settings.pacing_mode === "spread_evenly" ? "spread_evenly" : "fixed_delay");
       setDryRun(Boolean(settings.dry_run ?? false));
       if (settings.draft_scheduled_at) {
         const localValue = toLocalDateTimeInput(settings.draft_scheduled_at);
@@ -135,7 +143,10 @@ export default function ScheduleDialog({
       dry_run: dryRun,
       timezone,
     };
-    if (mode === "autopilot") body.schedule = schedule;
+    if (mode === "autopilot") {
+      body.schedule = schedule;
+      body.pacing_mode = autoPacing;
+    }
     body.scheduled_at = draftDate ? new Date(draftDate).toISOString() : null;
     const res = await authFetch(`${API_URL}/api/campaigns/${campaignId}/send-settings`, {
       method: "PATCH",
@@ -144,7 +155,7 @@ export default function ScheduleDialog({
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.detail || "Failed to save send settings");
-  }, [authFetch, autoDelay, autoSchedule, autoStartAt, bulkDelay, campaignId, dryRun, scheduledAt, timezone]);
+  }, [authFetch, autoDelay, autoPacing, autoSchedule, autoStartAt, bulkDelay, campaignId, dryRun, scheduledAt, timezone]);
 
   useEffect(() => {
     if (!isOpen || readOnly || !settingsReady) return;
@@ -227,6 +238,7 @@ export default function ScheduleDialog({
       const body: Record<string, unknown> = {
         schedule: scheduleBody,
         delay_minutes: autoDelay,
+        pacing_mode: autoPacing,
         dry_run: dryRun,
         timezone,
       };
@@ -354,7 +366,8 @@ export default function ScheduleDialog({
                         }
                         disabled={readOnly || !entry.active}
                         className="h-7 w-16 text-xs"
-                        placeholder="Cap"
+                        placeholder="Emails"
+                        title={`Emails to send on ${d}`}
                       />
                       <span className="text-xs text-slate-400 shrink-0">from</span>
                       <Input
@@ -389,9 +402,43 @@ export default function ScheduleDialog({
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-700">Delay between batches (min)</label>
-              <Input type="number" min={0} value={autoDelay} onChange={(e) => setAutoDelay(Number(e.target.value))} disabled={readOnly} />
+              <label className="text-xs font-semibold text-slate-700">Pacing</label>
+              <div className="grid grid-cols-2 gap-1 rounded-md bg-slate-100 p-1">
+                <button
+                  type="button"
+                  aria-pressed={autoPacing === "fixed_delay"}
+                  onClick={() => setAutoPacing("fixed_delay")}
+                  disabled={readOnly}
+                  className={`h-8 rounded px-3 text-xs font-medium transition-colors disabled:cursor-not-allowed ${
+                    autoPacing === "fixed_delay"
+                      ? "bg-white text-slate-900 shadow-sm"
+                      : "text-slate-500 hover:text-slate-800"
+                  }`}
+                >
+                  Fixed delay
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={autoPacing === "spread_evenly"}
+                  onClick={() => setAutoPacing("spread_evenly")}
+                  disabled={readOnly}
+                  className={`h-8 rounded px-3 text-xs font-medium transition-colors disabled:cursor-not-allowed ${
+                    autoPacing === "spread_evenly"
+                      ? "bg-white text-slate-900 shadow-sm"
+                      : "text-slate-500 hover:text-slate-800"
+                  }`}
+                >
+                  Spread evenly
+                </button>
+              </div>
             </div>
+
+            {autoPacing === "fixed_delay" && (
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-700">Delay between batches (min)</label>
+                <Input type="number" min={0} value={autoDelay} onChange={(e) => setAutoDelay(Number(e.target.value))} disabled={readOnly} />
+              </div>
+            )}
 
             <div className="space-y-1">
               <label className="text-xs font-semibold text-slate-700">Start at (optional, leave empty to start now)</label>

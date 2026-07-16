@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, time, timedelta, timezone
+from math import ceil
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Iterable
 
@@ -25,6 +26,8 @@ from src.platform.time import utcnow
 CONNECTED_SENDER_STATUSES = {"connected"}
 WEEKDAY_NAMES = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
 SENDER_ERROR_COOLDOWN = timedelta(minutes=15)
+AUTOPILOT_PACING_FIXED = "fixed_delay"
+AUTOPILOT_PACING_SPREAD = "spread_evenly"
 
 
 def _aware_utc(value: datetime) -> datetime:
@@ -127,7 +130,15 @@ def autopilot_window_state(session: Session, campaign: Campaign, *, now: datetim
             "next_at": next_autopilot_run(session, campaign, now=current),
             "schedule": schedule,
         }
-    return {"allowed": True, "reason_code": None, "reason": None, "next_at": current, "schedule": schedule}
+    return {
+        "allowed": True,
+        "reason_code": None,
+        "reason": None,
+        "next_at": current,
+        "schedule": schedule,
+        "start_at": start_at.astimezone(timezone.utc),
+        "end_at": end_at.astimezone(timezone.utc),
+    }
 
 
 def ensure_user(session: Session, user_id: str, email: str | None = None) -> User:
@@ -300,6 +311,76 @@ def autopilot_reschedule_state(
         "pause_reason": window.get("reason_code") if not window["allowed"] else None,
         "capacity": capacity,
     }
+
+
+def evenly_spaced_next_batch_at(
+    *,
+    current: datetime,
+    end_at: datetime,
+    remaining_emails: int,
+    batch_size: int,
+) -> datetime:
+    """Place remaining batches evenly inside the rest of a half-open daily window."""
+    current_utc = _aware_utc(current)
+    end_utc = _aware_utc(end_at)
+    if remaining_emails <= 0 or end_utc <= current_utc:
+        return current_utc
+    remaining_batches = ceil(remaining_emails / max(batch_size, 1))
+    interval = (end_utc - current_utc) / (remaining_batches + 1)
+    return current_utc + max(interval, timedelta(minutes=1))
+
+
+def campaign_batch_schedule(
+    session: Session,
+    campaign: Campaign,
+    *,
+    after: datetime,
+    delay_minutes: int,
+    batch_size: int,
+) -> dict:
+    """Return one canonical next-batch decision for API and worker delivery paths."""
+    current = _aware_utc(after)
+    settings = campaign.send_settings or {}
+    is_autopilot = settings.get("mode") == "autopilot"
+    pacing_mode = settings.get("pacing_mode", AUTOPILOT_PACING_FIXED)
+    candidate = current + timedelta(minutes=max(delay_minutes, 0))
+
+    if is_autopilot and pacing_mode == AUTOPILOT_PACING_SPREAD:
+        window = autopilot_window_state(session, campaign, now=current)
+        if not window["allowed"]:
+            return {
+                "next_at": window["next_at"],
+                "pause_reason": window["reason_code"],
+                "capacity": None,
+            }
+        capacity = campaign_daily_capacity(
+            session,
+            campaign,
+            now=current,
+            schedule=window["schedule"],
+        )
+        if capacity is not None and capacity["remaining"] <= 0:
+            return {
+                "next_at": next_autopilot_run(session, campaign, now=current, force_next_day=True),
+                "pause_reason": "campaign_daily_cap_reached",
+                "capacity": capacity,
+            }
+        if capacity is not None:
+            candidate = evenly_spaced_next_batch_at(
+                current=current,
+                end_at=window["end_at"],
+                remaining_emails=capacity["remaining"],
+                batch_size=batch_size,
+            )
+
+    if not is_autopilot:
+        return {"next_at": candidate, "pause_reason": None, "capacity": None}
+    return autopilot_reschedule_state(
+        session,
+        campaign,
+        now=current,
+        next_candidate=candidate,
+    )
 
 
 def sender_reserved_today(

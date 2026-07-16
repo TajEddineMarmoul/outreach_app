@@ -607,7 +607,11 @@ export default function CampaignEditorPage() {
           <div>
             <span className="font-semibold text-slate-800">Sending configuration:</span>{" "}
             <span className="capitalize">{String(summary?.send_settings?.mode || "send_now").replaceAll("_", " ")}</span>
-            <span className="ml-3">{Number(summary?.send_settings?.delay_minutes ?? 5)} min between batches</span>
+            <span className="ml-3">
+              {summary?.send_settings?.mode === "autopilot" && summary?.send_settings?.pacing_mode === "spread_evenly"
+                ? "Spread evenly across daily windows"
+                : `${Number(summary?.send_settings?.delay_minutes ?? 5)} min between batches`}
+            </span>
             {summary?.send_settings?.dry_run ? <span className="ml-3 font-semibold text-amber-700">Test mode</span> : null}
           </div>
           <span className={editingLocked ? "font-semibold text-amber-700" : "text-slate-400"}>

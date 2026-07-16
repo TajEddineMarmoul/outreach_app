@@ -4,6 +4,7 @@ import logging
 import hmac
 import os
 from datetime import datetime, time, timezone
+from typing import Literal
 
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.orm import Session
@@ -70,6 +71,7 @@ class DayScheduleEntry(DeliveryRequest):
 class AutopilotRequest(DeliveryRequest):
     schedule: dict[str, DayScheduleEntry] = Field(..., min_length=1)
     delay_minutes: int = Field(default=5, ge=0, le=1440)
+    pacing_mode: Literal["fixed_delay", "spread_evenly"] = "fixed_delay"
     scheduled_at: datetime | None = None
     dry_run: bool = False
 
@@ -84,6 +86,7 @@ class AutopilotRequest(DeliveryRequest):
 class SendSettingsUpdate(DeliveryRequest):
     mode: str | None = Field(default=None, pattern="^(send_now|schedule|autopilot)$")
     delay_minutes: int | None = Field(default=None, ge=0, le=1440)
+    pacing_mode: Literal["fixed_delay", "spread_evenly"] | None = None
     dry_run: bool | None = None
     scheduled_at: datetime | None = None
     schedule: dict[str, DayScheduleEntry] | None = None
@@ -284,6 +287,8 @@ def patch_send_settings(
         settings["mode"] = req.mode
     if req.delay_minutes is not None:
         settings["delay_minutes"] = req.delay_minutes
+    if req.pacing_mode is not None:
+        settings["pacing_mode"] = req.pacing_mode
     if req.dry_run is not None:
         settings["dry_run"] = req.dry_run
     if "scheduled_at" in req.model_fields_set:
@@ -478,6 +483,7 @@ def post_autopilot_start(
         **(campaign.send_settings or {}),
         "mode": "autopilot",
         "delay_minutes": req.delay_minutes,
+        "pacing_mode": req.pacing_mode,
         "dry_run": req.dry_run,
         "pause_reason": None,
     }
@@ -753,6 +759,7 @@ def get_campaign_send_progress(
         "current_recipient": current_recipient,
         "next_batch_at": campaign.scheduled_at.isoformat() if campaign.scheduled_at else None,
         "delay_minutes": int((campaign.send_settings or {}).get("delay_minutes", 0)),
+        "pacing_mode": (campaign.send_settings or {}).get("pacing_mode", "fixed_delay"),
         "send_mode": (campaign.send_settings or {}).get("mode", "send_now"),
         "send_settings": dict(campaign.send_settings or {}),
         "pause_reason": pause_reason,

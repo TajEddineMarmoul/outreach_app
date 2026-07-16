@@ -18,8 +18,8 @@ from src.platform.models import Campaign, CampaignAttachment, CampaignRecipient,
 from src.platform.services import (
     SENDER_ERROR_COOLDOWN,
     WEEKDAY_NAMES,
-    autopilot_reschedule_state,
     autopilot_window_state,
+    campaign_batch_schedule,
     campaign_daily_capacity,
     connected_senders,
     delivery_policy_state,
@@ -122,22 +122,29 @@ def _schedule_after_finished_batch(session: Session, job: SendJob, finished_at: 
             "pause_reason": None,
         }
         return
-    delay_minutes = int((campaign.send_settings or {}).get("delay_minutes", 5))
-    next_due = finished_at + timedelta(minutes=delay_minutes)
-    if (campaign.send_settings or {}).get("mode") == "autopilot":
-        state = autopilot_reschedule_state(
-            session,
-            campaign,
-            now=finished_at,
-            next_candidate=next_due,
+    batch_size = int(
+        session.scalar(
+            select(func.count())
+            .select_from(SendJob)
+            .where(
+                SendJob.campaign_id == job.campaign_id,
+                SendJob.batch_id == job.batch_id,
+            )
         )
-        campaign.scheduled_at = state["next_at"]
-        campaign.send_settings = {
-            **(campaign.send_settings or {}),
-            "pause_reason": state["pause_reason"],
-        }
-    else:
-        campaign.scheduled_at = next_due
+        or 1
+    )
+    state = campaign_batch_schedule(
+        session,
+        campaign,
+        after=finished_at,
+        delay_minutes=int((campaign.send_settings or {}).get("delay_minutes", 5)),
+        batch_size=batch_size,
+    )
+    campaign.scheduled_at = state["next_at"]
+    campaign.send_settings = {
+        **(campaign.send_settings or {}),
+        "pause_reason": state["pause_reason"],
+    }
 
 
 def _defer_disallowed_job(
@@ -325,8 +332,20 @@ def create_send_jobs_for_next_batch(
 
     if created_ids and campaign.status in {"draft", "scheduled"}:
         campaign.status = "sending"
+    next_schedule = None
     if created_ids:
-        campaign.scheduled_at = scheduled + timedelta(minutes=delay_minutes)
+        next_schedule = campaign_batch_schedule(
+            session,
+            campaign,
+            after=scheduled,
+            delay_minutes=delay_minutes,
+            batch_size=len(created_ids),
+        )
+        campaign.scheduled_at = next_schedule["next_at"]
+        campaign.send_settings = {
+            **(campaign.send_settings or {}),
+            "pause_reason": next_schedule["pause_reason"],
+        }
 
     return {
         "created": len(created_ids),
@@ -334,7 +353,7 @@ def create_send_jobs_for_next_batch(
         "job_ids": created_ids,
         "batch_id": batch_id,
         "exhausted": False,
-        "next_batch_due_at": (scheduled + timedelta(minutes=delay_minutes)).isoformat(),
+        "next_batch_due_at": next_schedule["next_at"].isoformat() if next_schedule else None,
     }
 
 
