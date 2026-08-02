@@ -20,7 +20,7 @@ from src.platform.scheduler import WEEKDAY_NAMES, next_autopilot_run
 from src.platform.services import campaign_sent_today, connected_senders, ensure_user, require_group, serialize_group, set_user_timezone, user_zone
 from src.platform.time import utcnow
 from src.platform.worker import recover_stale_jobs, run_worker_cycle
-from src.template_engine import extract_template_variables
+from src.template_engine import extract_template_variables, missing_template_variables
 
 
 router = APIRouter(tags=["campaign-delivery"])
@@ -191,6 +191,117 @@ def require_known_template_variables(session: Session, campaign: Campaign) -> No
         )
 
 
+def recipient_template_validation(
+    session: Session,
+    campaign: Campaign,
+    user_id: str,
+    *,
+    skip_invalid: bool = False,
+) -> dict:
+    """Report incomplete template data and optionally reject those recipients.
+
+    Counts are calculated per variable, while ``skipped_recipient_count`` is a
+    de-duplicated recipient count. This matters when one CSV row is missing
+    more than one required value.
+    """
+    eligible_status = or_(
+        CampaignRecipient.status == "approved",
+        CampaignRecipient.status.is_(None),
+        func.trim(CampaignRecipient.status) == "",
+    )
+    if skip_invalid:
+        # Preserve compatibility with recipients created before the approved
+        # server default was introduced.
+        session.execute(
+            update(CampaignRecipient)
+            .where(
+                CampaignRecipient.campaign_id == campaign.id,
+                or_(
+                    CampaignRecipient.status.is_(None),
+                    func.trim(CampaignRecipient.status) == "",
+                ),
+            )
+            .values(status="approved")
+        )
+
+    rows = list(
+        session.execute(
+            select(CampaignRecipient, Contact)
+            .join(Contact, Contact.id == CampaignRecipient.contact_id)
+            .where(
+                CampaignRecipient.campaign_id == campaign.id,
+                Contact.user_id == user_id,
+                Contact.status.in_(("approved", "sent")),
+                eligible_status,
+            )
+            .order_by(CampaignRecipient.created_at, CampaignRecipient.contact_id)
+        )
+    )
+    templates = (
+        campaign.subject_template or "",
+        campaign.body_template or campaign.fallback_body_template or "",
+    )
+    variables: list[str] = []
+    for template in templates:
+        for variable in extract_template_variables(template):
+            if variable not in variables:
+                variables.append(variable)
+
+    missing_counts = {variable: 0 for variable in variables}
+    invalid_contact_ids: list[int] = []
+    overlap_recipient_count = 0
+    for recipient, contact in rows:
+        custom_fields = contact.custom_fields if isinstance(contact.custom_fields, dict) else {}
+        context = dict(custom_fields)
+        context.setdefault("email", contact.email_normalized)
+        missing: list[str] = []
+        for template in templates:
+            for variable in missing_template_variables(template, context):
+                if variable not in missing:
+                    missing.append(variable)
+        if not missing:
+            continue
+        invalid_contact_ids.append(recipient.contact_id)
+        if len(missing) > 1:
+            overlap_recipient_count += 1
+        for variable in missing:
+            missing_counts[variable] += 1
+
+    if skip_invalid and invalid_contact_ids:
+        session.execute(
+            update(CampaignRecipient)
+            .where(
+                CampaignRecipient.campaign_id == campaign.id,
+                CampaignRecipient.contact_id.in_(invalid_contact_ids),
+            )
+            .values(status="rejected")
+        )
+
+    skipped_count = len(invalid_contact_ids)
+    return {
+        "checked_recipient_count": len(rows),
+        "ready_recipient_count": len(rows) - skipped_count,
+        "skipped_recipient_count": skipped_count,
+        "overlap_recipient_count": overlap_recipient_count,
+        "missing_by_variable": [
+            {"variable": variable, "row_count": missing_counts[variable]}
+            for variable in variables
+            if missing_counts[variable]
+        ],
+    }
+
+
+def no_ready_recipients_detail(validation: dict) -> dict:
+    return {
+        "code": "no_recipients_with_complete_template_data",
+        "message": (
+            "No recipients have all template values. "
+            f"{validation['skipped_recipient_count']} recipients would be skipped."
+        ),
+        "recipient_validation": validation,
+    }
+
+
 def reopen_failed_recipients(session: Session, campaign_id: int, user_id: str) -> int:
     failed_contact_ids = list(
         session.scalars(
@@ -332,6 +443,16 @@ def get_campaign_sender_group(
     return {"sender_group": serialize_group(session, group)}
 
 
+@router.get("/api/campaigns/{campaign_id}/recipient-template-validation")
+def get_recipient_template_validation(
+    campaign_id: int,
+    session: Session = Depends(get_session),
+    user_id: str = Depends(get_current_user_id),
+):
+    campaign = require_campaign(session, campaign_id, user_id)
+    return recipient_template_validation(session, campaign, user_id)
+
+
 @router.post("/api/campaigns/{campaign_id}/send-now")
 def post_send_now(
     campaign_id: int,
@@ -344,7 +465,6 @@ def post_send_now(
     campaign = require_campaign_editable(session, campaign_id, user_id)
     apply_request_timezone(session, user_id, req.timezone)
     require_connected_delivery_group(session, campaign, user_id)
-    require_known_template_variables(session, campaign)
     previous_status = campaign.status
     logger.info("campaign id=%s status=%s sender_group_id=%s", campaign.id, campaign.status, campaign.selected_sender_group_id)
     try:
@@ -357,6 +477,18 @@ def post_send_now(
             "pause_reason": None,
         }
         retried_failed = reopen_failed_recipients(session, campaign_id, user_id)
+        validation = recipient_template_validation(
+            session,
+            campaign,
+            user_id,
+            skip_invalid=True,
+        )
+        campaign.send_settings = {
+            **(campaign.send_settings or {}),
+            "recipient_validation": validation,
+        }
+        if validation["checked_recipient_count"] and not validation["ready_recipient_count"]:
+            raise HTTPException(status_code=409, detail=no_ready_recipients_detail(validation))
         existing_ids = queued_job_ids(session, campaign_id, user_id)
         logger.info("existing queued/retry jobs count=%s", len(existing_ids))
         if existing_ids:
@@ -366,6 +498,7 @@ def post_send_now(
                 "queued": len(existing_ids),
                 "mode": "resume",
                 "retried_failed": retried_failed,
+                "recipient_validation": validation,
             }
 
         logger.info("creating new send jobs batch")
@@ -406,6 +539,7 @@ def post_send_now(
         "status": "queued" if result.get("queued") else campaign.status,
         **result,
         "retried_failed": retried_failed,
+        "recipient_validation": validation,
     }
 
 
@@ -419,8 +553,15 @@ def post_schedule(
     campaign = require_campaign_editable(session, campaign_id, user_id)
     apply_request_timezone(session, user_id, req.timezone)
     require_connected_delivery_group(session, campaign, user_id)
-    require_known_template_variables(session, campaign)
     retried_failed = reopen_failed_recipients(session, campaign_id, user_id)
+    validation = recipient_template_validation(
+        session,
+        campaign,
+        user_id,
+        skip_invalid=True,
+    )
+    if validation["checked_recipient_count"] and not validation["ready_recipient_count"]:
+        raise HTTPException(status_code=409, detail=no_ready_recipients_detail(validation))
     approved_recipients = session.scalar(
         select(func.count())
         .select_from(CampaignRecipient)
@@ -444,12 +585,14 @@ def post_schedule(
         "delay_minutes": req.delay_minutes,
         "dry_run": req.dry_run,
         "pause_reason": None,
+        "recipient_validation": validation,
     }
     session.commit()
     return {
         "status": "scheduled",
         "scheduled_at": campaign.scheduled_at.isoformat(),
         "retried_failed": retried_failed,
+        "recipient_validation": validation,
     }
 
 
@@ -463,8 +606,15 @@ def post_autopilot_start(
     campaign = require_campaign_editable(session, campaign_id, user_id)
     apply_request_timezone(session, user_id, req.timezone)
     require_connected_delivery_group(session, campaign, user_id)
-    require_known_template_variables(session, campaign)
     retried_failed = reopen_failed_recipients(session, campaign_id, user_id)
+    validation = recipient_template_validation(
+        session,
+        campaign,
+        user_id,
+        skip_invalid=True,
+    )
+    if validation["checked_recipient_count"] and not validation["ready_recipient_count"]:
+        raise HTTPException(status_code=409, detail=no_ready_recipients_detail(validation))
     approved_recipients = session.scalar(
         select(func.count())
         .select_from(CampaignRecipient)
@@ -486,6 +636,7 @@ def post_autopilot_start(
         "pacing_mode": req.pacing_mode,
         "dry_run": req.dry_run,
         "pause_reason": None,
+        "recipient_validation": validation,
     }
 
     session.execute(
@@ -513,6 +664,7 @@ def post_autopilot_start(
         "status": "autopilot",
         "scheduled_at": campaign.scheduled_at.isoformat(),
         "retried_failed": retried_failed,
+        "recipient_validation": validation,
     }
 
 
@@ -679,6 +831,14 @@ def get_campaign_send_progress(
             CampaignRecipient.status == "failed",
         )
     ) or 0
+    skipped = session.scalar(
+        select(func.count())
+        .select_from(CampaignRecipient)
+        .where(
+            CampaignRecipient.campaign_id == campaign_id,
+            CampaignRecipient.status == "rejected",
+        )
+    ) or 0
     running_job = session.scalar(
         select(SendJob).where(SendJob.campaign_id == campaign_id, SendJob.status == "running").limit(1)
     )
@@ -733,7 +893,7 @@ def get_campaign_send_progress(
         except LookupError:
             pass
     is_running = running_job is not None
-    has_pending_work = sent + failed < total
+    has_pending_work = sent + failed + skipped < total
     worker_managed = campaign.status in {"sending", "scheduled", "autopilot"}
     is_waiting = worker_managed and has_pending_work and not is_running and queued == 0
     pause_reason = (campaign.send_settings or {}).get("pause_reason")
@@ -752,6 +912,7 @@ def get_campaign_send_progress(
         "total_recipients": total,
         "sent_count": sent,
         "failed_count": failed,
+        "skipped_count": skipped,
         "queued_count": queued,
         "is_active": worker_managed and has_pending_work,
         "is_sending": is_running,
@@ -771,6 +932,7 @@ def get_campaign_send_progress(
         "campaign_sent_today": campaign_sent_today(session, campaign.id) if today_schedule else None,
         "campaign_daily_cap": today_schedule.daily_cap if today_schedule else None,
         "dry_run": (campaign.send_settings or {}).get("dry_run", False),
+        "recipient_validation": (campaign.send_settings or {}).get("recipient_validation"),
     }
     logger.info("send-progress campaign=%s %s", campaign_id, {k: v for k, v in result.items() if k != "senders"})
     return result

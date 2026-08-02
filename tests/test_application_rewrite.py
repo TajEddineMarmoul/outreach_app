@@ -203,6 +203,477 @@ def test_delivery_validation_uses_exact_csv_header_names(tmp_path):
     session.close()
 
 
+def test_send_now_reports_and_skips_rows_with_missing_template_values(tmp_path):
+    session_factory = make_session_factory(tmp_path)
+    install_session_override(session_factory)
+    try:
+        session = session_factory()
+        ensure_user(session, USER_ID)
+        group = SenderGroup(user_id=USER_ID, name="Template validation")
+        session.add(group)
+        session.flush()
+        session.add(
+            Sender(
+                user_id=USER_ID,
+                group_id=group.id,
+                email="sender@example.com",
+                display_name="Sender",
+                status="connected",
+                daily_cap=10,
+                encrypted_oauth_credentials="encrypted",
+                scopes=["https://www.googleapis.com/auth/gmail.send"],
+                connected_at=utcnow(),
+            )
+        )
+        campaign = Campaign(
+            user_id=USER_ID,
+            selected_sender_group_id=group.id,
+            name="Missing row values",
+            subject_template="Hello {{First Name}}",
+            body_template="{{keyword_3}} at {{Company Name}}",
+            fallback_body_template="Fallback",
+            status="draft",
+        )
+        contacts = [
+            Contact(
+                user_id=USER_ID,
+                email_normalized="ready@example.com",
+                status="approved",
+                custom_fields={"First Name": "Ready", "keyword_3": "AI", "Company Name": "Acme"},
+            ),
+            Contact(
+                user_id=USER_ID,
+                email_normalized="missing-keyword@example.com",
+                status="approved",
+                custom_fields={"First Name": "Keyword", "Company Name": "Beta"},
+            ),
+            Contact(
+                user_id=USER_ID,
+                email_normalized="missing-company@example.com",
+                status="approved",
+                custom_fields={"First Name": "Company", "keyword_3": "Data", "Company Name": ""},
+            ),
+            Contact(
+                user_id=USER_ID,
+                email_normalized="missing-both@example.com",
+                status="approved",
+                custom_fields={"First Name": "Both", "keyword_3": "  "},
+            ),
+        ]
+        session.add_all([campaign, *contacts])
+        session.flush()
+        session.add_all(
+            CampaignRecipient(campaign_id=campaign.id, contact_id=contact.id, status="approved")
+            for contact in contacts
+        )
+        session.commit()
+        campaign_id = campaign.id
+        contact_ids = [contact.id for contact in contacts]
+        session.close()
+
+        client = TestClient(app)
+        preview = client.get(
+            f"/api/campaigns/{campaign_id}/recipient-template-validation",
+            headers=HEADERS,
+        )
+        assert preview.status_code == 200
+        assert preview.json() == {
+            "checked_recipient_count": 4,
+            "ready_recipient_count": 1,
+            "skipped_recipient_count": 3,
+            "overlap_recipient_count": 1,
+            "missing_by_variable": [
+                {"variable": "keyword_3", "row_count": 2},
+                {"variable": "Company Name", "row_count": 2},
+            ],
+        }
+
+        session = session_factory()
+        assert all(
+            session.get(
+                CampaignRecipient,
+                {"campaign_id": campaign_id, "contact_id": contact_id},
+            ).status == "approved"
+            for contact_id in contact_ids
+        )
+        session.close()
+
+        response = client.post(
+            f"/api/campaigns/{campaign_id}/send-now",
+            json={"delay_minutes": 2},
+            headers=HEADERS,
+        )
+        assert response.status_code == 200
+        assert response.json()["queued"] == 1
+        assert response.json()["recipient_validation"] == preview.json()
+
+        session = session_factory()
+        assert session.get(
+            CampaignRecipient,
+            {"campaign_id": campaign_id, "contact_id": contact_ids[0]},
+        ).status == "queued"
+        assert [
+            session.get(
+                CampaignRecipient,
+                {"campaign_id": campaign_id, "contact_id": contact_id},
+            ).status
+            for contact_id in contact_ids[1:]
+        ] == ["rejected", "rejected", "rejected"]
+        assert session.get(Campaign, campaign_id).send_settings["recipient_validation"] == preview.json()
+        session.close()
+
+        progress = client.get(f"/api/campaigns/{campaign_id}/send-progress", headers=HEADERS)
+        assert progress.status_code == 200
+        assert progress.json()["skipped_count"] == 3
+        assert progress.json()["recipient_validation"] == preview.json()
+    finally:
+        clear_session_override()
+
+
+def test_exact_500_recipient_campaign_never_queues_incomplete_rows(tmp_path):
+    session_factory = make_session_factory(tmp_path)
+    install_session_override(session_factory)
+    try:
+        session = session_factory()
+        ensure_user(session, USER_ID)
+        group = SenderGroup(user_id=USER_ID, name="500-recipient validation")
+        session.add(group)
+        session.flush()
+        session.add_all(
+            Sender(
+                user_id=USER_ID,
+                group_id=group.id,
+                email=f"sender{index}@example.com",
+                display_name=f"Sender {index}",
+                status="connected",
+                daily_cap=500,
+                encrypted_oauth_credentials=f"encrypted-{index}",
+                scopes=["https://www.googleapis.com/auth/gmail.send"],
+                connected_at=utcnow(),
+            )
+            for index in range(20)
+        )
+        campaign = Campaign(
+            user_id=USER_ID,
+            selected_sender_group_id=group.id,
+            name="Exact production-size campaign",
+            subject_template="Junior technical role at {{Company Name}}",
+            body_template=(
+                "Hi {{First Name}},\n\n"
+                "I found your LinkedIn profile while looking at {{Company Name}}, "
+                "and I liked that the company focuses on {{keyword_1}}, "
+                "{{keyword_2}}, and {{keyword_3}}."
+            ),
+            fallback_body_template="Fallback",
+            status="draft",
+        )
+        session.add(campaign)
+        session.flush()
+
+        contacts = []
+        expected_invalid_ids: set[int] = set()
+        for index in range(500):
+            custom_fields = {
+                "First Name": f"Lead {index}",
+                "Company Name": f"Company {index}",
+                "keyword_1": "software engineering",
+                "keyword_2": "AI systems",
+                "keyword_3": "data platforms",
+            }
+            if 400 <= index < 450:
+                custom_fields["keyword_3"] = ""
+            elif 450 <= index < 475:
+                custom_fields["Company Name"] = "  "
+            elif index >= 475:
+                custom_fields.pop("Company Name")
+                custom_fields.pop("keyword_3")
+            contact = Contact(
+                user_id=USER_ID,
+                email_normalized=f"lead{index}@example.com",
+                status="approved",
+                custom_fields=custom_fields,
+            )
+            contacts.append(contact)
+
+        session.add_all(contacts)
+        session.flush()
+        for index, contact in enumerate(contacts):
+            session.add(
+                CampaignRecipient(
+                    campaign_id=campaign.id,
+                    contact_id=contact.id,
+                    status="approved",
+                )
+            )
+            if index >= 400:
+                expected_invalid_ids.add(contact.id)
+        session.commit()
+        campaign_id = campaign.id
+        session.close()
+
+        client = TestClient(app)
+        preview = client.get(
+            f"/api/campaigns/{campaign_id}/recipient-template-validation",
+            headers=HEADERS,
+        )
+        assert preview.status_code == 200
+        assert preview.json() == {
+            "checked_recipient_count": 500,
+            "ready_recipient_count": 400,
+            "skipped_recipient_count": 100,
+            "overlap_recipient_count": 25,
+            "missing_by_variable": [
+                {"variable": "Company Name", "row_count": 50},
+                {"variable": "keyword_3", "row_count": 75},
+            ],
+        }
+
+        response = client.post(
+            f"/api/campaigns/{campaign_id}/send-now",
+            json={"delay_minutes": 0, "dry_run": True},
+            headers=HEADERS,
+        )
+        assert response.status_code == 200
+        assert response.json()["queued"] == 20
+        assert response.json()["recipient_validation"] == preview.json()
+
+        session = session_factory()
+        batches = 0
+        while True:
+            queued_jobs = list(
+                session.scalars(
+                    select(SendJob).where(
+                        SendJob.campaign_id == campaign_id,
+                        SendJob.status == "queued",
+                    )
+                )
+            )
+            if queued_jobs:
+                batches += 1
+            for job in queued_jobs:
+                assert job.recipient_id not in expected_invalid_ids
+                job.status = "sent"
+                session.get(
+                    CampaignRecipient,
+                    {"campaign_id": campaign_id, "contact_id": job.recipient_id},
+                ).status = "sent"
+            session.commit()
+
+            result = create_send_jobs_for_next_batch(
+                session,
+                user_id=USER_ID,
+                campaign_id=campaign_id,
+                delay_minutes=0,
+            )
+            session.commit()
+            if result.get("exhausted"):
+                break
+
+        jobs = list(session.scalars(select(SendJob).where(SendJob.campaign_id == campaign_id)))
+        assert batches == 20
+        assert len(jobs) == 400
+        assert expected_invalid_ids.isdisjoint(job.recipient_id for job in jobs)
+        recipient_status_counts = dict(
+            session.execute(
+                select(CampaignRecipient.status, func.count())
+                .where(CampaignRecipient.campaign_id == campaign_id)
+                .group_by(CampaignRecipient.status)
+            ).all()
+        )
+        assert recipient_status_counts == {"rejected": 100, "sent": 400}
+        session.close()
+
+        progress = client.get(f"/api/campaigns/{campaign_id}/send-progress", headers=HEADERS)
+        assert progress.status_code == 200
+        assert progress.json()["total_recipients"] == 500
+        assert progress.json()["sent_count"] == 400
+        assert progress.json()["skipped_count"] == 100
+        assert progress.json()["is_active"] is False
+    finally:
+        clear_session_override()
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "expected_campaign_status"),
+    [
+        ("send-now", "sending"),
+        ("schedule", "scheduled"),
+        ("autopilot/start", "autopilot"),
+    ],
+)
+def test_every_campaign_start_mode_skips_incomplete_rows(
+    tmp_path,
+    endpoint,
+    expected_campaign_status,
+):
+    session_factory = make_session_factory(tmp_path)
+    install_session_override(session_factory)
+    try:
+        session = session_factory()
+        ensure_user(session, USER_ID)
+        group = SenderGroup(user_id=USER_ID, name=f"Validation {endpoint}")
+        sender = Sender(
+            user_id=USER_ID,
+            group=group,
+            email=f"{endpoint.replace('/', '-')}@example.com",
+            status="connected",
+            daily_cap=10,
+            encrypted_oauth_credentials="encrypted",
+            scopes=["https://www.googleapis.com/auth/gmail.send"],
+            connected_at=utcnow(),
+        )
+        campaign = Campaign(
+            user_id=USER_ID,
+            selected_sender_group=group,
+            name=f"Validation {endpoint}",
+            subject_template="Hello {{First Name}}",
+            body_template="Focus: {{keyword_3}}",
+            status="draft",
+        )
+        ready = Contact(
+            user_id=USER_ID,
+            email_normalized=f"ready-{endpoint.replace('/', '-')}@example.com",
+            status="approved",
+            custom_fields={"First Name": "Ready", "keyword_3": "AI"},
+        )
+        incomplete = Contact(
+            user_id=USER_ID,
+            email_normalized=f"incomplete-{endpoint.replace('/', '-')}@example.com",
+            status="approved",
+            custom_fields={"First Name": "Incomplete", "keyword_3": ""},
+        )
+        session.add_all([group, sender, campaign, ready, incomplete])
+        session.flush()
+        session.add_all(
+            [
+                CampaignRecipient(campaign_id=campaign.id, contact_id=ready.id, status="approved"),
+                CampaignRecipient(campaign_id=campaign.id, contact_id=incomplete.id, status="approved"),
+            ]
+        )
+        session.commit()
+        campaign_id = campaign.id
+        ready_id = ready.id
+        incomplete_id = incomplete.id
+        session.close()
+
+        payload: dict[str, object] = {"delay_minutes": 0, "dry_run": True}
+        if endpoint == "schedule":
+            payload["scheduled_at"] = (utcnow() + timedelta(hours=1)).isoformat()
+        elif endpoint == "autopilot/start":
+            payload["schedule"] = all_day_schedule()
+            payload["scheduled_at"] = (utcnow() + timedelta(hours=1)).isoformat()
+
+        response = TestClient(app).post(
+            f"/api/campaigns/{campaign_id}/{endpoint}",
+            json=payload,
+            headers=HEADERS,
+        )
+        assert response.status_code == 200
+        assert response.json()["recipient_validation"] == {
+            "checked_recipient_count": 2,
+            "ready_recipient_count": 1,
+            "skipped_recipient_count": 1,
+            "overlap_recipient_count": 0,
+            "missing_by_variable": [{"variable": "keyword_3", "row_count": 1}],
+        }
+
+        session = session_factory()
+        assert session.get(Campaign, campaign_id).status == expected_campaign_status
+        assert session.get(
+            CampaignRecipient,
+            {"campaign_id": campaign_id, "contact_id": incomplete_id},
+        ).status == "rejected"
+        expected_ready_status = "queued" if endpoint == "send-now" else "approved"
+        assert session.get(
+            CampaignRecipient,
+            {"campaign_id": campaign_id, "contact_id": ready_id},
+        ).status == expected_ready_status
+        assert session.scalar(
+            select(func.count()).select_from(SendJob).where(
+                SendJob.campaign_id == campaign_id,
+                SendJob.recipient_id == incomplete_id,
+            )
+        ) == 0
+        session.close()
+    finally:
+        clear_session_override()
+
+
+def test_send_is_blocked_with_structured_counts_when_every_row_is_incomplete(tmp_path):
+    session_factory = make_session_factory(tmp_path)
+    install_session_override(session_factory)
+    try:
+        session = session_factory()
+        ensure_user(session, USER_ID)
+        group = SenderGroup(user_id=USER_ID, name="All incomplete")
+        sender = Sender(
+            user_id=USER_ID,
+            group=group,
+            email="all-incomplete-sender@example.com",
+            status="connected",
+            daily_cap=10,
+            encrypted_oauth_credentials="encrypted",
+            scopes=["https://www.googleapis.com/auth/gmail.send"],
+            connected_at=utcnow(),
+        )
+        campaign = Campaign(
+            user_id=USER_ID,
+            selected_sender_group=group,
+            name="All incomplete",
+            subject_template="Hello {{First Name}}",
+            body_template="Focus: {{keyword_3}}",
+            status="draft",
+        )
+        contacts = [
+            Contact(
+                user_id=USER_ID,
+                email_normalized=f"all-incomplete-{index}@example.com",
+                status="approved",
+                custom_fields={"First Name": f"Lead {index}"},
+            )
+            for index in range(3)
+        ]
+        session.add_all([group, sender, campaign, *contacts])
+        session.flush()
+        session.add_all(
+            CampaignRecipient(campaign_id=campaign.id, contact_id=contact.id, status="approved")
+            for contact in contacts
+        )
+        session.commit()
+        campaign_id = campaign.id
+        session.close()
+
+        client = TestClient(app)
+        preview = client.get(
+            f"/api/campaigns/{campaign_id}/recipient-template-validation",
+            headers=HEADERS,
+        )
+        assert preview.status_code == 200
+        assert preview.json()["ready_recipient_count"] == 0
+        assert preview.json()["skipped_recipient_count"] == 3
+
+        response = client.post(
+            f"/api/campaigns/{campaign_id}/send-now",
+            json={"delay_minutes": 0},
+            headers=HEADERS,
+        )
+        assert response.status_code == 409
+        assert response.json()["detail"] == {
+            "code": "no_recipients_with_complete_template_data",
+            "message": "No recipients have all template values. 3 recipients would be skipped.",
+            "recipient_validation": preview.json(),
+        }
+
+        session = session_factory()
+        assert session.scalar(
+            select(func.count()).select_from(SendJob).where(SendJob.campaign_id == campaign_id)
+        ) == 0
+        assert session.get(Campaign, campaign_id).status == "draft"
+        session.close()
+    finally:
+        clear_session_override()
+
+
 def test_group_oauth_connect_delete_and_reconnect_stays_in_database(tmp_path, monkeypatch):
     session_factory = make_session_factory(tmp_path)
     install_session_override(session_factory)

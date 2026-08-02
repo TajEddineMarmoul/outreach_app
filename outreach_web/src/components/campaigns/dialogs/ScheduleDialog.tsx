@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
+import useSWR from "swr";
+import { AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -9,6 +11,26 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Request failed";
+}
+
+function responseErrorMessage(data: unknown): string {
+  if (!data || typeof data !== "object") return "Request failed";
+  const detail = (data as { detail?: unknown }).detail;
+  if (typeof detail === "string") return detail;
+  if (detail && typeof detail === "object") {
+    const message = (detail as { message?: unknown; msg?: unknown }).message
+      ?? (detail as { msg?: unknown }).msg;
+    if (typeof message === "string") return message;
+  }
+  return "Request failed";
+}
+
+interface RecipientTemplateValidation {
+  checked_recipient_count: number;
+  ready_recipient_count: number;
+  skipped_recipient_count: number;
+  overlap_recipient_count: number;
+  missing_by_variable: Array<{ variable: string; row_count: number }>;
 }
 
 function toLocalDateTimeInput(value: string): string {
@@ -71,6 +93,12 @@ export default function ScheduleDialog({
   const [sendingAction, setSendingAction] = useState(false);
   const [settingsReady, setSettingsReady] = useState(false);
   const [settingsError, setSettingsError] = useState("");
+  const { data: recipientValidation, isLoading: validationLoading } = useSWR<RecipientTemplateValidation>(
+    isOpen && !readOnly
+      ? `${API_URL}/api/campaigns/${campaignId}/recipient-template-validation`
+      : null
+  );
+  const noReadyRecipients = recipientValidation?.ready_recipient_count === 0;
 
   const activeAutopilotEntries = Object.values(autoSchedule).filter((entry) => entry.active);
   const autopilotValidationError = activeAutopilotEntries.length === 0
@@ -211,7 +239,7 @@ export default function ScheduleDialog({
       const data = await res.json().catch(() => ({}));
       console.log(`[Send] Response ${res.status}:`, data);
       if (!res.ok) {
-        throw new Error(data.detail?.msg || data.detail || "Failed");
+        throw new Error(responseErrorMessage(data));
       }
       finishClose();
     } catch (error: unknown) {
@@ -252,7 +280,7 @@ export default function ScheduleDialog({
       });
       if (!res.ok) {
         const data = await res.json();
-        throw new Error(data.detail?.msg || data.detail || "Failed");
+        throw new Error(responseErrorMessage(data));
       }
       finishClose();
     } catch (error: unknown) {
@@ -264,10 +292,46 @@ export default function ScheduleDialog({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => { if (!open) void closeDialog(); }}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Send options</DialogTitle>
         </DialogHeader>
+
+        {!readOnly && validationLoading && (
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+            Checking template values for all recipients...
+          </div>
+        )}
+        {!readOnly && recipientValidation && recipientValidation.skipped_recipient_count > 0 && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-amber-900">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+              <div className="min-w-0 text-xs">
+                <p className="font-semibold">
+                  {recipientValidation.skipped_recipient_count} unique recipient{recipientValidation.skipped_recipient_count === 1 ? "" : "s"} will be skipped
+                </p>
+                <p className="mt-0.5 text-amber-800">
+                  Required template values are empty or missing in these rows:
+                </p>
+                <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                  {recipientValidation.missing_by_variable.map((item) => (
+                    <li key={item.variable}>
+                      <code>{`{{${item.variable}}}`}</code>: {item.row_count} row{item.row_count === 1 ? "" : "s"}
+                    </li>
+                  ))}
+                </ul>
+                {recipientValidation.overlap_recipient_count > 0 && (
+                  <p className="mt-1 text-amber-800">
+                    {recipientValidation.overlap_recipient_count} recipient{recipientValidation.overlap_recipient_count === 1 ? " is" : "s are"} missing more than one value, so the skip total is de-duplicated.
+                  </p>
+                )}
+                <p className="mt-1 font-medium">
+                  {recipientValidation.ready_recipient_count} of {recipientValidation.checked_recipient_count} recipients are ready.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full pt-2">
           <TabsList className="grid w-full grid-cols-3">
@@ -296,7 +360,7 @@ export default function ScheduleDialog({
             </label>
             <DialogFooter className="pt-2">
               <Button variant="outline" onClick={() => void closeDialog()}>Close</Button>
-              {!readOnly && <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={() => handleBulkSend("send-now")} disabled={sendingAction}>
+              {!readOnly && <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={() => handleBulkSend("send-now")} disabled={sendingAction || validationLoading || noReadyRecipients}>
                 {sendingAction ? "Starting..." : "Send now"}
               </Button>}
             </DialogFooter>
@@ -321,7 +385,7 @@ export default function ScheduleDialog({
             </label>
             <DialogFooter className="pt-2">
               <Button variant="outline" onClick={() => void closeDialog()}>Close</Button>
-              {!readOnly && <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={() => handleBulkSend("schedule")} disabled={sendingAction || !scheduledAt}>
+              {!readOnly && <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={() => handleBulkSend("schedule")} disabled={sendingAction || validationLoading || noReadyRecipients || !scheduledAt}>
                 {sendingAction ? "Scheduling..." : "Schedule"}
               </Button>}
             </DialogFooter>
@@ -452,7 +516,7 @@ export default function ScheduleDialog({
 
             <DialogFooter className="pt-2">
               <Button variant="outline" onClick={() => void closeDialog()}>Close</Button>
-              {!readOnly && <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={handleAutopilotStart} disabled={sendingAction}>
+              {!readOnly && <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={handleAutopilotStart} disabled={sendingAction || validationLoading || noReadyRecipients}>
                 {sendingAction ? "Starting..." : "Start Autopilot"}
               </Button>}
             </DialogFooter>

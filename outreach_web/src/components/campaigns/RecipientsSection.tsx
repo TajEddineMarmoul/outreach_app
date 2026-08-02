@@ -42,6 +42,7 @@ const STATUS_BADGES: Record<string, string> = {
   queued: "bg-blue-100 text-blue-700",
   sent: "bg-slate-100 text-slate-600",
   failed: "bg-red-100 text-red-700",
+  rejected: "bg-amber-100 text-amber-700",
   pending: "bg-amber-100 text-amber-700",
 };
 
@@ -59,7 +60,7 @@ const STATUS_DESCRIPTIONS: Record<string, string> = {
   queued: "Reserved for the delivery worker; no email has been sent yet",
   sent: "Email sent successfully",
   failed: "Delivery failed and can be retried",
-  rejected: "Recipient is not eligible for delivery",
+  rejected: "Skipped before sending because required data was missing or the recipient was otherwise ineligible",
   pending: "Ready for a future sending batch",
 };
 

@@ -13,6 +13,7 @@ interface ProgressData {
   total_recipients: number;
   sent_count: number;
   failed_count: number;
+  skipped_count: number;
   queued_count: number;
   is_active: boolean;
   is_sending: boolean;
@@ -26,6 +27,13 @@ interface ProgressData {
   campaign_sent_today: number | null;
   autopilot_schedule: { day: string; cap: number; start: string; end: string }[] | null;
   dry_run: boolean;
+  recipient_validation: {
+    checked_recipient_count: number;
+    ready_recipient_count: number;
+    skipped_recipient_count: number;
+    overlap_recipient_count: number;
+    missing_by_variable: Array<{ variable: string; row_count: number }>;
+  } | null;
   senders: {
     id: number;
     email: string;
@@ -77,10 +85,11 @@ export default function ProgressSection({ campaignId }: { campaignId: string }) 
   }
 
   const total = data.total_recipients;
-  const done = data.sent_count + data.failed_count;
+  const done = data.sent_count + data.failed_count + data.skipped_count;
   const pct = Math.round((done / Math.max(total, 1)) * 100);
   const sentWidth = done > 0 ? (data.sent_count / done) * 100 : 0;
   const failedWidth = done > 0 ? (data.failed_count / done) * 100 : 0;
+  const skippedWidth = done > 0 ? (data.skipped_count / done) * 100 : 0;
   const countdown = formatCountdown(data.next_batch_at, now);
   const isComplete = data.campaign_status === "ended" || (total > 0 && done >= total);
   const waitingReason = data.pause_reason === "campaign_daily_cap_reached"
@@ -121,14 +130,39 @@ export default function ProgressSection({ campaignId }: { campaignId: string }) 
           >
             <div className="h-full bg-green-500" style={{ width: `${sentWidth}%` }} />
             <div className="h-full bg-red-500" style={{ width: `${failedWidth}%` }} />
+            <div className="h-full bg-amber-400" style={{ width: `${skippedWidth}%` }} />
           </div>
         </div>
         <div className="flex gap-4 mt-1.5 text-xs text-slate-400">
           <span className="flex items-center gap-1"><CheckCircle2 className="w-3 h-3 text-green-500" />{data.sent_count} sent</span>
           <span className="flex items-center gap-1"><XCircle className="w-3 h-3 text-red-500" />{data.failed_count} failed</span>
+          <span className="flex items-center gap-1"><AlertTriangle className="w-3 h-3 text-amber-500" />{data.skipped_count} skipped</span>
           <span className="flex items-center gap-1"><Clock className="w-3 h-3 text-amber-500" />{data.queued_count} queued</span>
         </div>
       </div>
+
+      {data.recipient_validation && data.recipient_validation.skipped_recipient_count > 0 && (
+        <div className="flex items-start gap-3 border border-amber-200 bg-amber-50 px-4 py-3 rounded-lg">
+          <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
+          <div className="text-xs text-amber-800">
+            <div className="text-sm font-semibold text-amber-900">
+              {data.recipient_validation.skipped_recipient_count} recipient{data.recipient_validation.skipped_recipient_count === 1 ? " was" : "s were"} skipped before sending
+            </div>
+            <div className="mt-1">
+              {data.recipient_validation.missing_by_variable.map((item) => (
+                <span key={item.variable} className="mr-3 inline-block">
+                  <code>{`{{${item.variable}}}`}</code>: {item.row_count} row{item.row_count === 1 ? "" : "s"}
+                </span>
+              ))}
+            </div>
+            {data.recipient_validation.overlap_recipient_count > 0 && (
+              <div className="mt-1">
+                {data.recipient_validation.overlap_recipient_count} recipient{data.recipient_validation.overlap_recipient_count === 1 ? " was" : "s were"} missing multiple values; the total above counts each recipient once.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {data.is_waiting && (
         <div className="flex items-start gap-3 border border-amber-200 bg-amber-50 px-4 py-3 rounded-lg">
@@ -250,7 +284,7 @@ export default function ProgressSection({ campaignId }: { campaignId: string }) 
 
       {isComplete && (
         <div className="text-center py-4 text-sm text-green-600 font-semibold">
-          Sending finished. {data.sent_count} of {total} sent successfully.
+          Sending finished. {data.sent_count} sent, {data.skipped_count} skipped, {data.failed_count} failed.
         </div>
       )}
     </div>
