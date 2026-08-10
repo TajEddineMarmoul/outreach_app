@@ -1,71 +1,45 @@
 from __future__ import annotations
 
-import os
+import hmac
 import logging
+import os
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-import jwt
-from jwt import PyJWKClient
 
 logger = logging.getLogger(__name__)
 
 security = HTTPBearer(auto_error=True)
 
-CLERK_JWKS_URL = os.getenv("CLERK_JWKS_URL")
+APP_ACCESS_TOKEN = os.getenv("APP_ACCESS_TOKEN", "")
+APP_USER_ID = os.getenv("APP_USER_ID", "")
+IS_PRODUCTION = os.getenv("APP_ENV", "").strip().lower() == "production"
 
-def _derive_jwks_url() -> str | None:
-    pk = os.getenv("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", "")
-    if pk and pk.startswith("pk_test_"):
-        import base64
-        try:
-            encoded = pk[len("pk_test_"):]
-            decoded = base64.b64decode(encoded).decode("utf-8")
-            decoded = decoded.split("$")[0]
-            return f"https://{decoded}/.well-known/jwks.json"
-        except Exception:
-            pass
-    return None
-
-if not CLERK_JWKS_URL:
-    CLERK_JWKS_URL = _derive_jwks_url()
-
-jwks_client = PyJWKClient(CLERK_JWKS_URL) if CLERK_JWKS_URL else None
 
 def get_current_user_id(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
     token = credentials.credentials
-    
-    # Development/testing fallback (mock token bypass)
-    if token.startswith("mock_"):
-        return token
-        
-    # Production JWT verification via Clerk JWKS
-    if jwks_client:
-        try:
-            signing_key = jwks_client.get_signing_key_from_jwt(token)
-            payload = jwt.decode(
-                token,
-                signing_key.key,
-                algorithms=["RS256"],
-                options={"verify_aud": False}
-            )
-            user_id = payload.get("sub")
-            if not user_id:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Token is missing user ID (sub claim)"
-                )
-            return str(user_id)
-        except jwt.PyJWTError as e:
-            logger.error(f"JWT verification failed: {e}")
+
+    # A private, server-to-server token keeps the zero-cost single-user
+    # deployment independent from a third-party production auth domain.
+    if APP_ACCESS_TOKEN:
+        if not hmac.compare_digest(token, APP_ACCESS_TOKEN):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=f"Invalid or expired token: {str(e)}"
+                detail="Invalid or expired authentication token",
             )
-    try:
-        payload = jwt.decode(token, options={"verify_signature": False})
-        sub = payload.get("sub")
-        if sub:
-            return str(sub)
-    except Exception:
-        pass
-    return token
+        if not APP_USER_ID:
+            logger.error("APP_USER_ID is missing while APP_ACCESS_TOKEN is configured")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Application authentication is not configured",
+            )
+        return APP_USER_ID
+
+    # Development/testing fallback (never accepted in production).
+    if not IS_PRODUCTION and token.startswith("mock_"):
+        return token
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or expired authentication token",
+    )

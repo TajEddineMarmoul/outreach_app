@@ -1,0 +1,25 @@
+[project]
+name = "outreach-api"
+version = "1.0.0"
+requires-python = ">=3.12"
+dependencies = [
+  "alembic>=1.13",
+  "APScheduler>=3.10",
+  "cryptography>=42.0",
+  "fastapi>=0.110",
+  "google-api-python-client>=2.137",
+  "google-auth>=2.32",
+  "google-auth-httplib2>=0.2",
+  "google-auth-oauthlib>=1.2",
+  "pandas>=2.2",
+  "psycopg2-binary>=2.9",
+  "pydantic>=2.7",
+  "python-dotenv>=1.0",
+  "python-multipart>=0.0.9",
+  "PyYAML>=6.0",
+  "requests>=2.32",
+  "SQLAlchemy>=2.0"
+]
+
+[project.scripts]
+app = "api.main:app"

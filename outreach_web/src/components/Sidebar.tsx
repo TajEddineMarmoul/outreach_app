@@ -2,10 +2,10 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Mail, FileText, Users, BarChart2, Settings, Send, AtSign } from "lucide-react";
-import { UserButton, useUser } from "@clerk/nextjs";
+import { Mail, FileText, Users, BarChart2, Settings, Send, AtSign, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isAdminUser } from "@/lib/auth";
+import { useAppAuth } from "./AuthProvider";
 
 const menuItems = [
   { name: "Campaigns", href: "/campaigns", icon: Mail },
@@ -18,7 +18,7 @@ const menuItems = [
 
 export default function Sidebar() {
   const pathname = usePathname();
-  const { user } = useUser();
+  const { user, signOut } = useAppAuth();
   const isAdmin = isAdminUser(user);
 
   return (
@@ -57,18 +57,29 @@ export default function Sidebar() {
       {/* Footer Info */}
       <div className="p-4 border-t border-slate-200">
         <div className="flex items-center gap-3">
-          <UserButton />
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-600 text-sm font-bold text-white shadow-sm">
+            TM
+          </div>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold text-slate-900 truncate flex items-center gap-1.5">
-              {user?.fullName || user?.primaryEmailAddress?.emailAddress || "User"}
+              {user?.fullName || user?.email || "User"}
               {isAdmin && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 border border-blue-200">Admin</span>}
             </p>
             <p className="text-xs text-slate-500 truncate">
-              {user?.primaryEmailAddress?.emailAddress || ""}
+              {user?.email || ""}
             </p>
           </div>
+          <button
+            type="button"
+            onClick={() => void signOut()}
+            className="rounded-md p-2 text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+            aria-label="Sign out"
+            title="Sign out"
+          >
+            <LogOut className="h-4 w-4" />
+          </button>
         </div>
-        <p className="text-xs text-slate-400 text-center mt-3">v1.0.0 &bull; Local Deployment</p>
+        <p className="text-xs text-slate-400 text-center mt-3">v1.0.0 &bull; Private workspace</p>
       </div>
     </aside>
   );

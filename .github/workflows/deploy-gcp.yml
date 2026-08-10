@@ -1,8 +1,6 @@
-name: Deploy GCP
+name: Deploy GCP (legacy, manual)
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 env:
@@ -52,7 +50,7 @@ jobs:
             --project="$PROJECT_ID" \
             --region="$REGION" \
             --image="$BACKEND_IMAGE:${GITHUB_SHA}" \
-            --update-env-vars="APP_ENV=production,APP_ENCRYPTION_KEY=${{ secrets.APP_ENCRYPTION_KEY }}" \
+            --update-env-vars="APP_ENV=production,APP_ENCRYPTION_KEY=${{ secrets.APP_ENCRYPTION_KEY }},APP_ACCESS_TOKEN=${{ secrets.APP_ACCESS_TOKEN }},APP_USER_ID=${{ secrets.APP_USER_ID }}" \
             --quiet
           gcloud run services update-traffic "$BACKEND_SERVICE" \
             --project="$PROJECT_ID" \
@@ -77,7 +75,7 @@ jobs:
           build_id=$(gcloud builds submit outreach_web \
             --project="$PROJECT_ID" \
             --config=outreach_web/cloudbuild.yaml \
-            --substitutions="_NEXT_PUBLIC_API_URL=${{ secrets.BACKEND_URL }},_NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }},_IMAGE=${FRONTEND_IMAGE}:${GITHUB_SHA}" \
+            --substitutions="_NEXT_PUBLIC_API_URL=${{ secrets.BACKEND_URL }},_IMAGE=${FRONTEND_IMAGE}:${GITHUB_SHA}" \
             --async \
             --format='value(id)')
           for attempt in {1..60}; do
@@ -97,7 +95,7 @@ jobs:
             --max=1 \
             --min=0 \
             --allow-unauthenticated \
-            --update-env-vars="CLERK_SECRET_KEY=${{ secrets.CLERK_SECRET_KEY }}" \
+            --update-env-vars="APP_ACCESS_TOKEN=${{ secrets.APP_ACCESS_TOKEN }},APP_SESSION_TOKEN=${{ secrets.APP_SESSION_TOKEN }},APP_LOGIN_PASSWORD=${{ secrets.APP_LOGIN_PASSWORD }},BACKEND_URL=${{ secrets.BACKEND_URL }}" \
             --quiet
           gcloud run services update-traffic "$FRONTEND_SERVICE" \
             --project="$PROJECT_ID" \

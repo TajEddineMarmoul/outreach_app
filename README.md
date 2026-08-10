@@ -52,9 +52,40 @@ Worker:   python -m src.platform.worker
 Frontend: npm run dev
 ```
 
-For production, run the API and `python -m src.platform.worker` as separately
-supervised services using the same code, environment, and PostgreSQL database.
 Do not run multiple development launchers against the same local environment.
+
+## Free production deployment
+
+Production uses services with free tiers and does not depend on GCP billing:
+
+- **Frontend:** Vercel project `outreach-web`.
+- **API:** Vercel Python function exposed by `server.py` in project
+  `outreach-api`.
+- **Database and scheduler:** Supabase Postgres. A `pg_cron` job calls
+  `/internal/worker/tick` once per minute through `pg_net`; the endpoint claims
+  a bounded number of durable delivery jobs on each invocation.
+
+Both Vercel projects are connected to `main`, so pushing a verified commit is
+the production deployment mechanism. The legacy GCP workflow is manual-only.
+
+The hosted frontend uses private single-user authentication because an owned
+custom domain is not available. Keep these server-only values in Vercel and
+never prefix them with `NEXT_PUBLIC_`:
+
+```dotenv
+# API project
+APP_ACCESS_TOKEN=long-random-api-token
+APP_USER_ID=the-existing-database-user-id
+
+# Frontend project
+APP_ACCESS_TOKEN=the-same-long-random-api-token
+APP_SESSION_TOKEN=a-different-long-random-session-token
+APP_LOGIN_PASSWORD=a-private-workspace-password
+BACKEND_URL=https://outreach-api-virid.vercel.app
+```
+
+The browser receives only an HttpOnly session cookie. The Next.js backend proxy
+adds `APP_ACCESS_TOKEN` to API calls server-side.
 
 ## Delivery behavior
 

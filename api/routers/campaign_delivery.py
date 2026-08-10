@@ -32,7 +32,11 @@ def worker_tick(x_worker_token: str | None = Header(default=None)):
     if not expected or not x_worker_token or not hmac.compare_digest(x_worker_token, expected):
         raise HTTPException(status_code=401, detail="Invalid worker token")
     recovered = recover_stale_jobs(stale_after_minutes=10)
-    processed = run_worker_cycle(max_jobs=25)
+    try:
+        configured_max_jobs = int(os.getenv("WORKER_MAX_JOBS", "25"))
+    except ValueError:
+        configured_max_jobs = 25
+    processed = run_worker_cycle(max_jobs=max(1, min(configured_max_jobs, 25)))
     return {"status": "ok", "recovered": recovered, "processed": processed}
 
 

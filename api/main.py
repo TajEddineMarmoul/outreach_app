@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import os
+import logging
 os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
-from api.deps import db, config_path, get_db
+from api.deps import db
+from src.platform.db import SessionLocal
 from src.platform.migrations import upgrade_database
 
 app = FastAPI(title="Outreach App API", version="1.0.0")
@@ -20,11 +23,34 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
+def _env_flag(name: str, *, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 @app.on_event("startup")
 def on_startup():
-    conn = db.init_db()
-    conn.close()
-    upgrade_database()
+    # A serverless deployment can start multiple instances concurrently. The
+    # database is migrated explicitly during deployment instead of on every
+    # cold start, avoiding migration races and unnecessary startup work.
+    default = not bool(os.getenv("VERCEL"))
+    if _env_flag("RUN_DATABASE_MIGRATIONS", default=default):
+        conn = db.init_db()
+        conn.close()
+        upgrade_database()
+
+
+@app.get("/health", tags=["health"])
+def health():
+    try:
+        with SessionLocal() as session:
+            session.execute(text("SELECT 1"))
+    except Exception as exc:
+        logging.getLogger("outreach.health").exception("Database health check failed")
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    return {"status": "ok", "database": "ok"}
 
 from api.routers import campaign_delivery, campaigns, contacts, oauth, sender_groups, templates, settings
 

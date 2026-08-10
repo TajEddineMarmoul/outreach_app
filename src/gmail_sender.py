@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import mimetypes
 import os
 import re
@@ -58,7 +59,24 @@ def credentials_paths() -> tuple[Path, Path]:
 
 
 def credentials_file_path() -> Path:
-    return credentials_paths()[0]
+    configured_path = credentials_paths()[0]
+    credentials_json = os.getenv("GMAIL_CREDENTIALS_JSON")
+    if not credentials_json:
+        return configured_path
+
+    # Vercel functions have a read-only application filesystem and a writable
+    # temporary directory. Recreate the OAuth client file for each cold start.
+    path = configured_path
+    if os.getenv("VERCEL") and not path.as_posix().startswith("/tmp/"):
+        path = Path("/tmp/outreach-google-oauth-credentials.json")
+    try:
+        normalized = json.dumps(json.loads(credentials_json), separators=(",", ":"))
+    except json.JSONDecodeError as exc:
+        raise ValueError("GMAIL_CREDENTIALS_JSON is not valid JSON") from exc
+    if not path.exists() or path.read_text(encoding="utf-8") != normalized:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(normalized, encoding="utf-8")
+    return path
 
 
 def default_token_path() -> Path:

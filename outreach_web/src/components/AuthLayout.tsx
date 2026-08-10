@@ -1,10 +1,14 @@
 "use client";
 
-import { useAuth } from "@clerk/nextjs";
+import { useAppAuth } from "./AuthProvider";
 import Sidebar from "./Sidebar";
 
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
-  const { isSignedIn } = useAuth();
+  const { isLoaded, isSignedIn } = useAppAuth();
+
+  if (!isLoaded) {
+    return <main className="flex-1 min-h-screen bg-slate-50" />;
+  }
 
   if (!isSignedIn) {
     return (
