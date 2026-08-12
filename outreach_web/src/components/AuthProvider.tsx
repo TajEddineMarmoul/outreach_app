@@ -1,56 +1,12 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { useAuth } from "@clerk/nextjs";
+import { useCallback, useEffect, useMemo } from "react";
 import { SWRConfig } from "swr";
 import { toBackendProxyUrl } from "@/lib/api";
 
-type AppUser = {
-  fullName: string;
-  email: string;
-  publicMetadata: { role: "admin" };
-};
-
-type AppAuthState = {
-  isLoaded: boolean;
-  isSignedIn: boolean;
-  user: AppUser | null;
-  signOut: () => Promise<void>;
-};
-
-const AppAuthContext = createContext<AppAuthState | null>(null);
-
-export function useAppAuth(): AppAuthState {
-  const value = useContext(AppAuthContext);
-  if (!value) throw new Error("useAppAuth must be used inside AuthProvider");
-  return value;
-}
-
 export default function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [isLoaded, setIsLoaded] = useState(false);
-  const [isSignedIn, setIsSignedIn] = useState(false);
-  const [user, setUser] = useState<AppUser | null>(null);
-
-  useEffect(() => {
-    fetch("/api/auth/session", { cache: "no-store" })
-      .then(async (response) => {
-        if (!response.ok) return null;
-        return response.json() as Promise<{ authenticated: boolean; user?: AppUser }>;
-      })
-      .then((session) => {
-        setIsSignedIn(Boolean(session?.authenticated));
-        setUser(session?.user ?? null);
-      })
-      .catch(() => {
-        setIsSignedIn(false);
-        setUser(null);
-      })
-      .finally(() => setIsLoaded(true));
-  }, []);
-
-  const signOut = useCallback(async () => {
-    await fetch("/api/auth/session", { method: "DELETE" });
-    window.location.assign("/sign-in");
-  }, []);
+  const { isSignedIn } = useAuth();
 
   useEffect(() => {
     if (!isSignedIn) return;
@@ -83,16 +39,9 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
     [fetcher]
   );
 
-  const authState = useMemo(
-    () => ({ isLoaded, isSignedIn, user, signOut }),
-    [isLoaded, isSignedIn, user, signOut]
-  );
-
   return (
-    <AppAuthContext.Provider value={authState}>
-      <SWRConfig value={swrConfig}>
-        {children}
-      </SWRConfig>
-    </AppAuthContext.Provider>
+    <SWRConfig value={swrConfig}>
+      {children}
+    </SWRConfig>
   );
 }

@@ -68,9 +68,13 @@ Production uses services with free tiers and does not depend on GCP billing:
 Both Vercel projects are connected to `main`, so pushing a verified commit is
 the production deployment mechanism. The legacy GCP workflow is manual-only.
 
-The hosted frontend uses private single-user authentication because an owned
-custom domain is not available. Keep these server-only values in Vercel and
-never prefix them with `NEXT_PUBLIC_`:
+The hosted frontend uses the application's original Clerk sign-in. Because
+Clerk production instances require an owned domain, the free `*.vercel.app`
+deployment uses the existing Clerk development instance. It supports up to 100
+users and is suitable for this private deployment.
+
+Keep the API bridge token server-side in Vercel and never prefix it with
+`NEXT_PUBLIC_`:
 
 ```dotenv
 # API project
@@ -79,13 +83,13 @@ APP_USER_ID=the-existing-database-user-id
 
 # Frontend project
 APP_ACCESS_TOKEN=the-same-long-random-api-token
-APP_SESSION_TOKEN=a-different-long-random-session-token
-APP_LOGIN_PASSWORD=a-private-workspace-password
 BACKEND_URL=https://outreach-api-virid.vercel.app
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=the-existing-clerk-development-key
+CLERK_SECRET_KEY=the-existing-clerk-development-secret
 ```
 
-The browser receives only an HttpOnly session cookie. The Next.js backend proxy
-adds `APP_ACCESS_TOKEN` to API calls server-side.
+Clerk manages the browser session. The Next.js backend proxy verifies that
+session and adds `APP_ACCESS_TOKEN` to API calls server-side.
 
 ## Delivery behavior
 

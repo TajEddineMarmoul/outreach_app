@@ -1,25 +1,15 @@
-import { timingSafeEqual } from "node:crypto";
-import { cookies } from "next/headers";
+import { auth } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-const SESSION_COOKIE = "outreach_session";
-
-function equalSecret(received: string, expected: string): boolean {
-  const receivedBuffer = Buffer.from(received);
-  const expectedBuffer = Buffer.from(expected);
-  return receivedBuffer.length === expectedBuffer.length && timingSafeEqual(receivedBuffer, expectedBuffer);
-}
-
 async function proxyRequest(
   request: NextRequest,
   context: { params: Promise<{ path: string[] }> }
 ): Promise<Response> {
-  const sessionToken = process.env.APP_SESSION_TOKEN || "";
-  const receivedSession = (await cookies()).get(SESSION_COOKIE)?.value || "";
-  if (!sessionToken || !receivedSession || !equalSecret(receivedSession, sessionToken)) {
+  const { userId } = await auth();
+  if (!userId) {
     return NextResponse.json({ detail: "Authentication required" }, { status: 401 });
   }
 

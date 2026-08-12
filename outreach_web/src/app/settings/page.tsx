@@ -2,19 +2,19 @@
 
 import { useState, useEffect, useRef } from "react";
 import useSWR, { mutate } from "swr";
+import { useUser } from "@clerk/nextjs";
 import { Settings, ShieldAlert, Key, CheckCircle, AlertTriangle, Loader2, Upload, HelpCircle, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger } from "@/components/ui/dialog";
 import { useApiClient } from "@/lib/api";
 import { isAdminUser } from "@/lib/auth";
-import { useAppAuth } from "@/components/AuthProvider";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 export default function SettingsPage() {
   const { data: settings, isLoading: settingsLoading } = useSWR(`${API_URL}/api/settings`);
-  const { user } = useAppAuth();
+  const { user } = useUser();
   const { authFetch } = useApiClient();
   const isAdmin = isAdminUser(user);
 
