@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -6,6 +6,13 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useApiClient } from "@/lib/api";
+import {
+  formatTimeZoneLabel,
+  formatViewerConversion,
+  naiveDateTimePayload,
+  supportedTimeZones,
+  toZonedDateTimeInput,
+} from "@/lib/timezones";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
@@ -33,13 +40,6 @@ interface RecipientTemplateValidation {
   missing_by_variable: Array<{ variable: string; row_count: number }>;
 }
 
-function toLocalDateTimeInput(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
-  return local.toISOString().slice(0, 16);
-}
-
 export default function ScheduleDialog({
   isOpen,
   onClose,
@@ -48,6 +48,7 @@ export default function ScheduleDialog({
   mutateAll,
   summary,
   readOnly = false,
+  configurationOnly = false,
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -66,6 +67,7 @@ export default function ScheduleDialog({
     timezone?: string;
   };
   readOnly?: boolean;
+  configurationOnly?: boolean;
 }) {
   const [activeTab, setActiveTab] = useState(defaultTab);
   const { authFetch } = useApiClient();
@@ -89,6 +91,11 @@ export default function ScheduleDialog({
   const [autoPacing, setAutoPacing] = useState<"fixed_delay" | "spread_evenly">("fixed_delay");
   const [autoStartAt, setAutoStartAt] = useState("");
   const [timezone, setTimezone] = useState("UTC");
+  const viewerTimezone = useMemo(
+    () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+    []
+  );
+  const timezoneOptions = useMemo(() => supportedTimeZones(), []);
 
   const [sendingAction, setSendingAction] = useState(false);
   const [settingsReady, setSettingsReady] = useState(false);
@@ -113,8 +120,8 @@ export default function ScheduleDialog({
     if (!isOpen || !summary) return;
     const hydration = window.setTimeout(() => {
       const settings = summary.send_settings || {};
-      const browserTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || summary.timezone || "UTC";
-      setTimezone(readOnly ? summary.timezone || browserTimezone : browserTimezone);
+      const campaignTimezone = summary.timezone || viewerTimezone;
+      setTimezone(campaignTimezone);
       const savedMode = settings.mode || "send_now";
       setActiveTab(savedMode === "autopilot" ? "autopilot" : savedMode === "schedule" ? "schedule" : defaultTab);
       const savedDelay = Number(settings.delay_minutes ?? 5);
@@ -123,7 +130,7 @@ export default function ScheduleDialog({
       setAutoPacing(settings.pacing_mode === "spread_evenly" ? "spread_evenly" : "fixed_delay");
       setDryRun(Boolean(settings.dry_run ?? false));
       if (settings.draft_scheduled_at) {
-        const localValue = toLocalDateTimeInput(settings.draft_scheduled_at);
+        const localValue = toZonedDateTimeInput(settings.draft_scheduled_at, campaignTimezone);
         setScheduledAt(localValue);
         setAutoStartAt(localValue);
       } else {
@@ -155,7 +162,7 @@ export default function ScheduleDialog({
       setSettingsReady(true);
     }, 0);
     return () => window.clearTimeout(hydration);
-  }, [defaultTab, isOpen, readOnly, summary]);
+  }, [defaultTab, isOpen, summary, viewerTimezone]);
 
   const saveSettings = useCallback(async (mode: "send_now" | "schedule" | "autopilot") => {
     const schedule: Record<string, { cap: number; start: string; end: string }> = {};
@@ -175,7 +182,7 @@ export default function ScheduleDialog({
       body.schedule = schedule;
       body.pacing_mode = autoPacing;
     }
-    body.scheduled_at = draftDate ? new Date(draftDate).toISOString() : null;
+    body.scheduled_at = naiveDateTimePayload(draftDate);
     const res = await authFetch(`${API_URL}/api/campaigns/${campaignId}/send-settings`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -206,6 +213,14 @@ export default function ScheduleDialog({
   const closeDialog = async () => {
     if (!readOnly && settingsReady) {
       const mode = activeTab === "autopilot" ? "autopilot" : activeTab === "schedule" ? "schedule" : "send_now";
+      if (configurationOnly && mode === "autopilot" && autopilotValidationError) {
+        setSettingsError(autopilotValidationError);
+        return;
+      }
+      if (configurationOnly && mode === "schedule" && !scheduledAt) {
+        setSettingsError("Choose a start date and time before saving this schedule.");
+        return;
+      }
       if (!(mode === "autopilot" && autopilotValidationError)) {
         try {
           await saveSettings(mode);
@@ -226,9 +241,9 @@ export default function ScheduleDialog({
     setSendingAction(true);
     try {
       const endpoint = mode === "send-now" ? "send-now" : "schedule";
-      const body: Record<string, unknown> = { delay_minutes: bulkDelay, dry_run: dryRun };
+      const body: Record<string, unknown> = { delay_minutes: bulkDelay, dry_run: dryRun, timezone };
       if (mode === "schedule" && scheduledAt) {
-        body.scheduled_at = new Date(scheduledAt).toISOString();
+        body.scheduled_at = naiveDateTimePayload(scheduledAt);
       }
       console.log(`[Send] POST /api/campaigns/${campaignId}/${endpoint}`, body);
       const res = await authFetch(`${API_URL}/api/campaigns/${campaignId}/${endpoint}`, {
@@ -271,7 +286,7 @@ export default function ScheduleDialog({
         timezone,
       };
       if (autoStartAt) {
-        body.scheduled_at = new Date(autoStartAt).toISOString();
+        body.scheduled_at = naiveDateTimePayload(autoStartAt);
       }
       const res = await authFetch(`${API_URL}/api/campaigns/${campaignId}/autopilot/start`, {
         method: "POST",
@@ -290,12 +305,43 @@ export default function ScheduleDialog({
     }
   };
 
+  const scheduleConversion = useMemo(
+    () => scheduledAt ? formatViewerConversion(scheduledAt, timezone, viewerTimezone) : null,
+    [scheduledAt, timezone, viewerTimezone]
+  );
+  const activeWindow = Object.values(autoSchedule).find((entry) => entry.active);
+  const todayInCampaignZone = toZonedDateTimeInput(new Date().toISOString(), timezone).slice(0, 10);
+  const autopilotConversion = activeWindow && todayInCampaignZone
+    ? formatViewerConversion(`${todayInCampaignZone}T${activeWindow.start}`, timezone, viewerTimezone)
+    : null;
+
+  const timezoneField = (id: string) => (
+    <div className="space-y-1.5 rounded-lg border border-blue-100 bg-blue-50/50 p-3">
+      <label htmlFor={id} className="text-xs font-semibold text-slate-800">Campaign timezone</label>
+      <select
+        id={id}
+        value={timezone}
+        onChange={(event) => setTimezone(event.target.value)}
+        disabled={readOnly}
+        className="h-9 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-sm text-slate-900 outline-none transition-colors focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:opacity-70"
+      >
+        {timezoneOptions.map((option) => (
+          <option key={option} value={option}>{formatTimeZoneLabel(option)}</option>
+        ))}
+      </select>
+      <p className="text-[11px] leading-4 text-slate-600">
+        Times stay attached to this campaign. Your timezone is {viewerTimezone}.
+      </p>
+    </div>
+  );
+
   return (
     <Dialog open={isOpen} onOpenChange={(open) => { if (!open) void closeDialog(); }}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Send options</DialogTitle>
+          <DialogTitle>{configurationOnly ? "Schedule settings" : "Review launch options"}</DialogTitle>
         </DialogHeader>
+
 
         {!readOnly && validationLoading && (
           <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
@@ -348,10 +394,12 @@ export default function ScheduleDialog({
           {/* 1. Send Now */}
           <TabsContent value="send-now" className="py-4 space-y-4">
             <p className="text-xs text-slate-500">
-              Starts the next batch immediately using the connected senders in the selected group.
+              {configurationOnly
+                ? "Send the first batch when you launch from Review, using the connected senders in this group."
+                : "Starts the next batch immediately using the connected senders in the selected group."}
             </p>
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-700">Delay between emails (min)</label>
+              <label className="text-xs font-semibold text-slate-700">Delay between batches (min)</label>
               <Input type="number" min={0} value={bulkDelay} onChange={(e) => setBulkDelay(Number(e.target.value))} disabled={readOnly} />
             </div>
             <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
@@ -359,8 +407,8 @@ export default function ScheduleDialog({
               Test mode (no real emails sent)
             </label>
             <DialogFooter className="pt-2">
-              <Button variant="outline" onClick={() => void closeDialog()}>Close</Button>
-              {!readOnly && <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={() => handleBulkSend("send-now")} disabled={sendingAction || validationLoading || noReadyRecipients}>
+              <Button variant="outline" onClick={() => void closeDialog()}>{configurationOnly && !readOnly ? "Save schedule" : "Close"}</Button>
+              {!readOnly && !configurationOnly && <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={() => handleBulkSend("send-now")} disabled={sendingAction || validationLoading || noReadyRecipients}>
                 {sendingAction ? "Starting..." : "Send now"}
               </Button>}
             </DialogFooter>
@@ -372,20 +420,24 @@ export default function ScheduleDialog({
               Same as Send now, but starts at the date and time you pick.
             </p>
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-700">Delay between emails (min)</label>
+              <label className="text-xs font-semibold text-slate-700">Delay between batches (min)</label>
               <Input type="number" min={0} value={bulkDelay} onChange={(e) => setBulkDelay(Number(e.target.value))} disabled={readOnly} />
             </div>
+            {timezoneField("schedule-timezone")}
             <div className="space-y-1">
               <label className="text-xs font-semibold text-slate-700">Start at</label>
               <Input type="datetime-local" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)} disabled={readOnly} />
+              {scheduleConversion && timezone !== viewerTimezone && (
+                <p className="text-[11px] text-slate-500">In your timezone: {scheduleConversion}</p>
+              )}
             </div>
             <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
               <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} disabled={readOnly} className="accent-purple-600" />
               Test mode (no real emails sent)
             </label>
             <DialogFooter className="pt-2">
-              <Button variant="outline" onClick={() => void closeDialog()}>Close</Button>
-              {!readOnly && <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={() => handleBulkSend("schedule")} disabled={sendingAction || validationLoading || noReadyRecipients || !scheduledAt}>
+              <Button variant="outline" onClick={() => void closeDialog()}>{configurationOnly && !readOnly ? "Save schedule" : "Close"}</Button>
+              {!readOnly && !configurationOnly && <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={() => handleBulkSend("schedule")} disabled={sendingAction || validationLoading || noReadyRecipients || !scheduledAt}>
                 {sendingAction ? "Scheduling..." : "Schedule"}
               </Button>}
             </DialogFooter>
@@ -393,10 +445,13 @@ export default function ScheduleDialog({
 
           {/* 3. Autopilot */}
           <TabsContent value="autopilot" className="py-4 space-y-4">
-            <div className="flex items-center justify-between gap-3 text-xs text-slate-500">
-              <span>Configure per-day sending limits and time windows.</span>
-              <span className="font-medium text-slate-700 shrink-0">{timezone}</span>
-            </div>
+            <p className="text-xs text-slate-500">Configure per-day sending limits and time windows.</p>
+            {timezoneField("autopilot-timezone")}
+            {autopilotConversion && timezone !== viewerTimezone && (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                {activeWindow?.start} in {timezone} is {autopilotConversion} in {viewerTimezone} today.
+              </div>
+            )}
 
             <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
               {["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"].map((d) => {
@@ -515,8 +570,8 @@ export default function ScheduleDialog({
             </label>
 
             <DialogFooter className="pt-2">
-              <Button variant="outline" onClick={() => void closeDialog()}>Close</Button>
-              {!readOnly && <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={handleAutopilotStart} disabled={sendingAction || validationLoading || noReadyRecipients}>
+              <Button variant="outline" onClick={() => void closeDialog()}>{configurationOnly && !readOnly ? "Save schedule" : "Close"}</Button>
+              {!readOnly && !configurationOnly && <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={handleAutopilotStart} disabled={sendingAction || validationLoading || noReadyRecipients}>
                 {sendingAction ? "Starting..." : "Start Autopilot"}
               </Button>}
             </DialogFooter>

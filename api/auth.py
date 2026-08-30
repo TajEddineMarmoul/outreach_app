@@ -13,6 +13,7 @@ security = HTTPBearer(auto_error=True)
 
 APP_ACCESS_TOKEN = os.getenv("APP_ACCESS_TOKEN", "")
 APP_USER_ID = os.getenv("APP_USER_ID", "")
+LOCAL_DEV_USER_ID = os.getenv("LOCAL_DEV_USER_ID", "")
 IS_PRODUCTION = os.getenv("APP_ENV", "").strip().lower() == "production"
 
 
@@ -34,6 +35,14 @@ def get_current_user_id(credentials: HTTPAuthorizationCredentials = Depends(secu
                 detail="Application authentication is not configured",
             )
         return APP_USER_ID
+
+    # A local web app can access one existing production account without
+    # copying its server-to-server access token onto the developer machine.
+    # The Next.js proxy only creates this token for the matching Clerk user.
+    if not IS_PRODUCTION and LOCAL_DEV_USER_ID:
+        local_token = f"local_dev_{LOCAL_DEV_USER_ID}"
+        if hmac.compare_digest(token, local_token):
+            return LOCAL_DEV_USER_ID
 
     # Development/testing fallback (never accepted in production).
     if not IS_PRODUCTION and token.startswith("mock_"):

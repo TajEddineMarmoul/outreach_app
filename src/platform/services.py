@@ -42,6 +42,16 @@ def user_zone(session: Session, user_id: str) -> ZoneInfo:
         return ZoneInfo("UTC")
 
 
+def campaign_zone(session: Session, campaign: Campaign) -> ZoneInfo:
+    """Return the campaign's fixed schedule zone, falling back for legacy rows."""
+    if campaign.timezone:
+        try:
+            return ZoneInfo(campaign.timezone)
+        except ZoneInfoNotFoundError:
+            pass
+    return user_zone(session, campaign.user_id)
+
+
 def validate_timezone_name(value: str) -> str:
     try:
         ZoneInfo(value)
@@ -52,6 +62,10 @@ def validate_timezone_name(value: str) -> str:
 
 def local_day_bounds(session: Session, user_id: str, *, now: datetime | None = None) -> tuple[datetime, datetime]:
     zone = user_zone(session, user_id)
+    return day_bounds_for_zone(zone, now=now)
+
+
+def day_bounds_for_zone(zone: ZoneInfo, *, now: datetime | None = None) -> tuple[datetime, datetime]:
     local_midnight = _aware_utc(now or utcnow()).astimezone(zone).replace(hour=0, minute=0, second=0, microsecond=0)
     return local_midnight.astimezone(timezone.utc), (local_midnight + timedelta(days=1)).astimezone(timezone.utc)
 
@@ -78,7 +92,7 @@ def next_autopilot_run(
     force_next_day: bool = False,
 ) -> datetime:
     current = _aware_utc(now or utcnow())
-    zone = user_zone(session, campaign.user_id)
+    zone = campaign_zone(session, campaign)
     local_now = current.astimezone(zone)
     schedules = _day_schedules(session, campaign.id)
     settings = campaign.send_settings or {}
@@ -103,7 +117,7 @@ def next_autopilot_run(
 
 def autopilot_window_state(session: Session, campaign: Campaign, *, now: datetime | None = None) -> dict:
     current = _aware_utc(now or utcnow())
-    zone = user_zone(session, campaign.user_id)
+    zone = campaign_zone(session, campaign)
     local_now = current.astimezone(zone)
     schedules = _day_schedules(session, campaign.id)
     settings = campaign.send_settings or {}
@@ -219,7 +233,7 @@ def campaign_sent_today(
     campaign = session.get(Campaign, campaign_id)
     if not campaign:
         return 0
-    start, end = local_day_bounds(session, campaign.user_id, now=now)
+    start, end = day_bounds_for_zone(campaign_zone(session, campaign), now=now)
     return int(
         session.scalar(
             select(func.count())
@@ -242,7 +256,7 @@ def campaign_reserved_today(
     now: datetime | None = None,
 ) -> int:
     """Count queued work already reserved against today's campaign cap."""
-    start, end = local_day_bounds(session, campaign.user_id, now=now)
+    start, end = day_bounds_for_zone(campaign_zone(session, campaign), now=now)
     return int(
         session.scalar(
             select(func.count())

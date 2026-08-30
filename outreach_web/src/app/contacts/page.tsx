@@ -1,272 +1,503 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import useSWR, { mutate } from "swr";
-import { Users, UserX, Loader2, Folder } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useState } from "react";
+import useSWR from "swr";
 import { useApiClient } from "@/lib/api";
+import {
+  ActionMenu,
+  AppDialog,
+  ConfirmDialog,
+  MenuAction,
+  Notice,
+  PageHeading,
+  PageState,
+  Pager,
+  SearchField,
+  StatusBadge,
+  checkResponse,
+  downloadCsv,
+  errorMessage,
+  formatDate,
+} from "@/components/app-ui";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+interface Contact {
+  id: number;
+  email: string;
+  first_name: string;
+  last_name: string;
+  company: string;
+  status: string;
+}
+interface Library {
+  items: Contact[];
+  total: number;
+}
+interface Group {
+  id: number;
+  name: string;
+}
+interface Blocked {
+  email: string;
+  created_at?: string;
+}
+const emptyContact = { email: "", first_name: "", last_name: "", company: "" };
 
 export default function ContactsPage() {
-  const { authFetch } = useApiClient();
-
-  const fetcher = useCallback(async (url: string) => {
-    const response = await authFetch(url);
-    if (!response.ok) {
-      throw new Error(`API request failed (${response.status})`);
-    }
-    return response.json();
-  }, [authFetch]);
-
-  const { data: campaigns, isLoading: campaignsLoading } = useSWR(`${API_URL}/api/campaigns`, fetcher);
-  const { data: dncList, isLoading: dncLoading } = useSWR(`${API_URL}/api/contacts/dnc`, fetcher);
-
-  const [selectedCampaignId, setSelectedCampaignId] = useState<number | null>(null);
-  
-  // Auto-select first campaign when campaigns load
-  useEffect(() => {
-    if (campaigns && campaigns.length > 0 && selectedCampaignId === null) {
-      setSelectedCampaignId(campaigns[0].id);
-    }
-  }, [campaigns, selectedCampaignId]);
-
-  // Fetch recipients for the selected campaign group
-  const { data: groupContacts, isLoading: groupLoading } = useSWR(
-    selectedCampaignId ? `${API_URL}/api/campaigns/${selectedCampaignId}/recipients` : null,
-    fetcher
+  const { API_URL, authFetch } = useApiClient();
+  const [search, setSearch] = useState("");
+  const [group, setGroup] = useState("");
+  const [page, setPage] = useState(1);
+  const [selected, setSelected] = useState<number[]>([]);
+  const [dialog, setDialog] = useState<"add" | "import" | "dnc" | null>(null);
+  const [draft, setDraft] = useState(emptyContact);
+  const [file, setFile] = useState<File | null>(null);
+  const [blockEmail, setBlockEmail] = useState("");
+  const [blockContact, setBlockContact] = useState<Contact | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState("");
+  const [message, setMessage] = useState("");
+  const query = new URLSearchParams({
+    search,
+    page: String(page),
+    page_size: "6",
+  });
+  if (group) query.set("campaign_id", group);
+  const { data, error, isLoading, mutate } = useSWR<Library>(
+    `${API_URL}/api/contacts/library?${query}`,
   );
-
-  const [dncEmail, setDncEmail] = useState("");
-  const [submittingDnc, setSubmittingDnc] = useState(false);
-
-  const handleAddDnc = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!dncEmail.trim()) return;
-    setSubmittingDnc(true);
+  const { data: groups = [] } = useSWR<Group[]>(`${API_URL}/api/campaigns`);
+  const {
+    data: blocked = [],
+    error: blockedError,
+    isLoading: blockedLoading,
+    mutate: refreshBlocked,
+  } = useSWR<Blocked[]>(
+    dialog === "dnc" ? `${API_URL}/api/contacts/dnc` : null,
+  );
+  const items = data?.items || [];
+  const changePage = (value: number) => {
+    setPage(value);
+    setSelected([]);
+  };
+  const open = (value: typeof dialog) => {
+    setDialog(value);
+    setActionError("");
+    setMessage("");
+  };
+  const addContact = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setActionError("");
     try {
-      const res = await authFetch(`${API_URL}/api/contacts/dnc`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: dncEmail.trim() }),
-      });
-      if (!res.ok) throw new Error("Failed to add to DNC");
-      mutate(`${API_URL}/api/contacts/dnc`);
-      setDncEmail("");
-    } catch (err: any) {
-      alert(err.message);
+      await checkResponse(
+        await authFetch(`${API_URL}/api/contacts`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...draft, email: draft.email.trim() }),
+        }),
+      );
+      setDialog(null);
+      setDraft(emptyContact);
+      setMessage("Contact saved. Add them to an audience from a campaign.");
+      await mutate();
+    } catch (error) {
+      setActionError(errorMessage(error));
     } finally {
-      setSubmittingDnc(false);
+      setBusy(false);
     }
   };
-
-  const getStatusBadge = (status: string) => {
-    const classes: Record<string, string> = {
-      approved: "bg-green-50 text-green-700 border-green-200",
-      pending: "bg-slate-100 text-slate-700 border-slate-200",
-      rejected: "bg-red-50 text-red-700 border-red-200",
-    };
-    return (
-      <span
-        className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border ${
-          classes[status.toLowerCase()] || "bg-slate-100 text-slate-700"
-        }`}
-      >
-        {status}
-      </span>
-    );
+  const importFile = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      setActionError("Choose a CSV smaller than 5 MB.");
+      return;
+    }
+    setBusy(true);
+    setActionError("");
+    try {
+      const body = new FormData();
+      body.append("file", file);
+      const result = await checkResponse(
+        await authFetch(`${API_URL}/api/contacts/import`, {
+          method: "POST",
+          body,
+        }),
+      );
+      setDialog(null);
+      setFile(null);
+      setMessage(
+        `Import complete: ${result.imported ?? 0} imported, ${result.duplicates ?? 0} duplicates, ${(result.skipped_missing_email ?? 0) + (result.skipped_missing_required ?? 0)} skipped, ${result.do_not_contact ?? 0} blocked.`,
+      );
+      await mutate();
+    } catch (error) {
+      setActionError(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
   };
-
+  const block = async (email: string) => {
+    setBusy(true);
+    setActionError("");
+    try {
+      await checkResponse(
+        await authFetch(`${API_URL}/api/contacts/dnc`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: email.trim() }),
+        }),
+      );
+      await Promise.all([mutate(), refreshBlocked()]);
+      setBlockContact(null);
+      setBlockEmail("");
+      setMessage("Email added to do not contact.");
+    } catch (error) {
+      setActionError(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const exportContacts = () => {
+    const rows = selected.length
+      ? items.filter((item) => selected.includes(item.id))
+      : items;
+    downloadCsv("contacts.csv", [
+      ["Name", "Email", "Company", "Status"],
+      ...rows.map((item) => [
+        `${item.first_name} ${item.last_name}`.trim(),
+        item.email,
+        item.company,
+        item.status,
+      ]),
+    ]);
+  };
   return (
-    <div className="p-8 space-y-6 max-w-6xl mx-auto w-full">
-      <div>
-        <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Contacts</h1>
-        <p className="text-slate-500 text-sm mt-1">Manage contact groups and block lists</p>
+    <div className="app-page">
+      <PageHeading
+        title="Contacts"
+        description="People saved for your outreach."
+        actions={
+          <>
+            <ActionMenu label="+ Add contacts" primary>
+              <MenuAction onClick={() => open("add")}>
+                Add one person
+              </MenuAction>
+              <MenuAction onClick={() => open("import")}>Import CSV</MenuAction>
+            </ActionMenu>
+            <ActionMenu>
+              <MenuAction onClick={() => open("dnc")}>
+                Manage do not contact
+              </MenuAction>
+              <MenuAction disabled={!items.length} onClick={exportContacts}>
+                {selected.length
+                  ? "Export selected contacts"
+                  : "Export this page"}
+              </MenuAction>
+            </ActionMenu>
+          </>
+        }
+      />
+      {!dialog && !blockContact && (
+        <Notice message={message} error={actionError} />
+      )}
+      <div className="app-toolbar">
+        <SearchField
+          label="Search contacts"
+          value={search}
+          onChange={(value) => {
+            setSearch(value);
+            changePage(1);
+          }}
+        />
+        <select
+          aria-label="Filter contacts by campaign group"
+          className="app-select"
+          value={group}
+          onChange={(event) => {
+            setGroup(event.target.value);
+            changePage(1);
+          }}
+        >
+          <option value="">All groups</option>
+          {groups.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.name}
+            </option>
+          ))}
+        </select>
+        <span className="app-count">
+          {selected.length
+            ? `${selected.length} selected`
+            : `${data?.total ?? 0} contacts`}
+        </span>
       </div>
-
-      <Tabs defaultValue="groups" className="w-full">
-        <TabsList className="grid w-full max-w-md grid-cols-2">
-          <TabsTrigger value="groups" className="gap-2">
-            <Users className="w-4 h-4" />
-            <span>Contact Groups</span>
-          </TabsTrigger>
-          <TabsTrigger value="dnc" className="gap-2">
-            <UserX className="w-4 h-4" />
-            <span>Do Not Contact (DNC)</span>
-          </TabsTrigger>
-        </TabsList>
-
-        {/* 1. Contact Groups Tab */}
-        <TabsContent value="groups" className="pt-4">
-          {campaignsLoading ? (
-            <div className="p-12 flex flex-col items-center justify-center text-slate-400 gap-2">
-              <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
-              <span className="text-sm">Loading contact groups...</span>
-            </div>
-          ) : !campaigns || campaigns.length === 0 ? (
-            <div className="bg-white border border-slate-200 rounded-xl p-16 text-center space-y-3 shadow-sm">
-              <div className="mx-auto w-12 h-12 bg-slate-50 border border-slate-200 rounded-full flex items-center justify-center text-slate-400">
-                <Users className="w-5 h-5" />
-              </div>
-              <h3 className="font-semibold text-slate-900 text-lg">No contact groups found</h3>
-              <p className="text-slate-500 text-sm max-w-sm mx-auto">
-                Create a campaign and import contacts via CSV or Google Sheets to see your contact groups here.
-              </p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-              {/* Left Column: Groups List */}
-              <div className="md:col-span-1 space-y-2">
-                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider px-2 mb-3">Groups</h3>
-                <div className="space-y-1">
-                  {campaigns.map((c: any) => {
-                    const active = c.id === selectedCampaignId;
-                    return (
-                      <button
-                        key={c.id}
-                        onClick={() => setSelectedCampaignId(c.id)}
-                        className={`w-full text-left px-3 py-2.5 rounded-lg flex items-center justify-between border transition-all ${
-                          active
-                            ? "bg-blue-50 border-blue-200 text-blue-800 font-medium"
-                            : "bg-white border-slate-100 hover:bg-slate-50 text-slate-700 hover:text-slate-900"
-                        }`}
+      <div className="app-table-wrap">
+        <PageState
+          loading={isLoading}
+          error={error}
+          empty={!items.length}
+          retry={() => void mutate()}
+        >
+          {!search && !group ? (
+            <>
+              <h2>Start with the people you want to reach</h2>
+              <p>Add a contact or import a CSV using Add contacts.</p>
+            </>
+          ) : undefined}
+        </PageState>
+        {!isLoading && !error && items.length > 0 && (
+          <table className="app-table">
+            <thead>
+              <tr>
+                <th className="app-check-cell">
+                  <label className="app-check">
+                    <input
+                      type="checkbox"
+                      aria-label="Select all contacts on this page"
+                      checked={selected.length === items.length}
+                      onChange={(event) =>
+                        setSelected(
+                          event.target.checked
+                            ? items.map((item) => item.id)
+                            : [],
+                        )
+                      }
+                    />
+                  </label>
+                </th>
+                <th scope="col">Name</th>
+                <th scope="col">Email</th>
+                <th scope="col">Company</th>
+                <th scope="col">Status</th>
+                <th scope="col">
+                  <span className="sr-only">Actions</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item) => (
+                <tr key={item.id}>
+                  <td className="app-check-cell">
+                    <label className="app-check">
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${item.email}`}
+                        checked={selected.includes(item.id)}
+                        onChange={(event) =>
+                          setSelected(
+                            event.target.checked
+                              ? [...selected, item.id]
+                              : selected.filter((id) => id !== item.id),
+                          )
+                        }
+                      />
+                    </label>
+                  </td>
+                  <td>
+                    <span className="app-name" style={{ cursor: "default" }}>
+                      <span className="app-avatar" aria-hidden="true">
+                        {(
+                          (item.first_name[0] || item.email[0]) +
+                          (item.last_name[0] || "")
+                        ).toUpperCase()}
+                      </span>
+                      {`${item.first_name} ${item.last_name}`.trim() || "—"}
+                    </span>
+                  </td>
+                  <td>{item.email}</td>
+                  <td>{item.company || "—"}</td>
+                  <td>
+                    <StatusBadge status={item.status} />
+                  </td>
+                  <td>
+                    <ActionMenu iconOnly label={`Actions for ${item.email}`}>
+                      <MenuAction
+                        disabled={item.status === "do_not_contact"}
+                        onClick={() => {
+                          setBlockContact(item);
+                          setActionError("");
+                        }}
                       >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <Folder className={`w-4 h-4 shrink-0 ${active ? "text-blue-600" : "text-slate-400"}`} />
-                          <span className="truncate text-sm">{c.name}</span>
-                        </div>
-                        <span className={`text-xs px-2 py-0.5 rounded-full ${
-                          active ? "bg-blue-100 text-blue-700" : "bg-slate-100 text-slate-500"
-                        }`}>
-                          {c.recipient_count || 0}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Right Column: Group Contacts Table */}
-              <div className="md:col-span-3 bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm h-fit">
-                {groupLoading ? (
-                  <div className="p-12 flex flex-col items-center justify-center text-slate-400 gap-2">
-                    <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
-                    <span className="text-sm">Loading group contacts...</span>
-                  </div>
-                ) : !groupContacts?.items || groupContacts.items.length === 0 ? (
-                  <div className="p-16 text-center space-y-3">
-                    <div className="mx-auto w-12 h-12 bg-slate-50 border border-slate-200 rounded-full flex items-center justify-center text-slate-400">
-                      <Users className="w-5 h-5" />
-                    </div>
-                    <h3 className="font-semibold text-slate-900 text-lg">No contacts in this group</h3>
-                    <p className="text-slate-500 text-sm max-w-sm mx-auto">
-                      Go to the campaign editor to import your contacts via CSV or Google Sheet.
-                    </p>
-                  </div>
-                ) : (
-                  <div>
-                    <div className="px-6 py-4 border-b border-slate-150 bg-slate-50 flex items-center justify-between">
-                      <h4 className="font-bold text-slate-800 text-sm">
-                        Showing {groupContacts.items.length} contacts
-                      </h4>
-                    </div>
-                    <Table>
-                      <TableHeader className="bg-slate-50">
-                        <TableRow>
-                          <TableHead className="font-semibold text-slate-700">Email</TableHead>
-                          <TableHead className="font-semibold text-slate-700">Name</TableHead>
-                          <TableHead className="font-semibold text-slate-700">Company</TableHead>
-                          <TableHead className="font-semibold text-slate-700">Status</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {groupContacts.items.map((c: any) => (
-                          <TableRow key={c.contact_id}>
-                            <TableCell className="font-semibold text-slate-900">{c.email}</TableCell>
-                            <TableCell className="text-slate-700">{[c.custom_fields?.first_name, c.custom_fields?.last_name].filter(Boolean).join(" ") || "—"}</TableCell>
-                            <TableCell className="text-slate-700">{c.custom_fields?.company || "—"}</TableCell>
-                            <TableCell>{getStatusBadge(c.status || "pending")}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                )}
-              </div>
+                        Add to do not contact
+                      </MenuAction>
+                    </ActionMenu>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+      {!!data?.total && (
+        <Pager
+          page={page}
+          pageSize={6}
+          total={data.total}
+          onChange={changePage}
+        />
+      )}
+      <AppDialog
+        open={dialog === "add"}
+        onClose={() => {
+          if (!busy) setDialog(null);
+        }}
+        title="Add a contact"
+        description="Save a person to your contacts. This does not send an email."
+      >
+        <form className="app-form" onSubmit={addContact}>
+          <label className="app-field">
+            Email
+            <input
+              autoFocus
+              required
+              type="email"
+              maxLength={320}
+              value={draft.email}
+              onChange={(event) =>
+                setDraft({ ...draft, email: event.target.value })
+              }
+            />
+          </label>
+          <label className="app-field">
+            First name
+            <input
+              maxLength={200}
+              value={draft.first_name}
+              onChange={(event) =>
+                setDraft({ ...draft, first_name: event.target.value })
+              }
+            />
+          </label>
+          <label className="app-field">
+            Last name
+            <input
+              maxLength={200}
+              value={draft.last_name}
+              onChange={(event) =>
+                setDraft({ ...draft, last_name: event.target.value })
+              }
+            />
+          </label>
+          <label className="app-field">
+            Company
+            <input
+              maxLength={200}
+              value={draft.company}
+              onChange={(event) =>
+                setDraft({ ...draft, company: event.target.value })
+              }
+            />
+          </label>
+          <Notice error={actionError} />
+          <div className="app-dialog-actions">
+            <button
+              type="button"
+              className="app-button"
+              disabled={busy}
+              onClick={() => setDialog(null)}
+            >
+              Cancel
+            </button>
+            <button className="app-button is-primary" disabled={busy}>
+              {busy ? "Saving…" : "Save contact"}
+            </button>
+          </div>
+        </form>
+      </AppDialog>
+      <AppDialog
+        open={dialog === "import"}
+        onClose={() => {
+          if (!busy) setDialog(null);
+        }}
+        title="Import contacts"
+        description="Choose a CSV with an email column. Existing contacts with matching emails will be updated; do-not-contact restrictions are kept."
+      >
+        <form className="app-form" onSubmit={importFile}>
+          <label className="app-field">
+            CSV file
+            <input
+              type="file"
+              required
+              accept=".csv,text/csv"
+              onChange={(event) => setFile(event.target.files?.[0] || null)}
+            />
+            <small>
+              Up to 5 MB and 10,000 rows. Name and company columns are optional.
+            </small>
+          </label>
+          <Notice error={actionError} />
+          <div className="app-dialog-actions">
+            <button
+              type="button"
+              className="app-button"
+              disabled={busy}
+              onClick={() => setDialog(null)}
+            >
+              Cancel
+            </button>
+            <button className="app-button is-primary" disabled={busy || !file}>
+              {busy ? "Importing…" : "Import contacts"}
+            </button>
+          </div>
+        </form>
+      </AppDialog>
+      <AppDialog
+        open={dialog === "dnc"}
+        onClose={() => {
+          if (!busy) setDialog(null);
+        }}
+        title="Do not contact"
+        description="These emails are blocked from future sending. Emails already sending may finish."
+      >
+        <form
+          className="app-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void block(blockEmail);
+          }}
+        >
+          <label className="app-field">
+            Email to block
+            <input
+              type="email"
+              required
+              value={blockEmail}
+              onChange={(event) => setBlockEmail(event.target.value)}
+            />
+          </label>
+          <button className="app-button" disabled={busy}>
+            {busy ? "Adding…" : "Add to do not contact"}
+          </button>
+        </form>
+        <Notice error={actionError} message={message} />
+        <PageState
+          loading={blockedLoading}
+          error={blockedError}
+          empty={!blocked.length}
+          retry={() => void refreshBlocked()}
+        >
+          No blocked emails.
+        </PageState>
+        {!blockedError &&
+          blocked.map((item) => (
+            <div key={item.email} className="app-pager">
+              <span>{item.email}</span>
+              <span>{formatDate(item.created_at)}</span>
             </div>
-          )}
-        </TabsContent>
-
-        {/* 2. DNC Tab */}
-        <TabsContent value="dnc" className="pt-4 space-y-6">
-          {/* Add DNC Form */}
-          <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm max-w-md">
-            <h3 className="font-bold text-slate-800 text-sm mb-3">Add email to DNC</h3>
-            <form onSubmit={handleAddDnc} className="flex gap-2">
-              <Input
-                type="email"
-                placeholder="e.g. competitor@domain.com"
-                value={dncEmail}
-                onChange={(e) => setDncEmail(e.target.value)}
-                disabled={submittingDnc}
-                required
-              />
-              <Button type="submit" className="bg-slate-800 hover:bg-slate-900 text-white shrink-0" disabled={submittingDnc}>
-                {submittingDnc ? "Adding..." : "Add to DNC"}
-              </Button>
-            </form>
-          </div>
-
-          {/* DNC List Table */}
-          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
-            {dncLoading ? (
-              <div className="p-12 flex flex-col items-center justify-center text-slate-400 gap-2">
-                <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
-                <span className="text-sm">Loading DNC list...</span>
-              </div>
-            ) : !dncList || dncList.length === 0 ? (
-              <div className="p-16 text-center space-y-3">
-                <div className="mx-auto w-12 h-12 bg-slate-50 border border-slate-200 rounded-full flex items-center justify-center text-slate-400">
-                  <UserX className="w-5 h-5" />
-                </div>
-                <h3 className="font-semibold text-slate-900 text-lg">No DNC emails found</h3>
-                <p className="text-slate-500 text-sm max-w-sm mx-auto">
-                  Add competitor or unsubscribed emails to block list.
-                </p>
-              </div>
-            ) : (
-              <Table>
-                <TableHeader className="bg-slate-50">
-                  <TableRow>
-                    <TableHead className="font-semibold text-slate-700">Blocked Email Address</TableHead>
-                    <TableHead className="font-semibold text-slate-700">Date Added</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {dncList.map((d: any, idx: number) => (
-                    <TableRow key={idx}>
-                      <TableCell className="font-mono text-slate-800 font-semibold">{d.email}</TableCell>
-                      <TableCell className="text-slate-500 text-xs">
-                        {d.created_at ? new Date(d.created_at).toLocaleDateString() : "unknown"}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </div>
-        </TabsContent>
-      </Tabs>
+          ))}
+      </AppDialog>
+      <ConfirmDialog
+        open={!!blockContact}
+        title="Block future emails?"
+        description={`Add ${blockContact?.email} to do not contact across all campaigns. An email already sending may finish.`}
+        label="Block email"
+        busy={busy}
+        error={actionError}
+        onClose={() => setBlockContact(null)}
+        onConfirm={() => {
+          if (blockContact) void block(blockContact.email);
+        }}
+      />
     </div>
   );
 }

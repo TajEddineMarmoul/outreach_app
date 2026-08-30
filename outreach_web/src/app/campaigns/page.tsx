@@ -2,206 +2,283 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import useSWR, { mutate } from "swr";
-import { Plus, Mail, ArrowRight, Loader2 } from "lucide-react";
-import { Button, buttonVariants } from "@/components/ui/button";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-  DialogFooter,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
+import { useRouter } from "next/navigation";
+import useSWR from "swr";
+import { Plus } from "lucide-react";
 import { useApiClient } from "@/lib/api";
+import {
+  ActionMenu,
+  AppDialog,
+  MenuAction,
+  Notice,
+  PageHeading,
+  Pager,
+  PageState,
+  SearchField,
+  StatusBadge,
+  checkResponse,
+  errorMessage,
+  formatDate,
+} from "@/components/app-ui";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+interface Campaign {
+  id: number;
+  name: string;
+  status: string;
+  recipient_count: number;
+  sent_count: number;
+  updated_at?: string;
+}
+const PAGE_SIZE = 6;
 
 export default function CampaignsPage() {
-  const { data: campaigns, error, isLoading } = useSWR(`${API_URL}/api/campaigns`);
-  const [isOpen, setIsOpen] = useState(false);
-  const [campaignName, setCampaignName] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [subError, setSubError] = useState("");
-  const { authFetch } = useApiClient();
-
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!campaignName.trim()) return;
-    setIsSubmitting(true);
-    setSubError("");
+  const { API_URL, authFetch } = useApiClient();
+  const {
+    data: campaigns = [],
+    error,
+    isLoading,
+    mutate,
+  } = useSWR<Campaign[]>(`${API_URL}/api/campaigns`);
+  const router = useRouter();
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState("");
+  const [page, setPage] = useState(1);
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState("");
+  const filtered = campaigns.filter(
+    (item) =>
+      item.name.toLowerCase().includes(search.toLowerCase()) &&
+      (!status ||
+        (status === "running"
+          ? ["sending", "autopilot"].includes(item.status)
+          : item.status === status)),
+  );
+  const currentPage = Math.min(
+    page,
+    Math.max(1, Math.ceil(filtered.length / PAGE_SIZE)),
+  );
+  const create = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setActionError("");
     try {
-      const res = await authFetch(`${API_URL}/api/campaigns`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: campaignName.trim() }),
-      });
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.detail || "Failed to create campaign");
-      }
-      const data = await res.json();
-      mutate(`${API_URL}/api/campaigns`);
-      setCampaignName("");
-      setIsOpen(false);
-    } catch (err: any) {
-      setSubError(err.message || "An error occurred");
+      const created = await checkResponse(
+        await authFetch(`${API_URL}/api/campaigns`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: name.trim() }),
+        }),
+      );
+      await mutate();
+      setOpen(false);
+      setName("");
+      router.push(`/campaigns/${created.id}?step=audience`);
+    } catch (error) {
+      setActionError(errorMessage(error));
     } finally {
-      setIsSubmitting(false);
+      setBusy(false);
     }
   };
-
-  const getStatusBadge = (status: string) => {
-    const classes: Record<string, string> = {
-      draft: "bg-slate-100 text-slate-700 border-slate-200",
-      ready: "bg-green-50 text-green-700 border-green-200",
-      scheduled: "bg-blue-50 text-blue-700 border-blue-200",
-      sending: "bg-indigo-50 text-indigo-700 border-indigo-200",
-      autopilot: "bg-purple-50 text-purple-700 border-purple-200",
-      paused: "bg-amber-50 text-amber-700 border-amber-200",
-      ended: "bg-red-50 text-red-700 border-red-200",
-      stopped: "bg-red-50 text-red-700 border-red-200",
-    };
-    return (
-      <span
-        className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border ${
-          classes[status.toLowerCase()] || "bg-slate-100 text-slate-700"
-        }`}
-      >
-        {status}
-      </span>
-    );
+  const duplicate = async (id: number) => {
+    setBusy(true);
+    setActionError("");
+    try {
+      const copy = await checkResponse(
+        await authFetch(`${API_URL}/api/campaigns/${id}/duplicate`, {
+          method: "POST",
+        }),
+      );
+      await mutate();
+      router.push(`/campaigns/${copy.id}?step=audience`);
+    } catch (error) {
+      setActionError(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
   };
-
   return (
-    <div className="p-8 space-y-6 max-w-6xl mx-auto w-full">
-      {/* Header section */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Campaigns</h1>
-          <p className="text-slate-500 text-sm mt-1">Manage and track your email outreach campaigns</p>
-        </div>
-
-        <Dialog open={isOpen} onOpenChange={setIsOpen}>
-          <DialogTrigger className="bg-blue-600 hover:bg-blue-700 text-white gap-2 shadow-sm inline-flex items-center px-4 py-2 rounded-lg text-sm font-medium transition-colors">
-            <Plus className="w-4 h-4" />
-            <span>New campaign</span>
-          </DialogTrigger>
-          <DialogContent className="sm:max-w-md">
-            <form onSubmit={handleCreate}>
-              <DialogHeader>
-                <DialogTitle>Create campaign</DialogTitle>
-              </DialogHeader>
-              <div className="py-4 space-y-3">
-                <label className="text-sm font-medium text-slate-700">Campaign name</label>
-                <Input
-                  placeholder="e.g. My Campaign"
-                  value={campaignName}
-                  onChange={(e) => setCampaignName(e.target.value)}
-                  disabled={isSubmitting}
-                  autoFocus
-                />
-                {subError && <p className="text-sm text-red-600 mt-1">{subError}</p>}
-              </div>
-              <DialogFooter>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setIsOpen(false)}
-                  disabled={isSubmitting}
-                >
-                  Cancel
-                </Button>
-                <Button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white" disabled={isSubmitting || !campaignName.trim()}>
-                  {isSubmitting ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                      <span>Creating...</span>
-                    </>
-                  ) : (
-                    <span>Create</span>
-                  )}
-                </Button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
+    <div className="app-page">
+      <PageHeading
+        title="Campaigns"
+        description="Create, review, and manage your campaigns."
+        actions={
+          <button
+            className="app-button is-primary"
+            onClick={() => {
+              setActionError("");
+              setOpen(true);
+            }}
+          >
+            <Plus size={18} /> New campaign
+          </button>
+        }
+      />
+      {!open && <Notice error={actionError} />}
+      <div className="app-toolbar">
+        <SearchField
+          label="Search campaigns"
+          value={search}
+          onChange={(value) => {
+            setSearch(value);
+            setPage(1);
+          }}
+        />
+        <select
+          aria-label="Filter by status"
+          className="app-select"
+          value={status}
+          onChange={(event) => {
+            setStatus(event.target.value);
+            setPage(1);
+          }}
+        >
+          <option value="">All statuses</option>
+          <option value="draft">Draft</option>
+          <option value="running">Running</option>
+          <option value="scheduled">Scheduled</option>
+          <option value="paused">Paused</option>
+          <option value="ended">Completed</option>
+          <option value="stopped">Stopped</option>
+          <option value="ready">Ready</option>
+        </select>
       </div>
-
-      {/* Campaigns Table */}
-      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
-        {isLoading ? (
-          <div className="p-12 flex flex-col items-center justify-center text-slate-400 gap-2">
-            <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
-            <span className="text-sm">Loading campaigns...</span>
-          </div>
-        ) : error ? (
-          <div className="p-12 text-center text-red-500 font-medium">
-            Error loading campaigns. Please ensure the backend is running.
-          </div>
-        ) : !campaigns || campaigns.length === 0 ? (
-          <div className="p-16 text-center space-y-4">
-            <div className="mx-auto w-12 h-12 bg-slate-50 border border-slate-200 rounded-full flex items-center justify-center text-slate-400">
-              <Mail className="w-5 h-5" />
-            </div>
-            <div>
-              <h3 className="font-semibold text-slate-900 text-lg">No campaigns found</h3>
-              <p className="text-slate-500 text-sm mt-1 max-w-sm mx-auto">
-                Get started by creating your very first campaign.
-              </p>
-            </div>
-            <Button
-              className="bg-blue-600 hover:bg-blue-700 text-white"
-              onClick={() => setIsOpen(true)}
-            >
-              Create campaign
-            </Button>
-          </div>
-        ) : (
-          <Table>
-            <TableHeader className="bg-slate-50">
-              <TableRow>
-                <TableHead className="font-semibold text-slate-700">Campaign Name</TableHead>
-                <TableHead className="font-semibold text-slate-700">Status</TableHead>
-                <TableHead className="font-semibold text-slate-700 text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {campaigns.map((camp: any) => (
-                <TableRow key={camp.id} className="hover:bg-slate-50/50">
-                  <TableCell className="font-medium text-slate-900">
-                    <Link
-                      href={`/campaigns/${camp.id}`}
-                      className="hover:underline hover:text-blue-600 block py-1"
-                    >
-                      {camp.name}
-                    </Link>
-                  </TableCell>
-                  <TableCell>{getStatusBadge(camp.status || "draft")}</TableCell>
-                  <TableCell className="text-right">
-                    <Link
-                      href={`/campaigns/${camp.id}`}
-                      className={buttonVariants({ variant: "ghost", size: "sm", className: "text-slate-600 gap-1 hover:text-blue-600" })}
-                    >
-                      <span>Open</span>
-                      <ArrowRight className="w-3.5 h-3.5" />
-                    </Link>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+      <div className="app-table-wrap">
+        <PageState
+          loading={isLoading}
+          error={error}
+          empty={!filtered.length}
+          retry={() => void mutate()}
+        >
+          {campaigns.length ? undefined : (
+            <>
+              <h2>Your next campaign starts here</h2>
+              <p>Create a campaign, then choose who to reach.</p>
+              <button className="app-button" onClick={() => setOpen(true)}>
+                Create campaign
+              </button>
+            </>
+          )}
+        </PageState>
+        {!isLoading && !error && filtered.length > 0 && (
+          <table className="app-table">
+            <thead>
+              <tr>
+                <th scope="col">Campaign</th>
+                <th scope="col">Status</th>
+                <th scope="col">Progress</th>
+                <th scope="col">Updated</th>
+                <th scope="col">
+                  <span className="sr-only">Actions</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered
+                .slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+                .map((item) => (
+                  <tr key={item.id}>
+                    <td>
+                      <Link
+                        href={`/campaigns/${item.id}`}
+                        className="app-name app-name-button"
+                      >
+                        {item.name}
+                      </Link>
+                    </td>
+                    <td>
+                      <StatusBadge status={item.status || "draft"} />
+                    </td>
+                    <td>
+                      {item.recipient_count ? (
+                        <>
+                          <span>
+                            {item.sent_count ?? 0} of {item.recipient_count}{" "}
+                            sent
+                          </span>
+                          <span className="app-progress" aria-hidden="true">
+                            <span
+                              style={{
+                                width: `${Math.min(100, ((item.sent_count || 0) / item.recipient_count) * 100)}%`,
+                              }}
+                            />
+                          </span>
+                        </>
+                      ) : (
+                        <span className="app-muted">No recipients yet</span>
+                      )}
+                    </td>
+                    <td className="app-muted">{formatDate(item.updated_at)}</td>
+                    <td>
+                      <ActionMenu
+                        iconOnly
+                        label={`Actions for ${item.name}`}
+                        disabled={busy}
+                      >
+                        <MenuAction
+                          onClick={() => router.push(`/campaigns/${item.id}`)}
+                        >
+                          Open campaign
+                        </MenuAction>
+                        <MenuAction onClick={() => void duplicate(item.id)}>
+                          Duplicate campaign
+                        </MenuAction>
+                      </ActionMenu>
+                    </td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
         )}
       </div>
+      {filtered.length > 0 && (
+        <Pager
+          page={currentPage}
+          pageSize={PAGE_SIZE}
+          total={filtered.length}
+          onChange={setPage}
+        />
+      )}
+      <AppDialog
+        open={open}
+        onClose={() => {
+          if (!busy) setOpen(false);
+        }}
+        title="Create campaign"
+        description="Give this campaign a name you’ll recognize."
+      >
+        <form className="app-form" onSubmit={create}>
+          <label className="app-field">
+            Campaign name
+            <input
+              autoFocus
+              required
+              maxLength={240}
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="e.g. Fall hiring outreach"
+            />
+          </label>
+          <Notice error={actionError} />
+          <div className="app-dialog-actions">
+            <button
+              type="button"
+              className="app-button"
+              disabled={busy}
+              onClick={() => setOpen(false)}
+            >
+              Cancel
+            </button>
+            <button
+              className="app-button is-primary"
+              disabled={busy || !name.trim()}
+            >
+              {busy ? "Creating…" : "Create campaign"}
+            </button>
+          </div>
+        </form>
+      </AppDialog>
     </div>
   );
 }

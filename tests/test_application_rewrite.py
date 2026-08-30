@@ -1854,6 +1854,150 @@ def test_settings_timezone_is_the_timezone_used_by_delivery(tmp_path):
         clear_session_override()
 
 
+def test_campaign_timezone_is_saved_without_changing_account_default(tmp_path):
+    session_factory = make_session_factory(tmp_path)
+    install_session_override(session_factory)
+    try:
+        session = session_factory()
+        ensure_user(session, USER_ID)
+        session.get(UserSettings, USER_ID).timezone = "Africa/Casablanca"
+        campaign = Campaign(user_id=USER_ID, name="US recipients", status="draft")
+        session.add(campaign)
+        session.commit()
+        campaign_id = campaign.id
+        session.close()
+
+        response = TestClient(app).patch(
+            f"/api/campaigns/{campaign_id}/send-settings",
+            json={
+                "mode": "schedule",
+                "timezone": "America/New_York",
+                "scheduled_at": "2026-08-31T09:00:00",
+                "delay_minutes": 5,
+            },
+            headers=HEADERS,
+        )
+        assert response.status_code == 200
+
+        session = session_factory()
+        campaign = session.get(Campaign, campaign_id)
+        assert campaign.timezone == "America/New_York"
+        assert platform_services.campaign_zone(session, campaign).key == "America/New_York"
+        assert session.get(UserSettings, USER_ID).timezone == "Africa/Casablanca"
+        assert datetime.fromisoformat(campaign.send_settings["draft_scheduled_at"]) == datetime(
+            2026,
+            8,
+            31,
+            13,
+            0,
+            tzinfo=timezone.utc,
+        )
+        session.close()
+    finally:
+        clear_session_override()
+
+
+def test_autopilot_window_uses_campaign_timezone_instead_of_account_timezone(tmp_path):
+    session_factory = make_session_factory(tmp_path)
+    session = session_factory()
+    ensure_user(session, USER_ID)
+    session.get(UserSettings, USER_ID).timezone = "Africa/Casablanca"
+    campaign = Campaign(
+        user_id=USER_ID,
+        name="New York morning",
+        status="autopilot",
+        timezone="America/New_York",
+        send_settings={"mode": "autopilot"},
+    )
+    session.add(campaign)
+    session.flush()
+    session.add(
+        AutopilotDaySchedule(
+            campaign_id=campaign.id,
+            day_of_week="monday",
+            daily_cap=10,
+            start_time="09:00",
+            end_time="17:00",
+        )
+    )
+    session.commit()
+
+    next_run = platform_services.next_autopilot_run(
+        session,
+        campaign,
+        now=datetime(2026, 8, 31, 12, 0, tzinfo=timezone.utc),
+    )
+    assert next_run == datetime(2026, 8, 31, 13, 0, tzinfo=timezone.utc)
+    session.close()
+
+
+def test_account_timezone_change_does_not_rewrite_campaign_timezone(tmp_path, monkeypatch):
+    fixed_now = datetime(2026, 8, 31, 12, 0, tzinfo=timezone.utc)
+    session_factory = make_session_factory(tmp_path)
+    install_session_override(session_factory)
+    try:
+        session = session_factory()
+        ensure_user(session, USER_ID)
+        campaign = Campaign(
+            user_id=USER_ID,
+            name="US autopilot",
+            status="autopilot",
+            timezone="America/New_York",
+            send_settings={"mode": "autopilot"},
+            scheduled_at=fixed_now + timedelta(hours=1),
+        )
+        session.add(campaign)
+        session.commit()
+        campaign_id = campaign.id
+        original_schedule = campaign.scheduled_at
+        session.close()
+
+        monkeypatch.setattr(settings_router, "utcnow", lambda: fixed_now)
+        response = TestClient(app).patch(
+            "/api/settings/timezone",
+            json={"timezone": "Europe/Paris"},
+            headers=HEADERS,
+        )
+        assert response.status_code == 200
+        assert response.json()["rescheduled_campaigns"] == 0
+
+        session = session_factory()
+        campaign = session.get(Campaign, campaign_id)
+        assert campaign.timezone == "America/New_York"
+        assert campaign.scheduled_at.replace(tzinfo=timezone.utc) == original_schedule.astimezone(timezone.utc)
+        assert session.get(UserSettings, USER_ID).timezone == "Europe/Paris"
+        session.close()
+    finally:
+        clear_session_override()
+
+
+def test_browser_timezone_initialization_preserves_a_saved_default(tmp_path):
+    session_factory = make_session_factory(tmp_path)
+    install_session_override(session_factory)
+    try:
+        session = session_factory()
+        ensure_user(session, USER_ID)
+        settings = session.get(UserSettings, USER_ID)
+        settings.timezone = "Africa/Casablanca"
+        session.commit()
+        session.close()
+
+        response = TestClient(app).patch(
+            "/api/settings/timezone",
+            json={"timezone": "America/New_York", "only_if_unset": True},
+            headers=HEADERS,
+        )
+        assert response.status_code == 200
+        assert response.json()["changed"] is False
+
+        session = session_factory()
+        settings = session.get(UserSettings, USER_ID)
+        assert settings.timezone == "Africa/Casablanca"
+        session.close()
+    finally:
+        clear_session_override()
+
+
 def test_browser_timezone_sync_reschedules_active_autopilot(tmp_path, monkeypatch):
     fixed_now = datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc)
     session_factory = make_session_factory(tmp_path)

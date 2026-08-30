@@ -4,7 +4,8 @@ import json
 
 import pandas as pd
 import requests
-from fastapi import FastAPI
+import pytest
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.testclient import TestClient
 
@@ -230,3 +231,42 @@ def test_google_sheet_timeout_returns_a_controlled_http_error(monkeypatch):
     assert response.status_code == 504
     assert response.json()["detail"] == "Google Sheets did not respond within 20 seconds"
     assert response.headers["access-control-allow-origin"] == origin
+
+
+def test_add_one_existing_contact_preserves_saved_fields(monkeypatch):
+    monkeypatch.setattr(campaigns, "is_do_not_contact", lambda *_: False)
+    captured = {}
+    monkeypatch.setattr(campaigns, "require_editable_campaign", lambda *_: None)
+    monkeypatch.setattr(campaigns.db, "fetch_contact_by_email", lambda *_: {"id": 4, "first_name": "Maya", "custom_fields": {"company": "Acme"}})
+    def attach(_conn, campaign_id, emails, user_id):
+        captured["attached"] = (campaign_id, emails, user_id)
+        return 1
+    def must_not_import(*_args, **_kwargs):
+        raise AssertionError("Adding a saved contact must not overwrite it")
+    monkeypatch.setattr(campaigns.db, "add_campaign_recipients_by_emails", attach)
+    monkeypatch.setattr(campaigns, "import_and_attach_df", must_not_import)
+    result = campaigns.post_recipient_one(21, campaigns.SingleRecipientRequest(email="MAYA@example.com"), object(), "user-1")
+    assert result["attached"] == 1
+    assert captured["attached"] == (21, ["maya@example.com"], "user-1")
+
+
+def test_add_one_new_contact_preserves_punctuation_and_uses_import_safety(monkeypatch):
+    monkeypatch.setattr(campaigns, "is_do_not_contact", lambda *_: False)
+    monkeypatch.setattr(campaigns, "require_editable_campaign", lambda *_: None)
+    monkeypatch.setattr(campaigns.db, "fetch_contact_by_email", lambda *_: None)
+    captured = {}
+    def imported(_conn, _campaign, frame, _mapping, source, **kwargs):
+        captured.update(frame.iloc[0].to_dict())
+        captured["source"] = source
+        return {"attached": 1}
+    monkeypatch.setattr(campaigns, "import_and_attach_df", imported)
+    campaigns.post_recipient_one(21, campaigns.SingleRecipientRequest(email="new@example.com", first_name=" Jo ", company='A, B & "Co"'), object(), "user-1")
+    assert captured == {"email": "new@example.com", "first_name": "Jo", "company": 'A, B & "Co"', "source": "manual"}
+
+
+def test_add_one_rejects_do_not_contact_addresses(monkeypatch):
+    monkeypatch.setattr(campaigns, "require_editable_campaign", lambda *_: None)
+    monkeypatch.setattr(campaigns, "is_do_not_contact", lambda *_: True)
+    with pytest.raises(HTTPException) as error:
+        campaigns.post_recipient_one(21, campaigns.SingleRecipientRequest(email="blocked@example.com"), object(), "user-1")
+    assert error.value.status_code == 422

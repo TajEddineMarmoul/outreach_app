@@ -38,6 +38,7 @@ class CredentialsContent(BaseModel):
 
 class TimezoneUpdate(BaseModel):
     timezone: str
+    only_if_unset: bool = False
 
 
 def _set_timezone(session: Session, user_id: str, value: str) -> tuple[bool, int]:
@@ -54,7 +55,11 @@ def _set_timezone(session: Session, user_id: str, value: str) -> tuple[bool, int
     campaigns = list(
         session.scalars(
             select(Campaign)
-            .where(Campaign.user_id == user_id, Campaign.status == "autopilot")
+            .where(
+                Campaign.user_id == user_id,
+                Campaign.status == "autopilot",
+                Campaign.timezone.is_(None),
+            )
             .order_by(Campaign.id)
             .with_for_update()
         )
@@ -107,6 +112,7 @@ def patch_settings(
     _set_timezone(session, user_id, req.timezone)
     settings.defaults = {
         **(settings.defaults or {}),
+        "timezone_initialized": True,
         "max_daily_cap": req.max_daily_cap,
         "bounce_rate_pause_threshold": req.bounce_rate_pause_threshold,
         "max_consecutive_errors": req.max_consecutive_errors,
@@ -122,8 +128,19 @@ def patch_timezone(
     user_id: str = Depends(get_current_user_id),
 ):
     ensure_user(session, user_id)
+    settings = session.get(UserSettings, user_id)
+    if req.only_if_unset and (
+        bool((settings.defaults or {}).get("timezone_initialized"))
+        or settings.timezone != "UTC"
+    ):
+        session.commit()
+        return {"status": "success", "timezone": settings.timezone, "changed": False}
     changed, rescheduled_campaigns = _set_timezone(session, user_id, req.timezone)
     settings = session.get(UserSettings, user_id)
+    settings.defaults = {
+        **(settings.defaults or {}),
+        "timezone_initialized": True,
+    }
     if not changed:
         session.commit()
         return {"status": "success", "timezone": settings.timezone, "changed": False}

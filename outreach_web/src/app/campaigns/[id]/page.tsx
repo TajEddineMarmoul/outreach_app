@@ -1,69 +1,104 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { useParams, useRouter } from "next/navigation";
-import Link from "next/link";
+import {
+  Suspense,
+  useState,
+  useEffect,
+  useRef,
+  useMemo,
+  useCallback,
+} from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import useSWR, { mutate } from "swr";
 import {
   ArrowLeft,
+  ArrowRight,
+  Copy,
+  Download,
   Loader2,
-  Mail,
-  Send,
   MoreVertical,
   Trash2,
   Paperclip,
   CheckCircle,
-  AlertTriangle,
   Play,
   Pause,
-  StopCircle,
   FileSpreadsheet,
   Upload,
   ClipboardList,
   Eye,
-  Info,
-  ExternalLink,
   Braces,
-  Save,
-  ChevronLeft,
-  ChevronRight,
-  Plus,
-  Pencil,
-  Check,
   X,
-  ChevronDown,
-  FolderPlus,
   AtSign,
-  UserPlus,
+  Plus,
+  FileText,
+  ChevronDown,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Switch } from "@/components/ui/switch";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import RichTextEditor from "@/components/RichTextEditor";
 import type { Editor } from "@tiptap/react";
 import ScheduleDialog from "@/components/campaigns/dialogs/ScheduleDialog";
 import SenderSelectionDialog from "@/components/campaigns/dialogs/SenderSelectionDialog";
 import PreviewDialog from "@/components/campaigns/dialogs/PreviewDialog";
-import AttachmentDialog, { type CampaignAttachmentSummary } from "@/components/campaigns/dialogs/AttachmentDialog";
+import AttachmentDialog, {
+  type CampaignAttachmentSummary,
+} from "@/components/campaigns/dialogs/AttachmentDialog";
 import LogsSection from "@/components/campaigns/LogsSection";
 import ProgressSection from "@/components/campaigns/ProgressSection";
 import RecipientsSection from "@/components/campaigns/RecipientsSection";
 import { useApiClient } from "@/lib/api";
-import { extractTemplateVariables, templateVariableName } from "@/lib/templateVariables";
+import {
+  extractTemplateVariables,
+  templateVariableName,
+} from "@/lib/templateVariables";
+
+import CampaignHeader from "@/components/campaigns/workspace/CampaignHeader";
+import CampaignSteps, {
+  CAMPAIGN_STEPS,
+  type CampaignStep,
+} from "@/components/campaigns/workspace/CampaignSteps";
+import CampaignOverview, {
+  CurrentSchedule,
+} from "@/components/campaigns/workspace/CampaignOverview";
+import CampaignSchedule from "@/components/campaigns/workspace/CampaignSchedule";
+import CampaignReview, {
+  type RecipientValidation,
+} from "@/components/campaigns/workspace/CampaignReview";
+import useScheduleDraft from "@/components/campaigns/workspace/useScheduleDraft";
+import {
+  launchRequest,
+  responseProblem,
+  scheduleProblem,
+} from "@/components/campaigns/workspace/scheduleDraft";
+import "@/components/campaigns/workspace/campaign-workspace.css";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
-const EDIT_LOCKED_STATUSES = new Set(["sending", "scheduled", "autopilot", "paused"]);
+const EDIT_LOCKED_STATUSES = new Set([
+  "sending",
+  "scheduled",
+  "autopilot",
+  "paused",
+]);
 
 interface ComposerDraft {
   subject_template: string;
   body_template: string;
   fallback_body_template: string;
-  require_attachment: boolean;
 }
 
 type DraftSaveStatus = "idle" | "unsaved" | "saving" | "saved" | "error";
@@ -73,50 +108,89 @@ function composerDraftFingerprint(draft: ComposerDraft): string {
 }
 
 export default function CampaignEditorPage() {
+  return (
+    <Suspense
+      fallback={<div className="campaign-empty">Loading campaign…</div>}
+    >
+      <CampaignEditor />
+    </Suspense>
+  );
+}
+
+function CampaignEditor() {
   const params = useParams();
   const router = useRouter();
-  const campaignId = params.id;
+  const campaignId = String(params.id);
+  const searchParams = useSearchParams();
+  const [notice, setNotice] = useState("");
+  const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [endDialogOpen, setEndDialogOpen] = useState(false);
+  const [variablesOpen, setVariablesOpen] = useState(false);
+  const [messageToolsOpen, setMessageToolsOpen] = useState(false);
+  const [configurationOnly, setConfigurationOnly] = useState(false);
   const { authFetch } = useApiClient();
 
   // ----------------------------------------------------
   // SWR Hooks for Data Fetching
   // ----------------------------------------------------
-  const { data: campaign, error: campError, isLoading: campLoading } = useSWR(
-    campaignId ? `${API_URL}/api/campaigns/${campaignId}` : null,
-    {
-      refreshInterval: (latest) => EDIT_LOCKED_STATUSES.has(latest?.status) ? 3000 : 0,
-    }
-  );
-  
-  const { data: summary, mutate: mutateSummary } = useSWR(
-    campaignId ? `${API_URL}/api/campaigns/${campaignId}/summary` : null
+  const {
+    data: campaign,
+    error: campError,
+    isLoading: campLoading,
+  } = useSWR(campaignId ? `${API_URL}/api/campaigns/${campaignId}` : null, {
+    refreshInterval: (latest) =>
+      EDIT_LOCKED_STATUSES.has(latest?.status) ? 3000 : 0,
+  });
+
+  const {
+    data: summary,
+    error: summaryError,
+    mutate: mutateSummary,
+  } = useSWR(
+    campaignId ? `${API_URL}/api/campaigns/${campaignId}/summary` : null,
   );
 
   const { data: valSummary, mutate: mutateValSummary } = useSWR(
-    campaignId ? `${API_URL}/api/campaigns/${campaignId}/validation-summary` : null
+    campaignId
+      ? `${API_URL}/api/campaigns/${campaignId}/validation-summary`
+      : null,
   );
 
-  const { data: senderGroups, mutate: mutateSenderGroups } = useSWR(`${API_URL}/api/sender-groups`);
+  const { data: senderGroups, mutate: mutateSenderGroups } = useSWR(
+    `${API_URL}/api/sender-groups`,
+  );
 
   const selectedSenderGroup = useMemo(() => {
     if (!senderGroups || !summary) return null;
     return (
-      senderGroups.find((group: any) => group.id === summary.sender_group_id) ||
-      senderGroups.find((group: any) => group.name === summary.sender) ||
+      senderGroups.find(
+        (group: { id: number; name: string }) =>
+          group.id === summary.sender_group_id,
+      ) ||
+      senderGroups.find(
+        (group: { id: number; name: string }) => group.name === summary.sender,
+      ) ||
       null
     );
   }, [senderGroups, summary]);
 
-  const senderCountInGroup = selectedSenderGroup?.connected_sender_count ?? 0;
-  const senderEmails: string[] = selectedSenderGroup?.senders
-    ?.filter((sender: { status: string }) => sender.status === "connected")
-    .map((sender: { email: string }) => sender.email)
-    ?? summary?.sender_emails
-    ?? [];
-  const campaignAttachments: CampaignAttachmentSummary[] = Array.isArray(summary?.attachments)
+  const senderEmails: string[] =
+    selectedSenderGroup?.senders
+      ?.filter((sender: { status: string }) => sender.status === "connected")
+      .map((sender: { email: string }) => sender.email) ??
+    summary?.sender_emails ??
+    [];
+  const campaignAttachments: CampaignAttachmentSummary[] = Array.isArray(
+    summary?.attachments,
+  )
     ? summary.attachments
     : [];
-  const editingLocked = Boolean(campaign && EDIT_LOCKED_STATUSES.has(campaign.status));
+  const editingLocked = Boolean(
+    campaign && EDIT_LOCKED_STATUSES.has(campaign.status),
+  );
+  const schedule = useScheduleDraft(campaignId, summary, editingLocked);
+  const launchingRef = useRef(false);
+  const headingRef = useRef<HTMLHeadingElement>(null);
 
   // ----------------------------------------------------
   // UI & Form States
@@ -125,12 +199,10 @@ export default function CampaignEditorPage() {
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [fallback, setFallback] = useState("");
-  const [requireAttachment, setRequireAttachment] = useState(false);
-  const [trackingEnabled, setTrackingEnabled] = useState(true);
-  const [unsubscribeLink, setUnsubscribeLink] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  const [draftSaveStatus, setDraftSaveStatus] = useState<DraftSaveStatus>("idle");
-  const [showAllWarnings, setShowAllWarnings] = useState(false);
+  const [draftSaveStatus, setDraftSaveStatus] =
+    useState<DraftSaveStatus>("idle");
+
   const hydratedCampaignIdRef = useRef<string | null>(null);
   const lastSavedDraftFingerprintRef = useRef("");
   const lastQueuedDraftFingerprintRef = useRef("");
@@ -138,21 +210,22 @@ export default function CampaignEditorPage() {
     subject_template: "",
     body_template: "",
     fallback_body_template: "",
-    require_attachment: false,
   });
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const latestSavePromiseRef = useRef<Promise<void>>(Promise.resolve());
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const composerDraft = useMemo<ComposerDraft>(() => ({
-    subject_template: subject,
-    body_template: body,
-    fallback_body_template: fallback,
-    require_attachment: requireAttachment,
-  }), [body, fallback, requireAttachment, subject]);
+  const composerDraft = useMemo<ComposerDraft>(
+    () => ({
+      subject_template: subject,
+      body_template: body,
+      fallback_body_template: fallback,
+    }),
+    [body, fallback, subject],
+  );
   const composerDraftKey = useMemo(
     () => composerDraftFingerprint(composerDraft),
-    [composerDraft]
+    [composerDraft],
   );
 
   useEffect(() => {
@@ -160,8 +233,12 @@ export default function CampaignEditorPage() {
   }, [composerDraft]);
 
   const activeVariables = useMemo(() => {
-    const columns: unknown[] = Array.isArray(valSummary?.all_columns) ? valSummary.all_columns : [];
-    return [...new Set(columns.map((column) => templateVariableName(String(column))))].sort();
+    const columns: unknown[] = Array.isArray(valSummary?.all_columns)
+      ? valSummary.all_columns
+      : [];
+    return [
+      ...new Set(columns.map((column) => templateVariableName(String(column)))),
+    ].sort();
   }, [valSummary]);
 
   const unknownVariables = useMemo(() => {
@@ -171,16 +248,13 @@ export default function CampaignEditorPage() {
       ...extractTemplateVariables(body),
     ];
 
-    return [...new Set(usedVariables.filter((variable) => !validVariables.has(variable)))].sort();
+    return [
+      ...new Set(
+        usedVariables.filter((variable) => !validVariables.has(variable)),
+      ),
+    ].sort();
   }, [activeVariables, body, subject]);
 
-  useEffect(() => {
-    if (valSummary) {
-      console.log("[valSummary] all_columns:", valSummary.all_columns);
-      console.log("[valSummary] total_contacts:", valSummary.total_contacts);
-    }
-  }, [valSummary]);
-  
   // Hydrate once per campaign. Later SWR refreshes must not replace active edits.
   useEffect(() => {
     if (!campaign) return;
@@ -191,7 +265,6 @@ export default function CampaignEditorPage() {
       subject_template: campaign.subject_template || "",
       body_template: campaign.body_template || "",
       fallback_body_template: campaign.fallback_body_template || "",
-      require_attachment: campaign.require_attachment || false,
     };
     const serverFingerprint = composerDraftFingerprint(serverDraft);
     hydratedCampaignIdRef.current = campaignKey;
@@ -202,52 +275,72 @@ export default function CampaignEditorPage() {
     setSubject(serverDraft.subject_template);
     setBody(serverDraft.body_template);
     setFallback(serverDraft.fallback_body_template);
-    setRequireAttachment(serverDraft.require_attachment);
-    setTrackingEnabled(campaign.tracking_enabled !== false);
-    setUnsubscribeLink(campaign.unsubscribe_link !== false);
     setDraftSaveStatus("saved");
   }, [campaign, campaignId]);
 
-  const persistComposerDraft = useCallback(async (draft: ComposerDraft) => {
-    const targetFingerprint = composerDraftFingerprint(draft);
-    setDraftSaveStatus("saving");
-    const response = await authFetch(`${API_URL}/api/campaigns/${campaignId}/composer`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(draft),
-    });
-    if (!response.ok) {
-      const result = await response.json().catch(() => ({}));
-      throw new Error(result.detail || "Failed to save draft");
-    }
-
-    lastSavedDraftFingerprintRef.current = targetFingerprint;
-    const currentFingerprint = composerDraftFingerprint(currentDraftRef.current);
-    setDraftSaveStatus(
-      currentFingerprint === targetFingerprint && lastQueuedDraftFingerprintRef.current === targetFingerprint
-        ? "saved"
-        : "unsaved"
-    );
-  }, [authFetch, campaignId]);
-
-  const queueComposerDraftSave = useCallback((draft: ComposerDraft): Promise<void> => {
-    const targetFingerprint = composerDraftFingerprint(draft);
-    if (targetFingerprint === lastQueuedDraftFingerprintRef.current) {
-      return latestSavePromiseRef.current;
-    }
-
-    lastQueuedDraftFingerprintRef.current = targetFingerprint;
-    const operation = saveQueueRef.current.then(() => persistComposerDraft(draft));
-    latestSavePromiseRef.current = operation;
-    saveQueueRef.current = operation.catch(() => undefined);
-    operation.catch(() => {
-      if (lastQueuedDraftFingerprintRef.current === targetFingerprint) {
-        lastQueuedDraftFingerprintRef.current = lastSavedDraftFingerprintRef.current;
-        setDraftSaveStatus("error");
+  const persistComposerDraft = useCallback(
+    async (draft: ComposerDraft) => {
+      const targetFingerprint = composerDraftFingerprint(draft);
+      setDraftSaveStatus("saving");
+      const response = await authFetch(
+        `${API_URL}/api/campaigns/${campaignId}/composer`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(draft),
+        },
+      );
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.detail || "Failed to save draft");
       }
-    });
-    return operation;
-  }, [persistComposerDraft]);
+
+      // Returning through client-side navigation must hydrate the saved draft,
+      // not the campaign snapshot cached before the user started writing.
+      await mutate(
+        `${API_URL}/api/campaigns/${campaignId}`,
+        (cached: Record<string, unknown> | undefined) =>
+          cached ? { ...cached, ...draft } : cached,
+        { revalidate: false },
+      );
+      lastSavedDraftFingerprintRef.current = targetFingerprint;
+      const currentFingerprint = composerDraftFingerprint(
+        currentDraftRef.current,
+      );
+      setDraftSaveStatus(
+        currentFingerprint === targetFingerprint &&
+          lastQueuedDraftFingerprintRef.current === targetFingerprint
+          ? "saved"
+          : "unsaved",
+      );
+    },
+    [authFetch, campaignId],
+  );
+
+  const queueComposerDraftSave = useCallback(
+    (draft: ComposerDraft): Promise<void> => {
+      const targetFingerprint = composerDraftFingerprint(draft);
+      if (targetFingerprint === lastQueuedDraftFingerprintRef.current) {
+        return latestSavePromiseRef.current;
+      }
+
+      lastQueuedDraftFingerprintRef.current = targetFingerprint;
+      const operation = saveQueueRef.current.then(() =>
+        persistComposerDraft(draft),
+      );
+      latestSavePromiseRef.current = operation;
+      saveQueueRef.current = operation.catch(() => undefined);
+      operation.catch(() => {
+        if (lastQueuedDraftFingerprintRef.current === targetFingerprint) {
+          lastQueuedDraftFingerprintRef.current =
+            lastSavedDraftFingerprintRef.current;
+          setDraftSaveStatus("error");
+        }
+      });
+      return operation;
+    },
+    [persistComposerDraft],
+  );
 
   const flushComposerDraft = useCallback(async () => {
     if (autoSaveTimerRef.current) {
@@ -259,7 +352,12 @@ export default function CampaignEditorPage() {
 
   useEffect(() => {
     const campaignKey = campaign ? String(campaign.id ?? campaignId) : null;
-    if (!campaignKey || hydratedCampaignIdRef.current !== campaignKey || editingLocked) return;
+    if (
+      !campaignKey ||
+      hydratedCampaignIdRef.current !== campaignKey ||
+      editingLocked
+    )
+      return;
 
     const draft = currentDraftRef.current;
     const fingerprint = composerDraftFingerprint(draft);
@@ -275,7 +373,13 @@ export default function CampaignEditorPage() {
         autoSaveTimerRef.current = null;
       }
     };
-  }, [campaign, campaignId, composerDraftKey, editingLocked, queueComposerDraftSave]);
+  }, [
+    campaign,
+    campaignId,
+    composerDraftKey,
+    editingLocked,
+    queueComposerDraftSave,
+  ]);
 
   useEffect(() => {
     const saveWhenHidden = () => {
@@ -284,17 +388,24 @@ export default function CampaignEditorPage() {
       }
     };
     document.addEventListener("visibilitychange", saveWhenHidden);
-    return () => document.removeEventListener("visibilitychange", saveWhenHidden);
+    return () =>
+      document.removeEventListener("visibilitychange", saveWhenHidden);
   }, [editingLocked, flushComposerDraft]);
 
   const updateSubjectDraft = useCallback((value: string) => {
-    currentDraftRef.current = { ...currentDraftRef.current, subject_template: value };
+    currentDraftRef.current = {
+      ...currentDraftRef.current,
+      subject_template: value,
+    };
     setSubject(value);
     setDraftSaveStatus("unsaved");
   }, []);
 
   const updateBodyDraft = useCallback((value: string) => {
-    currentDraftRef.current = { ...currentDraftRef.current, body_template: value };
+    currentDraftRef.current = {
+      ...currentDraftRef.current,
+      body_template: value,
+    };
     setBody(value);
     setDraftSaveStatus("unsaved");
   }, []);
@@ -307,9 +418,11 @@ export default function CampaignEditorPage() {
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
   const [attachmentModalOpen, setAttachmentModalOpen] = useState(false);
-  const [deletingAttachmentId, setDeletingAttachmentId] = useState<number | null>(null);
+  const [deletingAttachmentId, setDeletingAttachmentId] = useState<
+    number | null
+  >(null);
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
-  
+
   // ----------------------------------------------------
   // TipTap Editor Ref for Variable Insertion
   // ----------------------------------------------------
@@ -323,7 +436,9 @@ export default function CampaignEditorPage() {
     const editor = tiptapEditorRef.current;
     const placeholder = `{{ ${variable} }}`;
     if (!editor || editor.isDestroyed || typeof editor.chain !== "function") {
-      updateBodyDraft(`${currentDraftRef.current.body_template || ""}${placeholder}`);
+      updateBodyDraft(
+        `${currentDraftRef.current.body_template || ""}${placeholder}`,
+      );
       return;
     }
     editor.chain().focus().insertContent(placeholder).run();
@@ -354,9 +469,11 @@ export default function CampaignEditorPage() {
       await flushComposerDraft();
 
       await mutate(
-        (key) => typeof key === "string" && key.startsWith(`${API_URL}/api/campaigns/${campaignId}/preview?`),
+        (key) =>
+          typeof key === "string" &&
+          key.startsWith(`${API_URL}/api/campaigns/${campaignId}/preview?`),
         undefined,
-        { revalidate: false }
+        { revalidate: false },
       );
       setPreviewModalOpen(true);
     } catch (error) {
@@ -372,101 +489,413 @@ export default function CampaignEditorPage() {
     try {
       const response = await authFetch(
         `${API_URL}/api/campaigns/${campaignId}/attachments/${attachmentId}`,
-        { method: "DELETE" }
+        { method: "DELETE" },
       );
       const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.detail || "Failed to remove attachment");
+      if (!response.ok)
+        throw new Error(result.detail || "Failed to remove attachment");
       await mutateSummary();
     } catch (error) {
-      alert(error instanceof Error ? error.message : "Failed to remove attachment");
+      alert(
+        error instanceof Error ? error.message : "Failed to remove attachment",
+      );
     } finally {
       setDeletingAttachmentId(null);
     }
   };
 
   const handleUpdateName = async (newName: string) => {
-    setName(newName);
-    if (!newName.trim() || newName === campaign?.name) return;
+    const trimmed = newName.trim();
+    if (!trimmed) {
+      setNotice("Campaign name cannot be empty.");
+      return;
+    }
+    if (trimmed === campaign?.name || editingLocked) return;
     try {
-      await authFetch(`${API_URL}/api/campaigns/${campaignId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newName }),
-      });
-      mutate(`${API_URL}/api/campaigns/${campaignId}`);
-    } catch (err) {
-      console.error(err);
+      const response = await authFetch(
+        `${API_URL}/api/campaigns/${campaignId}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: trimmed }),
+        },
+      );
+      if (!response.ok)
+        throw new Error("Could not save the campaign name. Please try again.");
+      setName(trimmed);
+      await mutate(`${API_URL}/api/campaigns/${campaignId}`);
+    } catch (error) {
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : "Could not save campaign name.",
+      );
     }
   };
-
-  const handleToggleTracking = async (checked: boolean) => {
-    setTrackingEnabled(checked);
-    try {
-      await authFetch(`${API_URL}/api/campaigns/${campaignId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tracking_enabled: checked }),
-      });
-      mutate(`${API_URL}/api/campaigns/${campaignId}`);
-      mutateSummary();
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const handleToggleUnsubscribe = async (checked: boolean) => {
-    setUnsubscribeLink(checked);
-    try {
-      await authFetch(`${API_URL}/api/campaigns/${campaignId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ unsubscribe_link: checked }),
-      });
-      mutate(`${API_URL}/api/campaigns/${campaignId}`);
-      mutateSummary();
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
   const handleDeleteCampaign = async () => {
-    if (!confirm("Are you sure you want to delete this campaign? This cannot be undone.")) return;
+    if (
+      !confirm(
+        "Delete this campaign and its delivery history? This cannot be undone.",
+      )
+    )
+      return;
     try {
-      await authFetch(`${API_URL}/api/campaigns/${campaignId}`, { method: "DELETE" });
+      const response = await authFetch(
+        `${API_URL}/api/campaigns/${campaignId}`,
+        { method: "DELETE" },
+      );
+      if (!response.ok) throw new Error("Could not delete the campaign.");
       router.push("/campaigns");
-    } catch (err) {
-      alert("Failed to delete campaign");
+    } catch {
+      setNotice("Could not delete the campaign. Please try again.");
     }
   };
 
   const handleSelectSenderGroup = async (senderGroupId: number) => {
     try {
-      const res = await authFetch(`${API_URL}/api/campaigns/${campaignId}/sender-group`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sender_group_id: senderGroupId }),
-      });
+      const res = await authFetch(
+        `${API_URL}/api/campaigns/${campaignId}/sender-group`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sender_group_id: senderGroupId }),
+        },
+      );
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.detail || "Failed to update sender group");
       }
       mutateSummary();
       mutateSenderGroups();
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err: unknown) {
+      alert(
+        err instanceof Error
+          ? err.message
+          : "Request failed. Please try again.",
+      );
     }
   };
 
+  const refreshCampaign = async () => {
+    await Promise.all([
+      mutate(`${API_URL}/api/campaigns/${campaignId}`),
+      mutateSummary(),
+      mutateValSummary(),
+      mutate(
+        (key) =>
+          typeof key === "string" &&
+          (key.includes(`/api/campaigns/${campaignId}/send-`) ||
+            key.includes(`/api/campaigns/${campaignId}/recipients?`)),
+      ),
+    ]);
+  };
   const handleCampaignAction = async (action: string) => {
+    setBusyAction(action);
+    setNotice("");
     try {
-      const res = await authFetch(`${API_URL}/api/campaigns/${campaignId}/${action}`, { method: "POST" });
-      if (!res.ok) throw new Error(`Action ${action} failed`);
-      mutate(`${API_URL}/api/campaigns/${campaignId}`);
-      mutateSummary();
-    } catch (err: any) {
-      alert(err.message);
+      const res = await authFetch(
+        `${API_URL}/api/campaigns/${campaignId}/${action}`,
+        { method: "POST" },
+      );
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok)
+        throw new Error(
+          typeof result.detail === "string"
+            ? result.detail
+            : `Could not ${action} campaign.`,
+        );
+      if (action === "duplicate") {
+        router.push(`/campaigns/${result.id}?step=message`);
+        return;
+      }
+      await refreshCampaign();
+      setEndDialogOpen(false);
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : "Could not update campaign.",
+      );
+    } finally {
+      setBusyAction(null);
     }
   };
+  const navigateSafely = async (href: string) => {
+    if (launchingRef.current) return;
+    setIsSaving(true);
+    setNotice("");
+    try {
+      if (!editingLocked) {
+        await flushComposerDraft();
+        await schedule.flush(activeStep === "schedule");
+        const nextName = name.trim();
+        if (!nextName)
+          throw new Error("Give your campaign a name before leaving.");
+        if (nextName !== campaign?.name) {
+          const response = await authFetch(
+            `${API_URL}/api/campaigns/${campaignId}`,
+            {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ name: nextName }),
+            },
+          );
+          if (!response.ok)
+            throw new Error(
+              "Could not save the campaign name. Please try again.",
+            );
+        }
+      }
+      router.push(href);
+    } catch (error) {
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : "Could not save your changes. Please retry.",
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  };
+  const exportReport = async () => {
+    setBusyAction("export");
+    setNotice("");
+    try {
+      const response = await authFetch(
+        `${API_URL}/api/campaigns/${campaignId}/logs/export`,
+      );
+      if (!response.ok)
+        throw new Error("Could not export the report. Please try again.");
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `campaign_${campaignId}_report.csv`;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Export failed.");
+    } finally {
+      setBusyAction(null);
+    }
+  };
+  const requestedStep = searchParams.get("step");
+  const activeStep: CampaignStep = CAMPAIGN_STEPS.includes(
+    requestedStep as CampaignStep,
+  )
+    ? (requestedStep as CampaignStep)
+    : summary?.recipients
+      ? "message"
+      : "audience";
+  const isOperational =
+    campaign?.status !== "draft" && (editingLocked || !requestedStep);
+  const tab = [
+    "overview",
+    "audience",
+    "message",
+    "schedule",
+    "activity",
+  ].includes(searchParams.get("tab") || "")
+    ? searchParams.get("tab")!
+    : "overview";
+  const audienceReady = Number(summary?.recipients || 0) > 0;
+  const messageReady = Boolean(
+    subject.trim() &&
+    body.replace(/<[^>]*>/g, "").trim() &&
+    unknownVariables.length === 0,
+  );
+  const sendersReady = senderEmails.length > 0;
+  const scheduleReady = schedule.configured && !schedule.problem;
+  const {
+    data: recipientValidation,
+    error: recipientValidationError,
+    isValidating: checkingRecipients,
+    mutate: recheckRecipients,
+  } = useSWR<RecipientValidation>(
+    !isOperational && activeStep === "review"
+      ? `${API_URL}/api/campaigns/${campaignId}/recipient-template-validation`
+      : null,
+    { revalidateOnFocus: true },
+  );
+  const launchReady = Boolean(
+    audienceReady &&
+    messageReady &&
+    sendersReady &&
+    scheduleReady &&
+    recipientValidation?.ready_recipient_count &&
+    !recipientValidationError &&
+    !checkingRecipients &&
+    !["unsaved", "saving", "error"].includes(draftSaveStatus) &&
+    schedule.status === "saved",
+  );
+  const stepComplete = [
+    audienceReady,
+    messageReady,
+    sendersReady,
+    scheduleReady,
+    false,
+  ];
+  const changeStep = (step: CampaignStep) => {
+    void navigateSafely(`/campaigns/${campaignId}?step=${step}`);
+  };
+  const changeTab = (value: string) => {
+    void navigateSafely(`/campaigns/${campaignId}?tab=${value}`);
+  };
+  const stepIndex = CAMPAIGN_STEPS.indexOf(activeStep);
+  useEffect(() => {
+    headingRef.current?.focus({ preventScroll: true });
+  }, [activeStep, tab]);
+  const openSchedule = async (configure: boolean) => {
+    setNotice("");
+    try {
+      await flushComposerDraft();
+      await mutateSummary();
+      setConfigurationOnly(configure);
+      setSendTab(
+        summary?.send_settings?.mode === "autopilot"
+          ? "autopilot"
+          : summary?.send_settings?.mode === "schedule"
+            ? "schedule"
+            : "send-now",
+      );
+      setSendModalOpen(true);
+    } catch {
+      setNotice(
+        "Save your message before opening the schedule. Please retry saving.",
+      );
+    }
+  };
+  const launchCampaign = async () => {
+    if (launchingRef.current || !launchReady || !schedule.draft) return;
+    launchingRef.current = true;
+    setBusyAction("launch");
+    setNotice("");
+    try {
+      await flushComposerDraft();
+      await schedule.flush(true);
+      if (!name.trim())
+        throw new Error("Give your campaign a name before launching.");
+      if (name.trim() !== campaign?.name) {
+        const nameResponse = await authFetch(
+          `${API_URL}/api/campaigns/${campaignId}`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: name.trim() }),
+          },
+        );
+        if (!nameResponse.ok)
+          throw new Error(
+            "Could not save the campaign name. Please retry before launching.",
+          );
+      }
+      const problem = scheduleProblem(schedule.draft);
+      if (problem) throw new Error(problem);
+      const validationResponse = await authFetch(
+        `${API_URL}/api/campaigns/${campaignId}/recipient-template-validation`,
+      );
+      if (!validationResponse.ok)
+        throw new Error(
+          "Could not verify recipients. Please retry before launching.",
+        );
+      const validation: RecipientValidation = await validationResponse.json();
+      if (!validation.ready_recipient_count)
+        throw new Error(
+          "No recipients are ready. Review your audience before launching.",
+        );
+      const request = launchRequest(schedule.draft);
+      const response = await authFetch(
+        `${API_URL}/api/campaigns/${campaignId}/${request.endpoint}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(request.body),
+        },
+      );
+      if (!response.ok)
+        throw new Error(
+          responseProblem(
+            await response.json().catch(() => ({})),
+            "The campaign could not launch. Please try again.",
+          ),
+        );
+      // An accepted launch must not look failed if the subsequent refresh is unavailable.
+      await mutate(
+        `${API_URL}/api/campaigns/${campaignId}`,
+        {
+          ...campaign,
+          status:
+            schedule.draft.mode === "autopilot"
+              ? "autopilot"
+              : schedule.draft.mode === "schedule"
+                ? "scheduled"
+                : "sending",
+        },
+        { revalidate: false },
+      );
+      router.push(`/campaigns/${campaignId}?tab=overview`);
+      void Promise.allSettled([
+        mutate(`${API_URL}/api/campaigns/${campaignId}`),
+        mutateSummary(),
+      ]);
+    } catch (error) {
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : "The campaign could not launch.",
+      );
+    } finally {
+      launchingRef.current = false;
+      setBusyAction(null);
+    }
+  };
+  const continueStep = async () => {
+    if (stepIndex === 3) {
+      setIsSaving(true);
+      setNotice("");
+      try {
+        await schedule.flush(true);
+        await mutateSummary();
+        await navigateSafely(`/campaigns/${campaignId}?step=review`);
+      } catch (error) {
+        setNotice(
+          error instanceof Error
+            ? error.message
+            : "Could not save your schedule.",
+        );
+      } finally {
+        setIsSaving(false);
+      }
+      return;
+    }
+    const issues = [
+      "Add at least one recipient to continue.",
+      "Add a subject and message, and fix any unknown personalization fields.",
+      "Choose a group with at least one connected sender.",
+      "Choose and save your sending schedule to continue.",
+    ];
+    if (stepIndex < 4 && !stepComplete[stepIndex]) {
+      setNotice(issues[stepIndex]);
+      return;
+    }
+    if (stepIndex === 4) {
+      await launchCampaign();
+      return;
+    }
+    changeStep(CAMPAIGN_STEPS[stepIndex + 1]);
+  };
+  useEffect(() => {
+    const warnBeforeLeaving = (event: BeforeUnloadEvent) => {
+      if (
+        !editingLocked &&
+        (["unsaved", "saving", "error"].includes(draftSaveStatus) ||
+          schedule.status !== "saved" ||
+          name !== campaign?.name)
+      ) {
+        event.preventDefault();
+        event.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", warnBeforeLeaving);
+    return () => window.removeEventListener("beforeunload", warnBeforeLeaving);
+  }, [draftSaveStatus, editingLocked, name, campaign?.name, schedule.status]);
 
   if (campLoading) {
     return (
@@ -488,378 +917,471 @@ export default function CampaignEditorPage() {
     );
   }
 
-  return (
-    <div className="flex-1 flex flex-col h-full bg-slate-50/20">
-      {/* ----------------------------------------------------
-          1. Header Section
-          ---------------------------------------------------- */}
-      <header className="h-16 border-b border-slate-200 bg-white flex items-center justify-between px-8 shrink-0">
-        <div className="flex items-center gap-4 flex-1">
-          <Link href="/campaigns" className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500 transition-colors">
-            <ArrowLeft className="w-4 h-4" />
-          </Link>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onBlur={(e) => handleUpdateName(e.target.value)}
-            disabled={editingLocked}
-            className="font-bold text-xl text-slate-900 border-none bg-transparent hover:bg-slate-50 focus:bg-slate-100 rounded px-2 py-0.5 outline-none max-w-sm focus:ring-1 focus:ring-blue-500/20"
-          />
-          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold border bg-slate-100 text-slate-700 border-slate-200 uppercase tracking-wider scale-90">
-            {campaign.status}
-          </span>
-          <span className="text-sm text-slate-500 flex items-center gap-1.5">
-            {summary?.recipients || 0} recipients
-            {summary?.sheet_synced && (
-              <span title="Synced from Google Sheets" className="inline-flex items-center gap-0.5 text-blue-600 text-[10px] font-medium cursor-default">
-                <Upload className="w-3 h-3" />
-                sync
-              </span>
-            )}
-          </span>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <Button
-            variant="outline"
-            className="text-slate-600 gap-1.5 cursor-pointer"
-            onClick={handleOpenPreview}
-            disabled={isPreviewLoading}
-          >
-            {isPreviewLoading ? (
-              <Loader2 className="w-4 h-4 animate-spin text-slate-500" />
-            ) : (
-              <Eye className="w-4 h-4" />
-            )}
-            <span>{isPreviewLoading ? "Opening..." : "Show preview"}</span>
-          </Button>
-
-          <Button
-            className="bg-blue-600 hover:bg-blue-700 text-white gap-1.5 shadow-sm"
-            onClick={() => {
-              setSendTab("send-now");
-              setSendModalOpen(true);
-            }}
-            title={editingLocked ? "View current send options" : "Send options"}
-          >
-            <Send className="w-3.5 h-3.5" />
-            <span>Send options</span>
-          </Button>
-
-          <Popover>
-            <PopoverTrigger className="p-2 hover:bg-slate-100 rounded-lg text-slate-500 flex items-center justify-center cursor-pointer transition-colors border border-transparent">
-              <MoreVertical className="w-4 h-4" />
-            </PopoverTrigger>
-            <PopoverContent align="end" className="w-48 p-1">
-              {campaign.status === "sending" || campaign.status === "active" ? (
-                <button
-                  onClick={() => handleCampaignAction("pause")}
-                  className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 rounded-md flex items-center gap-2"
-                >
-                  <Pause className="w-4 h-4 text-amber-500" />
-                  <span>Pause campaign</span>
-                </button>
-              ) : campaign.status === "paused" ? (
-                <button
-                  onClick={() => handleCampaignAction("resume")}
-                  className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 rounded-md flex items-center gap-2"
-                >
-                  <Play className="w-4 h-4 text-green-500" />
-                  <span>Resume campaign</span>
-                </button>
-              ) : null}
-
-              {["sending", "scheduled", "autopilot", "paused"].includes(campaign.status) ? (
-                <button
-                  onClick={() => handleCampaignAction("stop")}
-                  className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 rounded-md flex items-center gap-2"
-                >
-                  <StopCircle className="w-4 h-4 text-red-500" />
-                  <span>Stop campaign</span>
-                </button>
-              ) : null}
-
+  const saveLabel = isOperational
+    ? campaign.status === "paused"
+      ? "Sending paused"
+      : campaign.status === "scheduled"
+        ? "Scheduled"
+        : ["ended", "stopped"].includes(campaign.status)
+          ? "History preserved"
+          : "Live campaign"
+    : draftSaveStatus === "error" || schedule.status === "error"
+      ? "Save failed"
+      : draftSaveStatus === "unsaved" || schedule.status === "unsaved"
+        ? "Unsaved changes"
+        : draftSaveStatus === "saving" ||
+            schedule.status === "saving" ||
+            isSaving
+          ? "Saving…"
+          : "Saved just now";
+  const messagePanel = (
+    <section className="campaign-composer" aria-label="Write your email">
+      <div className="campaign-composer-actions">
+        <Popover open={messageToolsOpen} onOpenChange={setMessageToolsOpen}>
+          <PopoverTrigger className="campaign-button is-quiet" disabled={editingLocked}>
+            <Plus size={17} /> Add to message <ChevronDown size={15} />
+          </PopoverTrigger>
+          <PopoverContent align="start" className="campaign-ui campaign-more-menu">
+            <button onClick={() => { setMessageToolsOpen(false); setAttachmentModalOpen(true); }}>
+              <Paperclip size={18} /> Attach a file
+            </button>
+            <button onClick={() => { setMessageToolsOpen(false); setVariablesOpen(true); }}>
+              <Braces size={18} /> Personalize for each recipient
+            </button>
+            <button onClick={() => { setMessageToolsOpen(false); setTemplateModalOpen(true); }}>
+              <FileText size={18} /> Use a template
+            </button>
+          </PopoverContent>
+        </Popover>
+        <button className="campaign-button is-outline" onClick={() => void handleOpenPreview()} disabled={isPreviewLoading}>
+          <Eye size={17} /> {isPreviewLoading ? "Opening…" : "Preview"}
+        </button>
+      </div>
+      <label className="campaign-subject-label" htmlFor="campaign-subject">Subject</label>
+      <input
+        id="campaign-subject"
+        className="campaign-subject"
+        placeholder="A clear reason to open your email"
+        value={subject}
+        onChange={(event) => updateSubjectDraft(event.target.value)}
+        onBlur={() => void flushComposerDraft().catch(() => undefined)}
+        disabled={editingLocked}
+      />
+      <div className="campaign-editor-frame">
+        <RichTextEditor
+          content={body}
+          onChange={updateBodyDraft}
+          onBlur={() => void flushComposerDraft().catch(() => undefined)}
+          placeholder="Write your email here…"
+          validVariables={activeVariables}
+          onEditorReady={handleEditorReady}
+          readOnly={editingLocked}
+          minimalToolbar
+        />
+      </div>
+      {campaignAttachments.length > 0 && (
+        <div className="campaign-attachments" aria-label="Attached files">
+          {campaignAttachments.map((attachment) => (
+            <div key={attachment.id} className="campaign-attachment">
+              <Paperclip size={14} />
+              <span>{attachment.filename}</span>
               <button
-                onClick={() => window.open(`${API_URL}/api/campaigns/${campaignId}/logs/export`, "_blank")}
-                className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 rounded-md flex items-center gap-2"
+                aria-label={`Remove ${attachment.filename}`}
+                disabled={editingLocked || deletingAttachmentId === attachment.id}
+                onClick={() => handleRemoveAttachment(attachment.id)}
               >
-                <ClipboardList className="w-4 h-4 text-slate-500" />
-                <span>Export send logs</span>
+                {deletingAttachmentId === attachment.id ? <Loader2 size={14} className="animate-spin" /> : <X size={14} />}
               </button>
-
-              <div className="border-t border-slate-100 my-1"></div>
-
-              <button
-                onClick={handleDeleteCampaign}
-                className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-md flex items-center gap-2"
-              >
-                <Trash2 className="w-4 h-4" />
-                <span>Delete campaign</span>
-              </button>
-            </PopoverContent>
-          </Popover>
+            </div>
+          ))}
         </div>
-      </header>
-
-      <div className="flex-1 flex flex-col overflow-hidden p-8 max-w-6xl mx-auto w-full">
-        <div className="mb-4 flex items-center justify-between gap-4 rounded-lg border border-slate-200 bg-white px-4 py-3 text-xs text-slate-600">
-          <div>
-            <span className="font-semibold text-slate-800">Sending configuration:</span>{" "}
-            <span className="capitalize">{String(summary?.send_settings?.mode || "send_now").replaceAll("_", " ")}</span>
-            <span className="ml-3">
-              {summary?.send_settings?.mode === "autopilot" && summary?.send_settings?.pacing_mode === "spread_evenly"
-                ? "Spread evenly across daily windows"
-                : `${Number(summary?.send_settings?.delay_minutes ?? 5)} min between batches`}
-            </span>
-            {summary?.send_settings?.dry_run ? <span className="ml-3 font-semibold text-amber-700">Test mode</span> : null}
+      )}
+      {unknownVariables.length > 0 && (
+        <div className="campaign-notice is-error" role="alert">
+          Unknown fields: {unknownVariables.map((variable) => `{{${variable}}}`).join(", ")}.
+          <button onClick={() => setVariablesOpen(true)}>Choose a field from your audience</button>
+        </div>
+      )}
+      <Dialog open={variablesOpen} onOpenChange={setVariablesOpen}>
+        <DialogContent className="campaign-ui sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Personalize your message</DialogTitle>
+            <DialogDescription>Insert a field such as a first name. It will be filled in for each recipient when the email sends.</DialogDescription>
+          </DialogHeader>
+          <div className="campaign-variable-list">
+            {activeVariables.length ? activeVariables.map((variable) => (
+              <button key={variable} className="campaign-text-button" disabled={editingLocked} onClick={() => { insertVariable(variable); setVariablesOpen(false); }}>
+                {`{{${variable}}}`}
+              </button>
+            )) : <p>Add your audience first to use its fields.</p>}
           </div>
-          <span className={editingLocked ? "font-semibold text-amber-700" : "text-slate-400"}>
-            {editingLocked ? "Stop campaign to edit" : "Draft settings can be edited"}
-          </span>
-        </div>
-        <Tabs defaultValue="composer" className="flex-1 flex flex-col">
-          <TabsList className="w-fit">
-            <TabsTrigger value="composer" className="gap-1.5">
-              <Mail className="w-4 h-4" />
-              Composer
-            </TabsTrigger>
-            <TabsTrigger value="progress" className="gap-1.5">
-              <Send className="w-4 h-4" />
-              Progress
-            </TabsTrigger>
-            <TabsTrigger value="logs" className="gap-1.5">
-              <ClipboardList className="w-4 h-4" />
-              Logs
-            </TabsTrigger>
-            <TabsTrigger value="recipients" className="gap-1.5">
-              <UserPlus className="w-4 h-4" />
-              Recipients
-            </TabsTrigger>
-          </TabsList>
+        </DialogContent>
+      </Dialog>
+    </section>
+  );
+  const moreMenu = (
+    <Popover>
+      <PopoverTrigger
+        className="campaign-button"
+        disabled={Boolean(busyAction)}
+      >
+        <MoreVertical size={20} />
+        {busyAction === "duplicate"
+          ? "Duplicating…"
+          : busyAction === "export"
+            ? "Exporting…"
+            : "More"}
+      </PopoverTrigger>
+      <PopoverContent align="end" className="campaign-ui campaign-more-menu">
+        <button
+          disabled={Boolean(busyAction)}
+          onClick={() => void handleCampaignAction("duplicate")}
+        >
+          <Copy size={19} />
+          Duplicate campaign
+        </button>
+        <button
+          disabled={Boolean(busyAction)}
+          onClick={() => void exportReport()}
+        >
+          <Download size={19} />
+          Export report
+        </button>
+        {editingLocked && (
+          <>
+            <hr />
+            <button className="is-red" onClick={() => setEndDialogOpen(true)}>
+              <Trash2 size={19} />
+              End campaign
+            </button>
+          </>
+        )}
+        {!editingLocked && (
+          <>
+            <hr />
+            <button className="is-red" onClick={handleDeleteCampaign}>
+              <Trash2 size={19} />
+              Delete campaign
+            </button>
+          </>
+        )}
+      </PopoverContent>
+    </Popover>
+  );
 
-          <TabsContent value="composer" className="flex-1 mt-4 overflow-y-auto">
-            <div className="space-y-4">
-              <div className="bg-slate-50/70 border border-slate-200/80 rounded-t-xl p-5 space-y-4">
-                <div className="flex items-start gap-4">
-                  <label className="w-16 text-sm font-semibold text-slate-500 mt-1.5">From</label>
-                  <div className="flex-1 flex items-center justify-between">
-                    {summary?.sender_group_name || summary?.sender ? (
-                      <Button
-                        variant="ghost"
-                        className="p-0 h-auto text-blue-600 hover:text-blue-800 hover:bg-transparent flex items-start justify-start"
-                        onClick={() => setSenderModalOpen(true)}
-                        disabled={editingLocked}
-                      >
-                        <span className="flex flex-col items-start min-w-0">
-                          <span className="text-sm font-semibold">
-                            {summary.sender_group_name || summary.sender}
-                            <span className="text-xs font-normal text-slate-400 ml-1">
-                              ({senderCountInGroup || senderEmails.length} sender{(senderCountInGroup || senderEmails.length) !== 1 ? "s" : ""})
-                            </span>
-                            <span className="text-slate-400 font-normal ml-1">▾</span>
-                          </span>
-                          {senderEmails.length > 0 && (
-                            <span className="text-xs font-normal text-slate-400 truncate max-w-xl">
-                              {senderEmails.join(", ")}
-                            </span>
-                          )}
-                        </span>
-                      </Button>
-                    ) : (
-                      <Button
-                        variant="ghost"
-                        className="p-0 h-auto text-blue-600 hover:text-blue-800 hover:bg-transparent text-sm font-semibold gap-1 flex items-center justify-start"
-                        onClick={() => setSenderModalOpen(true)}
-                        disabled={editingLocked}
-                      >
-                        No sender connected. Click to Connect ▾
-                      </Button>
-                    )}
-                    <div className="flex items-center gap-1.5 ml-auto">
-                      <span className={cn(
-                        "text-[11px] font-medium",
-                        draftSaveStatus === "error" ? "text-red-600" : "text-slate-400"
-                      )}>
-                        {draftSaveStatus === "saving" || isSaving
-                          ? "Saving..."
-                          : draftSaveStatus === "error"
-                            ? "Save failed"
-                            : draftSaveStatus === "unsaved"
-                              ? "Unsaved"
-                              : "Saved"}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={handleSave}
-                        disabled={editingLocked || isSaving}
-                        className="p-1.5 hover:bg-slate-200/60 rounded text-slate-400 hover:text-slate-600 disabled:opacity-50 transition-colors cursor-pointer shrink-0"
-                        title={draftSaveStatus === "error" ? "Retry saving draft" : "Save draft now"}
-                      >
-                        {draftSaveStatus === "saving" || isSaving ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : draftSaveStatus === "saved" ? (
-                          <Check className="w-4 h-4 text-emerald-600" />
-                        ) : draftSaveStatus === "error" ? (
-                          <AlertTriangle className="w-4 h-4 text-red-600" />
-                        ) : (
-                          <Save className="w-4 h-4" />
-                        )}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-4">
-                  <label className="w-16 text-sm font-semibold text-slate-500">To</label>
-                  <div className="flex-1">
-                    <Button
-                      className="bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 rounded-full py-0.5 px-3.5 h-7 text-xs font-semibold"
-                      onClick={() => setRecipientsModalOpen(true)}
-                      disabled={editingLocked}
-                    >
-                      {summary?.recipients ? `${summary.recipients} recipients` : "Select recipients"}
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-4 border-t border-slate-100 pt-3">
-                  <label className="w-16 text-sm font-semibold text-slate-500">Subject</label>
-                  <input
-                    type="text"
-                    value={subject}
-                    onChange={(e) => updateSubjectDraft(e.target.value)}
-                    onBlur={() => void flushComposerDraft().catch(() => undefined)}
-                    disabled={editingLocked}
-                    placeholder="Enter email subject template"
-                    className="flex-1 text-slate-900 border-none outline-none focus:ring-0 placeholder-slate-400 py-1 bg-transparent text-sm font-medium"
-                  />
-                </div>
+  return (
+    <div className="campaign-ui campaign-workspace">
+      <CampaignHeader
+        name={name}
+        status={campaign.status}
+        saveLabel={saveLabel}
+        readOnly={editingLocked}
+        onNameChange={setName}
+        onNameSave={handleUpdateName}
+        onNavigate={navigateSafely}
+      />
+      {isOperational ? (
+        <nav className="campaign-tabs" aria-label="Campaign sections">
+          {["overview", "audience", "message", "schedule", "activity"].map(
+            (value) => (
+              <button
+                key={value}
+                aria-current={tab === value ? "page" : undefined}
+                onClick={() => changeTab(value)}
+              >
+                {value.charAt(0).toUpperCase() + value.slice(1)}
+              </button>
+            ),
+          )}
+        </nav>
+      ) : null}
+      <div
+        className={`campaign-content ${!isOperational ? `is-builder is-${activeStep}-step` : ""}`}
+      >
+        {summaryError && (
+          <div className="campaign-notice is-error" role="alert">
+            Could not load the campaign settings. Your changes are still here.
+            <button onClick={() => void mutateSummary()}>Retry loading</button>
+          </div>
+        )}
+        {notice && (
+          <div className="campaign-notice is-error" role="alert">
+            {notice}
+            <button onClick={() => setNotice("")} aria-label="Dismiss message">
+              Dismiss
+            </button>
+          </div>
+        )}
+        {draftSaveStatus === "error" && (
+          <div className="campaign-notice is-error" role="alert">
+            Your latest message changes haven’t been saved.
+            <button onClick={handleSave} disabled={isSaving}>
+              Retry saving
+            </button>
+          </div>
+        )}
+        {isOperational ? (
+          <>
+            <div className="campaign-page-heading">
+              <div>
+                <h1 ref={headingRef} tabIndex={-1}>
+                  {tab === "overview"
+                    ? "Campaign overview"
+                    : tab === "message"
+                      ? "Campaign message"
+                      : tab === "audience"
+                        ? "Campaign audience"
+                        : tab === "schedule"
+                          ? "Campaign schedule"
+                          : "Campaign activity"}
+                </h1>
+                <p>
+                  {tab === "overview"
+                    ? campaign.status === "paused"
+                      ? "Sending is paused. Resume when you’re ready."
+                      : ["ended", "stopped"].includes(campaign.status)
+                        ? "Sending has ended. Your results and activity are saved."
+                        : "New emails send according to your campaign schedule."
+                    : editingLocked
+                      ? "End the campaign before changing its message, audience, or schedule."
+                      : "Review and manage this campaign."}
+                </p>
               </div>
-
-              <div className="bg-white border border-t-0 border-slate-200 rounded-b-xl overflow-hidden focus-within:border-blue-400 focus-within:ring-2 focus-within:ring-blue-100/50 transition-all flex flex-col">
-                <div className="flex items-center justify-between px-4 py-2 border-b border-slate-100 bg-slate-50/50 select-none">
-                  <div className="flex items-center gap-2">
+              <div className="campaign-overview-actions">
+                {editingLocked && (
+                  <>
+                    <p>
+                      Pausing prevents future sends.
+                      <br />
+                      Emails already sending may finish.
+                    </p>
                     <button
-                      type="button"
-                      className="p-1.5 hover:bg-slate-200/60 rounded text-slate-500 hover:text-slate-800 transition-colors flex items-center gap-1"
-                      onClick={() => setAttachmentModalOpen(true)}
-                      disabled={editingLocked}
-                      title="Add attachments"
+                      className="campaign-button is-outline"
+                      disabled={Boolean(busyAction)}
+                      onClick={() =>
+                        void handleCampaignAction(
+                          campaign.status === "paused" ? "resume" : "pause",
+                        )
+                      }
                     >
-                      <Paperclip className="w-4 h-4" />
-                      <span className="text-xs font-semibold">
-                        Attach{campaignAttachments.length > 0 ? ` (${campaignAttachments.length})` : ""}
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      className="p-1.5 hover:bg-slate-200/60 rounded text-slate-500 hover:text-slate-800 transition-colors flex items-center gap-1"
-                      onClick={() => setTemplateModalOpen(true)}
-                      disabled={editingLocked}
-                      title="Select template"
-                    >
-                      <ClipboardList className="w-4 h-4" />
-                      <span className="text-xs font-semibold">Template</span>
-                    </button>
-                  </div>
-
-                  <Popover>
-                    <PopoverTrigger className="p-1.5 hover:bg-slate-200/60 rounded text-slate-600 hover:text-slate-900 transition-colors flex items-center gap-1 cursor-pointer h-7" title="Insert variables">
-                      <Braces className="w-4 h-4" />
-                      <span className="text-[10px] font-bold uppercase tracking-wider">Variables</span>
-                    </PopoverTrigger>
-                    <PopoverContent align="end" className="w-48 max-h-64 overflow-y-auto p-1">
-                      {activeVariables.length === 0 ? (
-                        <p className="px-3 py-2 text-xs text-slate-400">Import contacts first</p>
+                      {busyAction === "pause" || busyAction === "resume" ? (
+                        <Loader2 size={19} className="animate-spin" />
+                      ) : campaign.status === "paused" ? (
+                        <Play size={19} />
                       ) : (
-                        activeVariables.map((v) => (
-                          <button
-                            key={v}
-                            onClick={() => insertVariable(v)}
-                            className="w-full text-left px-3 py-1.5 text-xs hover:bg-slate-100 rounded transition-colors text-slate-700 cursor-pointer"
-                          >
-                            {v}
-                          </button>
-                        ))
+                        <Pause size={19} />
                       )}
-                    </PopoverContent>
-                  </Popover>
-                </div>
-
-                {campaignAttachments.length > 0 && (
-                  <div className="border-b border-slate-100 max-h-32 overflow-y-auto">
-                    {campaignAttachments.map((attachment) => (
-                      <div
-                        key={attachment.id}
-                        className="flex items-center gap-3 px-4 py-2 border-b border-slate-100 last:border-b-0 bg-white"
-                      >
-                        <Paperclip className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-                        <span className="text-xs font-semibold text-slate-700 truncate flex-1">
-                          {attachment.filename}
-                        </span>
-                        <span className="text-[11px] text-slate-400 shrink-0">
-                          {attachment.size_bytes < 1024 * 1024
-                            ? `${Math.max(1, Math.round(attachment.size_bytes / 1024))} KB`
-                            : `${(attachment.size_bytes / 1024 / 1024).toFixed(2)} MB`}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveAttachment(attachment.id)}
-                          disabled={editingLocked || deletingAttachmentId === attachment.id}
-                          className="text-slate-400 hover:text-red-600 disabled:opacity-50 transition-colors p-1"
-                          title={`Remove ${attachment.filename}`}
-                        >
-                          {deletingAttachmentId === attachment.id ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          ) : (
-                            <Trash2 className="w-3.5 h-3.5" />
-                          )}
-                        </button>
-                      </div>
-                    ))}
-                  </div>
+                      {campaign.status === "paused"
+                        ? "Resume sending"
+                        : "Pause sending"}
+                    </button>
+                  </>
                 )}
-
-                <RichTextEditor
-                  content={body}
-                  onChange={updateBodyDraft}
-                  onBlur={() => void flushComposerDraft().catch(() => undefined)}
-                  placeholder="Compose your email or select a template..."
-                  validVariables={activeVariables}
-                  onEditorReady={handleEditorReady}
-                  readOnly={editingLocked}
-                />
-
-                {unknownVariables.length > 0 && (
-                  <div className="mx-4 mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-                    Unknown variable{unknownVariables.length !== 1 ? "s" : ""}:{" "}
-                    <span className="font-semibold">
-                      {unknownVariables.map((variable) => `{{ ${variable} }}`).join(", ")}
-                    </span>
-                  </div>
+                {!editingLocked && (
+                  <button
+                    className="campaign-button is-outline"
+                    onClick={() => changeStep("message")}
+                  >
+                    Edit campaign
+                  </button>
                 )}
-
+                {moreMenu}
               </div>
             </div>
-          </TabsContent>
-
-          <TabsContent value="progress" className="flex-1 mt-4">
-            <ProgressSection campaignId={campaignId as string} />
-          </TabsContent>
-
-          <TabsContent value="logs" className="flex-1 mt-4">
-            <LogsSection campaignId={campaignId as string} />
-          </TabsContent>
-          <TabsContent value="recipients" className="flex-1 mt-4">
-            <RecipientsSection
-              campaignId={campaignId as string}
-              onOpenImport={() => setRecipientsModalOpen(true)}
-              readOnly={editingLocked}
-            />
-          </TabsContent>
-        </Tabs>
+            {tab === "overview" && (
+              <CampaignOverview
+                campaignId={campaignId}
+                summary={summary}
+                onActivity={() => changeTab("activity")}
+              />
+            )}
+            {tab === "message" && messagePanel}
+            {tab === "audience" && (
+              <RecipientsSection
+                campaignId={campaignId}
+                onOpenImport={() => setRecipientsModalOpen(true)}
+                readOnly={editingLocked}
+                onAudienceChange={async () => { await Promise.all([mutateSummary(), mutateValSummary(), recheckRecipients()]); }}
+              />
+            )}
+            {tab === "schedule" && (
+              <div className="campaign-step-panel">
+                <CurrentSchedule summary={summary} />
+                <button
+                  className="campaign-button is-outline"
+                  onClick={() => void openSchedule(true)}
+                >
+                  View schedule settings
+                </button>
+                <div className="mt-6">
+                  <ProgressSection campaignId={campaignId} />
+                </div>
+              </div>
+            )}
+            {tab === "activity" && <LogsSection campaignId={campaignId} />}
+          </>
+        ) : (
+          <>
+            <div className="campaign-page-heading">
+              <div>
+                <h1 ref={headingRef} tabIndex={-1}>
+                  {activeStep === "message"
+                    ? "Write your message"
+                    : activeStep === "audience"
+                      ? "Choose your audience"
+                      : activeStep === "senders"
+                        ? "Choose your senders"
+                        : activeStep === "schedule"
+                          ? "Schedule your campaign"
+                          : "Review and launch"}
+                </h1>
+                <p>
+                  {activeStep === "message"
+                    ? "Write your email. Nothing sends until you review and launch."
+                    : activeStep === "audience"
+                      ? "Choose who will receive this campaign."
+                      : activeStep === "senders"
+                        ? "Choose the connected email accounts that will send your campaign."
+                        : activeStep === "schedule"
+                          ? "Choose when your emails should start sending."
+                          : "Check the essentials. You can return to any step before launching."}
+                </p>
+              </div>
+            </div>
+            {activeStep === "message" && messagePanel}
+            {activeStep === "audience" && (
+              <RecipientsSection
+                campaignId={campaignId}
+                onOpenImport={() => setRecipientsModalOpen(true)}
+                readOnly={editingLocked}
+                onAudienceChange={async () => { await Promise.all([mutateSummary(), mutateValSummary(), recheckRecipients()]); }}
+              />
+            )}
+            {activeStep === "senders" && (
+              <div className="campaign-step-panel">
+                <section className="campaign-panel">
+                  <h2>
+                    {summary?.sender_group_name || "No sender group selected"}
+                  </h2>
+                  <ul className="campaign-sender-list">
+                    {senderEmails.map((email) => (
+                      <li key={email}>
+                        <CheckCircle size={18} className="is-blue" />
+                        {email}
+                      </li>
+                    ))}
+                  </ul>
+                  <button
+                    className="campaign-button is-outline"
+                    onClick={() => setSenderModalOpen(true)}
+                  >
+                    <AtSign size={19} />
+                    {sendersReady
+                      ? "Change sender group"
+                      : "Choose sender group"}
+                  </button>
+                </section>
+                <p>
+                  Sending limits stay attached to each account. Only connected
+                  senders are used.
+                </p>
+              </div>
+            )}
+            {activeStep === "schedule" &&
+              (schedule.draft ? (
+                <CampaignSchedule
+                  draft={schedule.draft}
+                  onChange={schedule.update}
+                  recipients={Number(summary?.recipients || 0)}
+                  error={schedule.error || schedule.problem}
+                  onRetry={() =>
+                    void schedule.flush(true).catch(() => undefined)
+                  }
+                />
+              ) : (
+                <p className="campaign-empty">Loading your schedule…</p>
+              ))}
+            {activeStep === "review" && (
+              <CampaignReview
+                recipients={Number(summary?.recipients || 0)}
+                subject={subject}
+                senderCount={senderEmails.length}
+                draft={schedule.draft}
+                configured={schedule.configured}
+                validation={recipientValidation}
+                loading={
+                  checkingRecipients ||
+                  (!recipientValidation && !recipientValidationError)
+                }
+                validationError={Boolean(recipientValidationError)}
+                onRetry={() => void recheckRecipients()}
+                messageReady={messageReady}
+                scheduleError={schedule.problem}
+                ready={launchReady}
+                onEdit={changeStep}
+                onTest={() => void handleOpenPreview()}
+                testLoading={isPreviewLoading}
+              />
+            )}
+          </>
+        )}
       </div>
+      {!isOperational && (
+        <footer className="campaign-footer campaign-workflow-footer">
+          <div className="campaign-footer-exit">
+            {stepIndex > 0 && (
+              <button
+                className="campaign-icon-button"
+                aria-label={`Back to ${CAMPAIGN_STEPS[stepIndex - 1]}`}
+                title={`Back to ${CAMPAIGN_STEPS[stepIndex - 1]}`}
+                onClick={() => changeStep(CAMPAIGN_STEPS[stepIndex - 1])}
+                disabled={isSaving || Boolean(busyAction)}
+              ><ArrowLeft size={18} /></button>
+            )}
+            <button className="campaign-button is-quiet" disabled={isSaving || Boolean(busyAction)} onClick={() => void navigateSafely("/campaigns")}>
+              {isSaving ? "Saving…" : "Save & exit"}
+            </button>
+          </div>
+          <CampaignSteps current={activeStep} complete={stepComplete} onChange={changeStep} disabled={isSaving || Boolean(busyAction)} />
+          <div className="campaign-footer-next">
+            <button
+              className="campaign-button is-primary"
+              onClick={() => void continueStep()}
+              disabled={isSaving || Boolean(busyAction) || (stepIndex === 4 && !launchReady)}
+            >
+              {stepIndex < 4 ? "Continue" : busyAction === "launch" ? "Launching…" : schedule.draft?.dryRun ? "Launch test run" : "Launch campaign"}
+              <ArrowRight size={18} />
+            </button>
+          </div>
+        </footer>
+      )}
+      <Dialog open={endDialogOpen} onOpenChange={setEndDialogOpen}>
+        <DialogContent className="campaign-ui sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>End this campaign?</DialogTitle>
+          </DialogHeader>
+          <p>
+            Future sends will be cancelled. Emails already sending may finish.
+            Your audience, message, and delivery history are kept.
+          </p>
+          <DialogFooter>
+            <button
+              className="campaign-button"
+              disabled={Boolean(busyAction)}
+              onClick={() => setEndDialogOpen(false)}
+            >
+              Keep campaign
+            </button>
+            <button
+              className="campaign-button is-danger"
+              disabled={Boolean(busyAction)}
+              onClick={() => void handleCampaignAction("stop")}
+            >
+              {busyAction === "stop" ? "Ending…" : "End campaign"}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ----------------------------------------------------
           3. Modals & Dialogs
@@ -872,8 +1394,9 @@ export default function CampaignEditorPage() {
         onClose={() => setSendModalOpen(false)}
         campaignId={campaignId as string}
         defaultTab={sendTab}
+        configurationOnly={configurationOnly}
         summary={summary}
-        readOnly={editingLocked}
+        readOnly={isOperational || editingLocked}
         mutateAll={() => {
           mutate(`${API_URL}/api/campaigns/${campaignId}`);
           mutateSummary();
@@ -885,7 +1408,9 @@ export default function CampaignEditorPage() {
         isOpen={senderModalOpen}
         onClose={() => setSenderModalOpen(false)}
         senderGroups={senderGroups || []}
-        selectedGroupId={summary?.sender_group_id || selectedSenderGroup?.id || null}
+        selectedGroupId={
+          summary?.sender_group_id || selectedSenderGroup?.id || null
+        }
         onSelect={async (senderGroupId) => {
           await handleSelectSenderGroup(senderGroupId);
           setSenderModalOpen(false);
@@ -943,7 +1468,7 @@ function RecipientsDialog({
   onClose,
   campaignId,
   mutateSummary,
-  mutateValSummary
+  mutateValSummary,
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -954,7 +1479,9 @@ function RecipientsDialog({
   const [rawPaste, setRawPaste] = useState("");
   const [sheetUrl, setSheetUrl] = useState("");
   const [tabName, setTabName] = useState("");
-  const [sheetTabs, setSheetTabs] = useState<Array<{ title: string; gid?: string | null }>>([]);
+  const [sheetTabs, setSheetTabs] = useState<
+    Array<{ title: string; gid?: string | null }>
+  >([]);
   const [tabsLoading, setTabsLoading] = useState(false);
   const [tabsError, setTabsError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -964,7 +1491,9 @@ function RecipientsDialog({
   const refreshImportedRecipients = async () => {
     await Promise.all([
       mutate(
-        (key) => typeof key === "string" && key.startsWith(`${API_URL}/api/campaigns/${campaignId}/recipients?`)
+        (key) =>
+          typeof key === "string" &&
+          key.startsWith(`${API_URL}/api/campaigns/${campaignId}/recipients?`),
       ),
       mutateSummary(),
       mutateValSummary(),
@@ -973,18 +1502,19 @@ function RecipientsDialog({
 
   useEffect(() => {
     const trimmedUrl = sheetUrl.trim();
-    if (!trimmedUrl) {
-      setSheetTabs([]);
-      setTabsError("");
-      setTabsLoading(false);
-      return;
-    }
-
     const timeoutId = window.setTimeout(async () => {
+      if (!trimmedUrl) {
+        setSheetTabs([]);
+        setTabsError("");
+        setTabsLoading(false);
+        return;
+      }
       setTabsLoading(true);
       setTabsError("");
       try {
-        const res = await authFetch(`${API_URL}/api/google-sheets/public-tabs?url=${encodeURIComponent(trimmedUrl)}`);
+        const res = await authFetch(
+          `${API_URL}/api/google-sheets/public-tabs?url=${encodeURIComponent(trimmedUrl)}`,
+        );
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
           throw new Error(data.detail || "Could not load tabs");
@@ -995,35 +1525,48 @@ function RecipientsDialog({
         if (tabs.length) {
           setTabName(tabs[0].title);
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         setSheetTabs([]);
-        setTabsError(err.message || "Could not load tabs. The sheet may need to be public.");
+        setTabsError(
+          err instanceof Error
+            ? err.message
+            : "Could not load tabs. The sheet may need to be public.",
+        );
       } finally {
         setTabsLoading(false);
       }
     }, 500);
 
     return () => window.clearTimeout(timeoutId);
-  }, [sheetUrl]);
+  }, [sheetUrl, authFetch]);
 
   const handlePasteSubmit = async () => {
     if (!rawPaste.trim()) return;
     setIsSubmitting(true);
     try {
-      const res = await authFetch(`${API_URL}/api/campaigns/${campaignId}/recipients/paste`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ raw: rawPaste }),
-      });
+      const res = await authFetch(
+        `${API_URL}/api/campaigns/${campaignId}/recipients/paste`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ raw: rawPaste }),
+        },
+      );
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || "Import failed");
       await refreshImportedRecipients();
       if (data.attached === 0) {
-        alert("No new recipients were added. The valid emails are already in this campaign.");
+        alert(
+          "No new recipients were added. The valid emails are already in this campaign.",
+        );
       }
       onClose();
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err: unknown) {
+      alert(
+        err instanceof Error
+          ? err.message
+          : "Request failed. Please try again.",
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -1036,20 +1579,29 @@ function RecipientsDialog({
       const formData = new FormData();
       formData.append("file", csvFile);
       formData.append("mapping_json", JSON.stringify({}));
-      
-      const res = await authFetch(`${API_URL}/api/campaigns/${campaignId}/recipients/csv`, {
-        method: "POST",
-        body: formData,
-      });
+
+      const res = await authFetch(
+        `${API_URL}/api/campaigns/${campaignId}/recipients/csv`,
+        {
+          method: "POST",
+          body: formData,
+        },
+      );
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || "CSV upload failed");
       await refreshImportedRecipients();
       if (data.attached === 0) {
-        alert("No new recipients were added. The valid emails are already in this campaign.");
+        alert(
+          "No new recipients were added. The valid emails are already in this campaign.",
+        );
       }
       onClose();
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err: unknown) {
+      alert(
+        err instanceof Error
+          ? err.message
+          : "Request failed. Please try again.",
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -1059,25 +1611,34 @@ function RecipientsDialog({
     if (!sheetUrl.trim()) return;
     setIsSubmitting(true);
     try {
-      const res = await authFetch(`${API_URL}/api/campaigns/${campaignId}/recipients/google-sheet`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          url: sheetUrl,
-          tab_name: tabName,
-          header_row: 1,
-          mapping: {}
-        }),
-      });
+      const res = await authFetch(
+        `${API_URL}/api/campaigns/${campaignId}/recipients/google-sheet`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            url: sheetUrl,
+            tab_name: tabName,
+            header_row: 1,
+            mapping: {},
+          }),
+        },
+      );
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || "Google Sheet import failed");
       await refreshImportedRecipients();
       if (data.attached === 0) {
-        alert("No new recipients were added. The valid emails are already in this campaign.");
+        alert(
+          "No new recipients were added. The valid emails are already in this campaign.",
+        );
       }
       onClose();
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err: unknown) {
+      alert(
+        err instanceof Error
+          ? err.message
+          : "Request failed. Please try again.",
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -1105,11 +1666,13 @@ function RecipientsDialog({
               <span>Google Sheets</span>
             </TabsTrigger>
           </TabsList>
-          
+
           {/* A. Copy Paste */}
           <TabsContent value="paste" className="py-4 space-y-4">
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-700">Paste raw email addresses or CSV format</label>
+              <label className="text-xs font-semibold text-slate-700">
+                Paste raw email addresses or CSV format
+              </label>
               <Textarea
                 placeholder="e.g. John Doe, john@company.com, Company Name&#10;Jane Smith, jane@company.com"
                 value={rawPaste}
@@ -1118,8 +1681,18 @@ function RecipientsDialog({
               />
             </div>
             <DialogFooter>
-              <Button variant="outline" onClick={onClose} disabled={isSubmitting}>Cancel</Button>
-              <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={handlePasteSubmit} disabled={isSubmitting || !rawPaste.trim()}>
+              <Button
+                variant="outline"
+                onClick={onClose}
+                disabled={isSubmitting}
+              >
+                Cancel
+              </Button>
+              <Button
+                className="bg-blue-600 hover:bg-blue-700 text-white"
+                onClick={handlePasteSubmit}
+                disabled={isSubmitting || !rawPaste.trim()}
+              >
                 {isSubmitting ? "Importing..." : "Use contacts"}
               </Button>
             </DialogFooter>
@@ -1138,11 +1711,23 @@ function RecipientsDialog({
               <div className="text-sm font-semibold text-slate-700">
                 {csvFile ? csvFile.name : "Click to select CSV File"}
               </div>
-              <p className="text-xs text-slate-400 mt-1">Accepts CSV files with headers Email, First Name, Company Name</p>
+              <p className="text-xs text-slate-400 mt-1">
+                Accepts CSV files with headers Email, First Name, Company Name
+              </p>
             </div>
             <DialogFooter>
-              <Button variant="outline" onClick={onClose} disabled={isSubmitting}>Cancel</Button>
-              <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={handleCSVSubmit} disabled={isSubmitting || !csvFile}>
+              <Button
+                variant="outline"
+                onClick={onClose}
+                disabled={isSubmitting}
+              >
+                Cancel
+              </Button>
+              <Button
+                className="bg-blue-600 hover:bg-blue-700 text-white"
+                onClick={handleCSVSubmit}
+                disabled={isSubmitting || !csvFile}
+              >
                 {isSubmitting ? "Uploading..." : "Import CSV"}
               </Button>
             </DialogFooter>
@@ -1152,7 +1737,9 @@ function RecipientsDialog({
           <TabsContent value="sheet" className="py-4 space-y-4">
             <div className="space-y-3">
               <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-700">Google Sheet Shareable link</label>
+                <label className="text-xs font-semibold text-slate-700">
+                  Google Sheet Shareable link
+                </label>
                 <Input
                   placeholder="https://docs.google.com/spreadsheets/d/.../edit?usp=sharing"
                   value={sheetUrl}
@@ -1160,7 +1747,9 @@ function RecipientsDialog({
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-700">Sheet tab</label>
+                <label className="text-xs font-semibold text-slate-700">
+                  Sheet tab
+                </label>
                 {sheetTabs.length > 0 ? (
                   <select
                     value={tabName}
@@ -1168,14 +1757,19 @@ function RecipientsDialog({
                     className="w-full h-10 rounded-md border border-slate-200 bg-white px-3 text-sm outline-none focus:ring-1 focus:ring-blue-500/20"
                   >
                     {sheetTabs.map((tab) => (
-                      <option key={`${tab.title}-${tab.gid || ""}`} value={tab.title}>
+                      <option
+                        key={`${tab.title}-${tab.gid || ""}`}
+                        value={tab.title}
+                      >
                         {tab.title}
                       </option>
                     ))}
                   </select>
                 ) : (
                   <Input
-                    placeholder={tabsLoading ? "Loading tabs..." : "Default first tab"}
+                    placeholder={
+                      tabsLoading ? "Loading tabs..." : "Default first tab"
+                    }
                     value={tabName}
                     onChange={(e) => setTabName(e.target.value)}
                     disabled={tabsLoading}
@@ -1189,8 +1783,18 @@ function RecipientsDialog({
               </div>
             </div>
             <DialogFooter>
-              <Button variant="outline" onClick={onClose} disabled={isSubmitting}>Cancel</Button>
-              <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={handleSheetSubmit} disabled={isSubmitting || !sheetUrl.trim()}>
+              <Button
+                variant="outline"
+                onClick={onClose}
+                disabled={isSubmitting}
+              >
+                Cancel
+              </Button>
+              <Button
+                className="bg-blue-600 hover:bg-blue-700 text-white"
+                onClick={handleSheetSubmit}
+                disabled={isSubmitting || !sheetUrl.trim()}
+              >
                 {isSubmitting ? "Fetching..." : "Use sheet data"}
               </Button>
             </DialogFooter>
@@ -1205,14 +1809,14 @@ function RecipientsDialog({
 function TemplateDialog({
   isOpen,
   onClose,
-  onSelect
+  onSelect,
 }: {
   isOpen: boolean;
   onClose: () => void;
   onSelect: (subject: string, body: string) => void;
 }) {
   const { data: templates } = useSWR(
-    isOpen ? `${API_URL}/api/templates` : null
+    isOpen ? `${API_URL}/api/templates` : null,
   );
   const list = Array.isArray(templates) ? templates : [];
 
@@ -1224,24 +1828,37 @@ function TemplateDialog({
         </DialogHeader>
         <div className="py-4 space-y-4">
           {list.length === 0 ? (
-            <p className="text-center text-sm text-slate-400 py-8">No templates yet. Create one from the Templates page.</p>
+            <p className="text-center text-sm text-slate-400 py-8">
+              No templates yet. Create one from the Templates page.
+            </p>
           ) : (
-            list.map((t: any) => (
-              <div
-                key={t.id}
-                className="border border-slate-200 hover:border-blue-400 rounded-lg p-4 cursor-pointer hover:bg-blue-50/10 transition-all space-y-2"
-                onClick={() => onSelect(t.subject, t.body)}
-              >
-                <h3 className="font-bold text-slate-800 text-sm">{t.title}</h3>
-                <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">
-                  {t.body}
-                </p>
-              </div>
-            ))
+            list.map(
+              (t: {
+                id: number;
+                title: string;
+                subject: string;
+                body: string;
+              }) => (
+                <div
+                  key={t.id}
+                  className="border border-slate-200 hover:border-blue-400 rounded-lg p-4 cursor-pointer hover:bg-blue-50/10 transition-all space-y-2"
+                  onClick={() => onSelect(t.subject, t.body)}
+                >
+                  <h3 className="font-bold text-slate-800 text-sm">
+                    {t.title}
+                  </h3>
+                  <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">
+                    {t.body}
+                  </p>
+                </div>
+              ),
+            )
           )}
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

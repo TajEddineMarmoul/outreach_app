@@ -16,11 +16,12 @@ from io import StringIO
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
 from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from api.deps import PROJECT_ROOT, db, config_path, get_db, get_current_user_id
+from api.delivery_safety import require_delivery_enabled
 from api.schemas import (
     CampaignCreate,
     CampaignUpdate,
@@ -35,7 +36,7 @@ from api.schemas import (
 from src.models import load_config
 from src.gmail_sender import gmail_connection_status
 from src.google_sheets import get_public_sheet_csv, get_published_csv, list_public_sheet_tabs, parse_google_sheet_url_details
-from src.importer import import_dataframe, normalize_email, detect_columns
+from src.importer import import_dataframe, normalize_email, detect_columns, is_do_not_contact
 from src.safety import campaign_checklist
 from src.scheduler import send_test_email
 from src.template_engine import extract_template_variables
@@ -98,19 +99,34 @@ def list_campaigns(conn=Depends(get_db), user_id: str = Depends(get_current_user
     result = []
     for row in campaigns:
         d = dict(row)
-        cnt = conn.execute(
-            "SELECT COUNT(*) AS count FROM campaign_recipients WHERE campaign_id = ?",
+        counts = conn.execute(
+            "SELECT COUNT(*) AS count, SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) AS sent FROM campaign_recipients WHERE campaign_id = ?",
             (d["id"],)
-        ).fetchone()["count"]
-        d["recipient_count"] = cnt
+        ).fetchone()
+        d["recipient_count"] = counts["count"]
+        d["sent_count"] = counts["sent"] or 0
         result.append(d)
     return result
 
 @router.post("/api/campaigns")
-def create_campaign(req: CampaignCreate, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
+def create_campaign(
+    req: CampaignCreate,
+    conn=Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
     if not req.name.strip():
         raise HTTPException(status_code=400, detail="Campaign name cannot be empty")
     campaign_id = db.create_campaign(conn, user_id, req.name.strip())
+    settings = conn.execute(
+        "SELECT timezone FROM user_settings WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()
+    campaign_timezone = str(settings["timezone"]) if settings and settings["timezone"] else "UTC"
+    conn.execute(
+        "UPDATE campaigns SET timezone = ? WHERE id = ? AND user_id = ?",
+        (campaign_timezone, campaign_id, user_id),
+    )
+    conn.commit()
     return {"id": campaign_id, "name": req.name}
 
 @router.get("/api/campaigns/{campaign_id}")
@@ -207,7 +223,7 @@ def get_campaign_summary(campaign_id: int, conn=Depends(get_db), user_id: str = 
     try:
         from src.platform.db import SessionLocal
         from src.platform.models import AutopilotDaySchedule, Campaign as PlatformCampaign
-        from src.platform.services import require_group, serialize_group, user_zone
+        from src.platform.services import campaign_zone, require_group, serialize_group, user_zone
 
         platform_session = SessionLocal()
         try:
@@ -216,6 +232,7 @@ def get_campaign_summary(campaign_id: int, conn=Depends(get_db), user_id: str = 
                 select(PlatformCampaign).where(PlatformCampaign.id == campaign_id, PlatformCampaign.user_id == user_id)
             )
             if platform_campaign:
+                user_timezone = campaign_zone(platform_session, platform_campaign).key
                 send_settings = dict(platform_campaign.send_settings or {})
                 attachments = [
                     serialize_attachment(attachment)
@@ -501,6 +518,31 @@ async def post_recipients_csv(
     res = import_and_attach_df(conn, campaign_id, df, mapping, "csv", file.filename or "", user_id)
     return res
 
+class SingleRecipientRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320, pattern=r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+    first_name: str = Field(default="", max_length=200)
+    company: str = Field(default="", max_length=200)
+
+
+@router.post("/api/campaigns/{campaign_id}/recipients/one")
+def post_recipient_one(
+    campaign_id: int,
+    req: SingleRecipientRequest,
+    conn=Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    require_editable_campaign(conn, campaign_id, user_id)
+    email = normalize_email(req.email)
+    if is_do_not_contact(conn, email, user_id):
+        raise HTTPException(status_code=422, detail="This email is on your do-not-contact list and cannot be added.")
+    # Adding an existing contact must not overwrite their fields with blank form values.
+    if db.fetch_contact_by_email(conn, email, user_id):
+        attached = db.add_campaign_recipients_by_emails(conn, campaign_id, [email], user_id)
+        return {"attached": attached}
+    frame = pd.DataFrame([{"email": email, "first_name": req.first_name.strip(), "company": req.company.strip()}])
+    return import_and_attach_df(conn, campaign_id, frame, None, "manual", user_id=user_id)
+
+
 @router.post("/api/campaigns/{campaign_id}/recipients/paste")
 def post_recipients_paste(campaign_id: int, req: RecipientsPaste, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
     campaign = require_editable_campaign(conn, campaign_id, user_id)
@@ -735,6 +777,7 @@ def post_reject_recipients(campaign_id: int, req: RejectRecipientsRequest, conn=
 
 @router.post("/api/campaigns/{campaign_id}/test-send")
 def post_test_send(campaign_id: int, req: TestSendRequest, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    require_delivery_enabled()
     campaign = db.get_campaign(conn, campaign_id, user_id)
     if not campaign:
         raise HTTPException(status_code=404, detail="Campaign not found")

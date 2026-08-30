@@ -44,15 +44,24 @@ On Linux or macOS:
 ./run_servers.sh
 ```
 
-They start:
+The launchers start the API and frontend. They leave the delivery worker off
+for safe local work, especially when the database is shared with production.
+Set `OUTREACH_SAFE_LOCAL_MODE=true`, `OUTREACH_ALLOW_DELIVERY=false`, and
+`RUN_DATABASE_MIGRATIONS=false` in the local environment.
 
 ```text
 API:      python -m uvicorn api.main:app --port 8000 --reload
-Worker:   python -m src.platform.worker
 Frontend: npm run dev
 ```
 
 Do not run multiple development launchers against the same local environment.
+
+Database upgrades are an explicit release step: run
+`python -m alembic upgrade head` against the intended database before publishing
+code that uses a new column. Never use a shared database for destructive tests.
+
+See [the minimal UI release notes](docs/releases/minimal-ui.md) for the current
+design, verification, and rollout requirements.
 
 ## Free production deployment
 

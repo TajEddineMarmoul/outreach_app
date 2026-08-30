@@ -7,6 +7,7 @@ from datetime import timedelta
 from sqlalchemy import select, update
 
 from src.platform.db import SessionLocal
+from src.platform.delivery_safety import delivery_block_reason, delivery_enabled
 from src.platform.jobs import perform_send_job
 from src.platform.migrations import upgrade_database
 from src.platform.models import Campaign, SendJob
@@ -83,6 +84,9 @@ def run_worker_loop(
     stop_event: threading.Event | None = None,
 ) -> None:
     logging.basicConfig(level=logging.INFO)
+    if not delivery_enabled():
+        logger.warning("Worker did not start: %s", delivery_block_reason())
+        return
     upgrade_database()
     stop = stop_event or threading.Event()
     while not stop.is_set():

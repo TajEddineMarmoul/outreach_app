@@ -13,11 +13,12 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from api.auth import get_current_user_id
+from api.delivery_safety import require_delivery_enabled
 from src.platform.db import get_session
 from src.platform.jobs import create_send_jobs_for_next_batch
 from src.platform.models import AutopilotDaySchedule, Campaign, CampaignRecipient, Contact, SendJob, SendLog, Sender
 from src.platform.scheduler import WEEKDAY_NAMES, next_autopilot_run
-from src.platform.services import campaign_sent_today, connected_senders, ensure_user, require_group, serialize_group, set_user_timezone, user_zone
+from src.platform.services import campaign_sent_today, campaign_zone, connected_senders, ensure_user, require_group, serialize_group, user_zone, validate_timezone_name
 from src.platform.time import utcnow
 from src.platform.worker import recover_stale_jobs, run_worker_cycle
 from src.template_engine import extract_template_variables, missing_template_variables
@@ -31,6 +32,7 @@ def worker_tick(x_worker_token: str | None = Header(default=None)):
     expected = os.getenv("WORKER_TICK_TOKEN")
     if not expected or not x_worker_token or not hmac.compare_digest(x_worker_token, expected):
         raise HTTPException(status_code=401, detail="Invalid worker token")
+    require_delivery_enabled()
     recovered = recover_stale_jobs(stale_after_minutes=10)
     try:
         configured_max_jobs = int(os.getenv("WORKER_MAX_JOBS", "25"))
@@ -109,17 +111,24 @@ class SendSettingsUpdate(DeliveryRequest):
 EDIT_LOCKED_STATUSES = {"sending", "scheduled", "autopilot", "paused"}
 
 
-def apply_request_timezone(
+def apply_campaign_timezone(
     session: Session,
-    user_id: str,
+    campaign: Campaign,
     timezone_name: str | None,
 ) -> None:
     if timezone_name is None:
         return
     try:
-        set_user_timezone(session, user_id, timezone_name)
+        validate_timezone_name(timezone_name)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+    campaign.timezone = timezone_name
+
+
+def campaign_datetime_utc(session: Session, campaign: Campaign, value: datetime) -> datetime:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=campaign_zone(session, campaign))
+    return value.astimezone(timezone.utc)
 
 
 def require_campaign_editable(session: Session, campaign_id: int, user_id: str) -> Campaign:
@@ -352,6 +361,8 @@ def ensure_campaign_shell(
     ensure_user(session, user_id)
     campaign = session.scalar(select(Campaign).where(Campaign.id == campaign_id, Campaign.user_id == user_id))
     if campaign:
+        if not campaign.timezone:
+            campaign.timezone = user_zone(session, user_id).key
         return campaign
     campaign = Campaign(
         id=campaign_id,
@@ -361,6 +372,7 @@ def ensure_campaign_shell(
         body_template=body_template,
         fallback_body_template=fallback_body_template,
         status="draft",
+        timezone=user_zone(session, user_id).key,
     )
     session.add(campaign)
     session.flush()
@@ -396,7 +408,7 @@ def patch_send_settings(
     user_id: str = Depends(get_current_user_id),
 ):
     campaign = require_campaign_editable(session, campaign_id, user_id)
-    apply_request_timezone(session, user_id, req.timezone)
+    apply_campaign_timezone(session, campaign, req.timezone)
     settings = dict(campaign.send_settings or {})
     if req.mode is not None:
         settings["mode"] = req.mode
@@ -410,10 +422,8 @@ def patch_send_settings(
         if req.scheduled_at is None:
             settings.pop("draft_scheduled_at", None)
         else:
-            scheduled_at = req.scheduled_at
-            if scheduled_at.tzinfo is None:
-                scheduled_at = scheduled_at.replace(tzinfo=timezone.utc)
-            settings["draft_scheduled_at"] = scheduled_at.astimezone(timezone.utc).isoformat()
+            scheduled_at = campaign_datetime_utc(session, campaign, req.scheduled_at)
+            settings["draft_scheduled_at"] = scheduled_at.isoformat()
     campaign.send_settings = settings
     if req.schedule is not None:
         session.execute(delete(AutopilotDaySchedule).where(AutopilotDaySchedule.campaign_id == campaign.id))
@@ -464,10 +474,11 @@ def post_send_now(
     session: Session = Depends(get_session),
     user_id: str = Depends(get_current_user_id),
 ):
+    require_delivery_enabled()
     logger = logging.getLogger("outreach.send")
     logger.info("send-now start campaign=%s user=%s", campaign_id, user_id)
     campaign = require_campaign_editable(session, campaign_id, user_id)
-    apply_request_timezone(session, user_id, req.timezone)
+    apply_campaign_timezone(session, campaign, req.timezone)
     require_connected_delivery_group(session, campaign, user_id)
     previous_status = campaign.status
     logger.info("campaign id=%s status=%s sender_group_id=%s", campaign.id, campaign.status, campaign.selected_sender_group_id)
@@ -554,8 +565,9 @@ def post_schedule(
     session: Session = Depends(get_session),
     user_id: str = Depends(get_current_user_id),
 ):
+    require_delivery_enabled()
     campaign = require_campaign_editable(session, campaign_id, user_id)
-    apply_request_timezone(session, user_id, req.timezone)
+    apply_campaign_timezone(session, campaign, req.timezone)
     require_connected_delivery_group(session, campaign, user_id)
     retried_failed = reopen_failed_recipients(session, campaign_id, user_id)
     validation = recipient_template_validation(
@@ -578,11 +590,9 @@ def post_schedule(
     ) or 0
     if approved_recipients == 0:
         raise HTTPException(status_code=409, detail="Campaign has no approved recipients")
-    scheduled_at = req.scheduled_at
-    if scheduled_at.tzinfo is None:
-        scheduled_at = scheduled_at.replace(tzinfo=timezone.utc)
+    scheduled_at = campaign_datetime_utc(session, campaign, req.scheduled_at)
     campaign.status = "scheduled"
-    campaign.scheduled_at = scheduled_at.astimezone(timezone.utc)
+    campaign.scheduled_at = scheduled_at
     campaign.send_settings = {
         **(campaign.send_settings or {}),
         "mode": "schedule",
@@ -607,8 +617,9 @@ def post_autopilot_start(
     session: Session = Depends(get_session),
     user_id: str = Depends(get_current_user_id),
 ):
+    require_delivery_enabled()
     campaign = require_campaign_editable(session, campaign_id, user_id)
-    apply_request_timezone(session, user_id, req.timezone)
+    apply_campaign_timezone(session, campaign, req.timezone)
     require_connected_delivery_group(session, campaign, user_id)
     retried_failed = reopen_failed_recipients(session, campaign_id, user_id)
     validation = recipient_template_validation(
@@ -658,9 +669,7 @@ def post_autopilot_start(
         )
     scheduled_at = req.scheduled_at
     if scheduled_at is not None:
-        if scheduled_at.tzinfo is None:
-            scheduled_at = scheduled_at.replace(tzinfo=timezone.utc)
-        campaign.scheduled_at = scheduled_at.astimezone(timezone.utc)
+        campaign.scheduled_at = campaign_datetime_utc(session, campaign, scheduled_at)
     else:
         campaign.scheduled_at = next_autopilot_run(session, campaign, now=utcnow())
     session.commit()
@@ -694,6 +703,7 @@ def post_resume(
     session: Session = Depends(get_session),
     user_id: str = Depends(get_current_user_id),
 ):
+    require_delivery_enabled()
     campaign = require_campaign(session, campaign_id, user_id)
     if campaign.status != "paused":
         raise HTTPException(status_code=409, detail=f"Cannot resume a campaign that is {campaign.status}")
@@ -907,12 +917,12 @@ def get_campaign_send_progress(
         )
     )
     today_schedule = next(
-        (s for s in day_schedules if s.day_of_week == WEEKDAY_NAMES[utcnow().astimezone(user_zone(session, user_id)).weekday()]),
+        (s for s in day_schedules if s.day_of_week == WEEKDAY_NAMES[utcnow().astimezone(campaign_zone(session, campaign)).weekday()]),
         None,
     )
     result = {
         "campaign_status": campaign.status,
-        "timezone": user_zone(session, user_id).key,
+        "timezone": campaign_zone(session, campaign).key,
         "total_recipients": total,
         "sent_count": sent,
         "failed_count": failed,
@@ -1008,6 +1018,7 @@ def get_campaign_recipients(
     search: str = "",
     page: int = 1,
     page_size: int = 50,
+    pending_only: bool = False,
     session: Session = Depends(get_session),
     user_id: str = Depends(get_current_user_id),
 ):
@@ -1022,6 +1033,12 @@ def get_campaign_recipients(
     )
     if search:
         base = base.where(Contact.email_normalized.ilike(f"%{search.strip()}%"))
+
+    if pending_only:
+        base = base.where(
+            CampaignRecipient.status.in_(("approved", "pending", "queued")),
+            Contact.status.in_(("approved", "sent")),
+        )
 
     total = session.scalar(select(func.count()).select_from(base.subquery())) or 0
     rows = list(
@@ -1049,6 +1066,35 @@ def get_campaign_recipients(
         "page_size": page_size,
         "pages": max(1, (total + page_size - 1) // page_size),
     }
+
+
+@router.delete("/api/campaigns/{campaign_id}/recipients")
+def clear_campaign_recipients(
+    campaign_id: int,
+    session: Session = Depends(get_session),
+    user_id: str = Depends(get_current_user_id),
+):
+    # Coordinate with delivery workers and launches before changing membership.
+    campaign = session.scalar(
+        select(Campaign)
+        .where(Campaign.id == campaign_id, Campaign.user_id == user_id)
+        .with_for_update()
+    )
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    if campaign.status in EDIT_LOCKED_STATUSES:
+        raise HTTPException(status_code=409, detail="End this campaign before clearing its audience.")
+    if session.scalar(
+        select(SendJob.id).where(SendJob.campaign_id == campaign_id, SendJob.status == "running").limit(1)
+    ):
+        raise HTTPException(status_code=409, detail="An email is still sending. Wait for it to finish before clearing the audience.")
+    session.execute(delete(SendJob).where(SendJob.campaign_id == campaign_id))
+    result = session.execute(delete(CampaignRecipient).where(CampaignRecipient.campaign_id == campaign_id))
+    settings = dict(campaign.send_settings or {})
+    settings.pop("recipient_validation", None)
+    campaign.send_settings = settings
+    session.commit()
+    return {"status": "success", "removed": result.rowcount}
 
 
 @router.patch("/api/campaigns/{campaign_id}/recipients/{contact_id}/reset")

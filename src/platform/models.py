@@ -85,6 +85,7 @@ class Campaign(Base, TimestampMixin):
     fallback_body_template: Mapped[str] = mapped_column(Text, default="", nullable=False)
     attachment_path: Mapped[str] = mapped_column(Text, default="", nullable=False)
     status: Mapped[str] = mapped_column(String(40), default="draft", index=True, nullable=False)
+    timezone: Mapped[str | None] = mapped_column(String(80))
     send_settings: Mapped[dict] = mapped_column(MutableDict.as_mutable(json_type()), default=dict, nullable=False)
     attachment_metadata: Mapped[dict] = mapped_column(MutableDict.as_mutable(json_type()), default=dict, nullable=False)
     scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -52,16 +52,18 @@ def health():
         raise HTTPException(status_code=503, detail="Database unavailable") from exc
     return {"status": "ok", "database": "ok"}
 
-from api.routers import campaign_delivery, campaigns, contacts, oauth, sender_groups, templates, settings
+from api.routers import analytics, campaign_delivery, campaign_workspace, campaigns, contacts, oauth, sender_groups, templates, settings
 
 app.include_router(sender_groups.router)
 app.include_router(sender_groups.senders_router)
 app.include_router(campaign_delivery.router)
+app.include_router(campaign_workspace.router)
 app.include_router(campaigns.router)
 app.include_router(contacts.router)
 app.include_router(templates.router)
 app.include_router(settings.router)
 app.include_router(oauth.router)
+app.include_router(analytics.router)
 
 if __name__ == "__main__":
     import uvicorn

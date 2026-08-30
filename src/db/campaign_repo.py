@@ -52,8 +52,11 @@ def create_campaign(conn: sqlite3.Connection, user_id: str = "default_user", nam
             user_id,
         ),
     )
+    campaign_id = cursor.lastrowid
     conn.commit()
-    return int(cursor.lastrowid)
+    if campaign_id is None:
+        raise RuntimeError("Database did not return the created campaign id")
+    return int(campaign_id)
 
 
 def get_campaign(conn: sqlite3.Connection, campaign_id: int, user_id: str = "default_user") -> sqlite3.Row | None:

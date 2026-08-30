@@ -1,130 +1,291 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, FileText, Trash2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import useSWR from "swr";
+import { FileText, Plus } from "lucide-react";
 import { useApiClient } from "@/lib/api";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+import {
+  ActionMenu,
+  AppDialog,
+  ConfirmDialog,
+  MenuAction,
+  Notice,
+  PageHeading,
+  PageState,
+  Pager,
+  SearchField,
+  checkResponse,
+  errorMessage,
+  formatDate,
+} from "@/components/app-ui";
 
 interface Template {
   id: number;
   title: string;
   subject: string;
   body: string;
+  updated_at?: string;
 }
+const emptyTemplate = { title: "", subject: "", body: "" };
+const PAGE_SIZE = 6;
 
 export default function TemplatesPage() {
-  const { data: templates, mutate } = useSWR<Template[]>(`${API_URL}/api/templates`);
-  const [open, setOpen] = useState(false);
-  const [title, setTitle] = useState("");
-  const [subject, setSubject] = useState("");
-  const [body, setBody] = useState("");
-  const { authFetch } = useApiClient();
-
-  const handleCreate = async () => {
-    if (!title.trim() || !subject.trim() || !body.trim()) return;
-    await authFetch(`${API_URL}/api/templates`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: title.trim(), subject: subject.trim(), body }),
-    });
-    mutate();
-    setTitle("");
-    setSubject("");
-    setBody("");
-    setOpen(false);
+  const { API_URL, authFetch } = useApiClient();
+  const {
+    data: templates = [],
+    error,
+    isLoading,
+    mutate,
+  } = useSWR<Template[]>(`${API_URL}/api/templates`);
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const [editing, setEditing] = useState<Template | "new" | null>(null);
+  const [draft, setDraft] = useState(emptyTemplate);
+  const [removing, setRemoving] = useState<Template | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState("");
+  const [message, setMessage] = useState("");
+  const filtered = templates.filter((item) =>
+    `${item.title} ${item.subject}`
+      .toLowerCase()
+      .includes(search.toLowerCase()),
+  );
+  const currentPage = Math.min(
+    page,
+    Math.max(1, Math.ceil(filtered.length / PAGE_SIZE)),
+  );
+  const edit = (template: Template | "new") => {
+    setEditing(template);
+    setDraft(template === "new" ? emptyTemplate : template);
+    setActionError("");
   };
-
-  const handleDelete = async (id: number) => {
-    await authFetch(`${API_URL}/api/templates/${id}`, { method: "DELETE" });
-    mutate();
+  const save = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setActionError("");
+    try {
+      const isNew = editing === "new";
+      await checkResponse(
+        await authFetch(
+          `${API_URL}/api/templates${!isNew && editing ? `/${editing.id}` : ""}`,
+          {
+            method: isNew ? "POST" : "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              title: draft.title.trim(),
+              subject: draft.subject,
+              body: draft.body,
+            }),
+          },
+        ),
+      );
+      await mutate();
+      setEditing(null);
+      setMessage("Template saved.");
+    } catch (error) {
+      setActionError(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
   };
-
-  const list = templates ?? [];
-
+  const remove = async () => {
+    if (!removing) return;
+    setBusy(true);
+    setActionError("");
+    try {
+      await checkResponse(
+        await authFetch(`${API_URL}/api/templates/${removing.id}`, {
+          method: "DELETE",
+        }),
+      );
+      await mutate();
+      setRemoving(null);
+      setMessage("Template removed. Campaign messages are unchanged.");
+    } catch (error) {
+      setActionError(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
-    <div className="p-8 space-y-6 max-w-6xl mx-auto w-full">
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Templates</h1>
-          <p className="text-slate-500 text-sm mt-1">Reusable email subject & body templates</p>
-        </div>
-        <Button onClick={() => setOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white gap-2">
-          <Plus className="w-4 h-4" />
-          New template
-        </Button>
+    <div className="app-page">
+      <PageHeading
+        title="Templates"
+        description="Reusable starting points for your emails."
+        actions={
+          <button className="app-button is-primary" onClick={() => edit("new")}>
+            <Plus size={18} /> New template
+          </button>
+        }
+      />
+      <Notice message={message} />
+      <div className="app-toolbar">
+        <SearchField
+          label="Search templates"
+          value={search}
+          onChange={(value) => {
+            setSearch(value);
+            setPage(1);
+          }}
+        />
       </div>
-
-      {list.length === 0 && (
-        <div className="bg-white border border-slate-200 rounded-xl p-16 text-center space-y-3 shadow-sm">
-          <div className="mx-auto w-12 h-12 bg-slate-50 border border-slate-200 rounded-full flex items-center justify-center text-slate-400">
-            <FileText className="w-5 h-5" />
-          </div>
-          <h3 className="font-semibold text-slate-900 text-lg">No templates yet</h3>
-          <p className="text-slate-500 text-sm max-w-sm mx-auto">
-            Create reusable templates to quickly fill subject and body in any campaign.
-          </p>
-        </div>
+      <div className="app-table-wrap">
+        <PageState
+          loading={isLoading}
+          error={error}
+          empty={!filtered.length}
+          retry={() => void mutate()}
+        >
+          {templates.length ? undefined : (
+            <>
+              <h2>Save a starting point</h2>
+              <p>
+                Create a template to reuse your subject and message in a
+                campaign.
+              </p>
+            </>
+          )}
+        </PageState>
+        {!isLoading && !error && filtered.length > 0 && (
+          <table className="app-table">
+            <thead>
+              <tr>
+                <th scope="col">Template</th>
+                <th scope="col">Subject</th>
+                <th scope="col">Updated</th>
+                <th scope="col">
+                  <span className="sr-only">Actions</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered
+                .slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+                .map((item) => (
+                  <tr key={item.id}>
+                    <td>
+                      <button
+                        className="app-name app-name-button"
+                        onClick={() => edit(item)}
+                      >
+                        <FileText size={19} color="#506184" />
+                        {item.title}
+                      </button>
+                    </td>
+                    <td>{item.subject}</td>
+                    <td className="app-muted">{formatDate(item.updated_at)}</td>
+                    <td>
+                      <ActionMenu iconOnly label={`Actions for ${item.title}`}>
+                        <MenuAction onClick={() => edit(item)}>
+                          Edit template
+                        </MenuAction>
+                        <MenuAction
+                          danger
+                          onClick={() => {
+                            setRemoving(item);
+                            setActionError("");
+                          }}
+                        >
+                          Delete template
+                        </MenuAction>
+                      </ActionMenu>
+                    </td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+      {filtered.length > 0 && (
+        <Pager
+          page={currentPage}
+          pageSize={PAGE_SIZE}
+          total={filtered.length}
+          onChange={setPage}
+        />
       )}
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {list.map((tpl) => (
-          <Card key={tpl.id} className="border-slate-200 shadow-sm">
-            <CardHeader className="border-b border-slate-100 flex flex-row items-center justify-between pb-3">
-              <CardTitle className="text-sm font-bold text-slate-800 flex items-center gap-2">
-                <FileText className="w-4 h-4 text-blue-600" />
-                <span>{tpl.title}</span>
-              </CardTitle>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 text-slate-500 hover:text-red-600"
-                onClick={() => handleDelete(tpl.id)}
-              >
-                <Trash2 className="w-4 h-4" />
-              </Button>
-            </CardHeader>
-            <CardContent className="pt-4 space-y-2 text-xs">
-              <div className="text-slate-500 font-semibold">Subject: <span className="font-normal text-slate-800">{tpl.subject}</span></div>
-              <div className="whitespace-pre-wrap text-slate-600 font-sans leading-relaxed pt-2 h-40 overflow-y-auto border border-slate-50 p-2 rounded bg-slate-50/30">
-                {tpl.body}
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Create template</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div>
-              <label className="text-xs font-medium text-slate-600 mb-1 block">Title</label>
-              <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Job Application outreach" />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-slate-600 mb-1 block">Subject</label>
-              <Input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="e.g. Junior Technical Profile - {{ Company_Name }}" />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-slate-600 mb-1 block">Body</label>
-              <Textarea value={body} onChange={(e) => setBody(e.target.value)} className="min-h-[200px] text-xs" placeholder="Write your template body..." />
-            </div>
+      <AppDialog
+        open={editing !== null}
+        onClose={() => {
+          if (!busy) setEditing(null);
+        }}
+        title={editing === "new" ? "New template" : "Edit template"}
+        description="This is a reusable template. Saving it does not send an email or change existing campaigns."
+      >
+        <form className="app-form" onSubmit={save}>
+          <label className="app-field">
+            Template name
+            <input
+              autoFocus
+              required
+              maxLength={240}
+              value={draft.title}
+              onChange={(event) =>
+                setDraft({ ...draft, title: event.target.value })
+              }
+            />
+          </label>
+          <label className="app-field">
+            Subject
+            <input
+              required
+              maxLength={998}
+              value={draft.subject}
+              onChange={(event) =>
+                setDraft({ ...draft, subject: event.target.value })
+              }
+            />
+          </label>
+          <label className="app-field">
+            Message
+            <textarea
+              aria-label="Message"
+              aria-describedby="template-message-hint"
+              required
+              value={draft.body}
+              onChange={(event) =>
+                setDraft({ ...draft, body: event.target.value })
+              }
+            />
+            <small id="template-message-hint">
+              Personalize with variables such as {"{{first_name}}"}. HTML is
+              preserved if your template already uses it.
+            </small>
+          </label>
+          <Notice error={actionError} />
+          <div className="app-dialog-actions">
+            <button
+              type="button"
+              className="app-button"
+              disabled={busy}
+              onClick={() => setEditing(null)}
+            >
+              Cancel
+            </button>
+            <button
+              className="app-button is-primary"
+              disabled={
+                busy ||
+                !draft.title.trim() ||
+                !draft.subject.trim() ||
+                !draft.body.trim()
+              }
+            >
+              {busy ? "Saving…" : "Save template"}
+            </button>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button onClick={handleCreate} className="bg-blue-600 hover:bg-blue-700 text-white">Save</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        </form>
+      </AppDialog>
+      <ConfirmDialog
+        open={!!removing}
+        title="Delete template?"
+        description={`Delete “${removing?.title}”? Existing campaign messages will stay unchanged.`}
+        busy={busy}
+        error={actionError}
+        onClose={() => setRemoving(null)}
+        onConfirm={() => void remove()}
+        label="Delete template"
+      />
     </div>
   );
 }

@@ -14,9 +14,18 @@ async function proxyRequest(
   }
 
   const apiToken = process.env.APP_ACCESS_TOKEN || "";
+  const localDevUserId = process.env.LOCAL_DEV_USER_ID || "";
+  const isLocalDevelopment =
+    process.env.APP_ENV !== "production" && Boolean(localDevUserId) && !apiToken;
   const backendUrl = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || "";
-  if (!apiToken || !backendUrl) {
+  if ((!apiToken && !isLocalDevelopment) || !backendUrl) {
     return NextResponse.json({ detail: "Backend connection is not configured" }, { status: 503 });
+  }
+  if (isLocalDevelopment && userId !== localDevUserId) {
+    return NextResponse.json(
+      { detail: "This local app is configured for a different account" },
+      { status: 403 }
+    );
   }
 
   const { path } = await context.params;
@@ -28,7 +37,7 @@ async function proxyRequest(
   headers.delete("cookie");
   headers.delete("host");
   headers.delete("content-length");
-  headers.set("authorization", `Bearer ${apiToken}`);
+  headers.set("authorization", `Bearer ${apiToken || `local_dev_${localDevUserId}`}`);
 
   const hasBody = request.method !== "GET" && request.method !== "HEAD";
   const backendResponse = await fetch(target, {

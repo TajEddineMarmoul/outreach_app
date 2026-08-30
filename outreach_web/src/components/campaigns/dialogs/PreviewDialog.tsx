@@ -2,11 +2,12 @@ import { useState } from "react";
 import useSWR from "swr";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { ChevronLeft, ChevronRight, Loader2, Paperclip, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useApiClient } from "@/lib/api";
 import type { CampaignAttachmentSummary } from "@/components/campaigns/dialogs/AttachmentDialog";
+import { emailPreviewDocument } from "@/components/campaigns/workspace/emailPreviewDocument";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
@@ -29,14 +30,14 @@ interface PreviewResponse {
 export default function PreviewDialog({
   isOpen,
   onClose,
-  campaignId
+  campaignId,
 }: {
   isOpen: boolean;
   onClose: () => void;
   campaignId: string;
 }) {
   const [previewIndex, setPreviewIndex] = useState(0);
-  const { data: previews, isLoading } = useSWR<PreviewResponse>(
+  const { data: previews, isLoading, error } = useSWR<PreviewResponse>(
     isOpen ? `${API_URL}/api/campaigns/${campaignId}/preview?offset=${previewIndex}&limit=1` : null,
     { keepPreviousData: true }
   );
@@ -56,7 +57,7 @@ export default function PreviewDialog({
   };
 
   const handleSendTest = async () => {
-    if (!testEmail.trim()) return;
+    if (!testEmail.trim() || !currentPreview || testSending || isLoading || error) return;
     setTestSending(true);
     setTestResult(null);
     try {
@@ -91,10 +92,10 @@ export default function PreviewDialog({
         if (!open) handleClose();
       }}
     >
-      <DialogContent showCloseButton={false} className="sm:max-w-2xl max-h-[85vh] flex flex-col">
+      <DialogContent showCloseButton={false} className="campaign-ui sm:max-w-2xl max-h-[85vh] flex flex-col">
         <DialogHeader>
           <div className="flex items-center justify-between gap-4">
-            <DialogTitle>Email campaign preview</DialogTitle>
+            <DialogTitle>Message preview</DialogTitle>
             <div className="flex items-center gap-2">
               {previewTotal > 0 && (
                 <>
@@ -106,6 +107,7 @@ export default function PreviewDialog({
                     onClick={() => setPreviewIndex((idx) => Math.max(0, idx - 1))}
                     disabled={previewIndex === 0}
                     title="Previous preview"
+                    aria-label="Previous preview"
                   >
                     <ChevronLeft className="w-4 h-4" />
                   </Button>
@@ -120,6 +122,7 @@ export default function PreviewDialog({
                     onClick={() => setPreviewIndex((idx) => Math.min(previewTotal - 1, idx + 1))}
                     disabled={previewIndex >= previewTotal - 1}
                     title="Next preview"
+                    aria-label="Next preview"
                   >
                     <ChevronRight className="w-4 h-4" />
                   </Button>
@@ -138,6 +141,7 @@ export default function PreviewDialog({
               </Button>
             </div>
           </div>
+          <DialogDescription>Preview only. Opening this window does not send an email.</DialogDescription>
         </DialogHeader>
 
         <div className="flex-1 overflow-y-auto space-y-4 py-4 min-h-[300px]">
@@ -146,6 +150,8 @@ export default function PreviewDialog({
               <Loader2 className="w-4 h-4 animate-spin mr-2" />
               Loading preview...
             </div>
+          ) : error ? (
+            <p role="alert" className="text-red-700">Could not load the preview. Close this window and try again.</p>
           ) : !currentPreview ? (
             <div className="p-12 text-center text-slate-500">
               <p>Add at least one recipient to preview this campaign.</p>
@@ -164,7 +170,7 @@ export default function PreviewDialog({
             <div className="px-4 py-4 text-slate-700 leading-relaxed font-sans text-sm border-b border-slate-100">
               {currentPreview.body ? (
                 /<[a-z][\s\S]*>/i.test(currentPreview.body) ? (
-                  <div dangerouslySetInnerHTML={{ __html: currentPreview.body }} />
+                  <iframe title="Test email preview" sandbox="" referrerPolicy="no-referrer" className="w-full min-h-[300px] border-0" srcDoc={emailPreviewDocument(currentPreview.body)} />
                 ) : (
                   <div className="whitespace-pre-wrap">{currentPreview.body}</div>
                 )
@@ -186,12 +192,17 @@ export default function PreviewDialog({
           )}
         </div>
 
-        <div className="border-t border-slate-200 pt-4">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div className="border-t border-slate-200 pt-4 space-y-4">
+          <details className="campaign-test-options">
+            <summary>Send a test email</summary>
+            <p className="text-xs text-slate-500 my-3">This sends a real email only to the address you enter. It does not launch the campaign.</p>
+          <form onSubmit={(event) => { event.preventDefault(); void handleSendTest(); }} className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <div className="flex flex-col w-full sm:max-w-sm gap-2">
               <div className="flex items-center gap-2">
                 <Input
                   type="email"
+                  aria-label="Test email address"
+                  required
                   placeholder="recipient@domain.com"
                   value={testEmail}
                   onChange={(e) => setTestEmail(e.target.value)}
@@ -199,20 +210,20 @@ export default function PreviewDialog({
                 />
                 <Button
                   className="bg-slate-800 hover:bg-slate-900 text-white text-xs shrink-0"
-                  onClick={handleSendTest}
-                  disabled={testSending || !testEmail.trim() || !currentPreview}
+                  type="submit"
+                  disabled={testSending || !testEmail.trim() || !currentPreview || isLoading || Boolean(error)}
                 >
                   {testSending ? "Sending..." : "Send test"}
                 </Button>
               </div>
               {testResult && (
-                <div className={cn("text-[11px] font-medium px-1", testResult.type === "success" ? "text-emerald-600" : "text-red-500")}>
+                <div role="status" className={cn("text-[11px] font-medium px-1", testResult.type === "success" ? "text-emerald-600" : "text-red-500")}>
                   {testResult.message}
                 </div>
               )}
             </div>
-            <Button variant="outline" onClick={handleClose} className="self-end sm:self-auto">Close</Button>
-          </div>
+          </form>
+          </details>
         </div>
       </DialogContent>
     </Dialog>

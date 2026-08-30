@@ -19,7 +19,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ timezone }),
+        body: JSON.stringify({ timezone, only_if_unset: true }),
       });
       if (!response.ok) {
         throw new Error(`Timezone sync failed with status ${response.status}`);
