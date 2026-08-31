@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useState, type ReactNode } from "react";
 import useSWR, { useSWRConfig } from "swr";
 import {
   ChevronDown,
@@ -11,7 +11,6 @@ import {
   Search,
   Trash2,
   RotateCcw,
-  UserPlus,
   EllipsisVertical,
   Upload,
 } from "lucide-react";
@@ -92,11 +91,13 @@ export default function RecipientsSection({
   campaignId,
   onOpenImport,
   onAudienceChange,
+  importGuide,
   readOnly = false,
 }: {
   campaignId: string;
   onOpenImport: () => void;
   onAudienceChange?: () => Promise<void> | void;
+  importGuide?: ReactNode;
   readOnly?: boolean;
 }) {
   const [page, setPage] = useState(1);
@@ -104,14 +105,9 @@ export default function RecipientsSection({
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [actionLoading, setActionLoading] = useState<number | null>(null);
   const [expandedRecipients, setExpandedRecipients] = useState<Set<number>>(new Set());
-  const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [rowMenu, setRowMenu] = useState<number | null>(null);
-  const [addOpen, setAddOpen] = useState(false);
   const [clearOpen, setClearOpen] = useState(false);
-  const [email, setEmail] = useState("");
-  const [firstName, setFirstName] = useState("");
-  const [company, setCompany] = useState("");
   const [busy, setBusy] = useState(false);
   const [dialogError, setDialogError] = useState("");
   const [notice, setNotice] = useState("");
@@ -153,34 +149,6 @@ export default function RecipientsSection({
     return new Error(typeof payload?.detail === "string" ? payload.detail : fallback);
   };
 
-  const handleAdd = async () => {
-    if (readOnly || busy) return;
-    setBusy(true);
-    setDialogError("");
-    try {
-      const response = await authFetch(`${recipientsUrl}/one`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email.trim(), first_name: firstName.trim(), company: company.trim() }),
-      });
-      if (!response.ok) throw await responseError(response, "Could not add this recipient. Please try again.");
-      const result = await response.json();
-      setNotice(result.attached > 0 ? "Recipient added to this campaign." : "This recipient is already in the campaign.");
-      setAddOpen(false);
-      setEmail("");
-      setFirstName("");
-      setCompany("");
-      setSearch("");
-      setDebouncedSearch("");
-      goToPage(1);
-      await refreshAudience();
-    } catch (error) {
-      setDialogError(error instanceof Error ? error.message : "Could not add this recipient.");
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const handleClear = async () => {
     if (readOnly || busy) return;
     setBusy(true);
@@ -188,7 +156,7 @@ export default function RecipientsSection({
     try {
       const response = await authFetch(recipientsUrl, { method: "DELETE" });
       if (!response.ok) throw await responseError(response, "Could not clear the audience. Please try again.");
-      setNotice("Audience cleared. You can add recipients to start again.");
+      setNotice("Audience cleared. Import contacts to start again.");
       setClearOpen(false);
       setSearch("");
       setDebouncedSearch("");
@@ -269,15 +237,12 @@ export default function RecipientsSection({
           />
         </div>
         <div className="campaign-audience-actions">
-          <Popover open={addMenuOpen} onOpenChange={setAddMenuOpen}>
-            <PopoverTrigger className="campaign-button is-primary" disabled={readOnly || busy}>
-              <UserPlus size={18} /> Add recipients <ChevronDown size={15} />
-            </PopoverTrigger>
-            <PopoverContent align="end" className="campaign-ui campaign-more-menu">
-              <button onClick={() => { setAddMenuOpen(false); setDialogError(""); setAddOpen(true); }}><UserPlus size={18} /> Add one person</button>
-              <button onClick={() => { setAddMenuOpen(false); onOpenImport(); }}><Upload size={18} /> Import a list</button>
-            </PopoverContent>
-          </Popover>
+          <div className="campaign-guide-anchor">
+            <button className="campaign-button is-primary" disabled={readOnly || busy} onClick={onOpenImport}>
+              <Upload size={18} /> Import contacts
+            </button>
+            {importGuide}
+          </div>
           <Popover open={moreMenuOpen} onOpenChange={setMoreMenuOpen}>
             <PopoverTrigger className="campaign-icon-button" aria-label="Audience actions" disabled={readOnly || busy || actionLoading !== null}>
               <EllipsisVertical size={20} />
@@ -295,7 +260,7 @@ export default function RecipientsSection({
         <div className="flex items-center justify-center py-16 text-sm text-slate-500"><Loader2 className="w-4 h-4 animate-spin mr-2" /> Loading recipients…</div>
       ) : !data || data.items.length === 0 ? (
         <div className="text-center py-12 text-sm text-slate-400">
-          {debouncedSearch ? "No recipients match your search." : "No recipients yet. Add some to get started."}
+          {debouncedSearch ? "No recipients match your search." : "No recipients yet. Import your contacts to get started."}
         </div>
       ) : (
         <>
@@ -414,18 +379,6 @@ export default function RecipientsSection({
           </div>
         </>
       )}
-      <Dialog open={addOpen} onOpenChange={(open) => { if (!busy) setAddOpen(open); }}>
-        <DialogContent className="campaign-ui campaign-audience-dialog">
-          <DialogHeader><DialogTitle>Add one person</DialogTitle><DialogDescription>No email will be sent. If this contact is already saved, their existing details will be kept.</DialogDescription></DialogHeader>
-          <form className="campaign-person-form" onSubmit={(event) => { event.preventDefault(); void handleAdd(); }}>
-            <label>Email address<input type="email" autoComplete="off" required value={email} onChange={(event) => setEmail(event.target.value)} disabled={busy} /></label>
-            <label>First name <span>(optional)</span><input autoComplete="off" maxLength={200} value={firstName} onChange={(event) => setFirstName(event.target.value)} disabled={busy} /></label>
-            <label>Company <span>(optional)</span><input autoComplete="off" maxLength={200} value={company} onChange={(event) => setCompany(event.target.value)} disabled={busy} /></label>
-            {dialogError && <p className="campaign-inline-error" role="alert">{dialogError}</p>}
-            <div className="campaign-dialog-actions"><button type="button" className="campaign-button is-quiet" disabled={busy} onClick={() => setAddOpen(false)}>Cancel</button><button type="submit" className="campaign-button is-primary" disabled={busy || !email.trim()}>{busy ? "Adding…" : "Add recipient"}</button></div>
-          </form>
-        </DialogContent>
-      </Dialog>
       <Dialog open={clearOpen} onOpenChange={(open) => { if (!busy) setClearOpen(open); }}>
         <DialogContent className="campaign-ui campaign-audience-dialog">
           <DialogHeader><DialogTitle>Clear this campaign’s audience?</DialogTitle><DialogDescription>This removes every recipient from this campaign, including people on other pages or outside your search. Your saved contacts, message, attachments, schedule, and sending history will be kept.</DialogDescription></DialogHeader>

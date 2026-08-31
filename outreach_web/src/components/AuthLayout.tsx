@@ -1,7 +1,9 @@
 "use client";
 
 import { useAuth } from "@clerk/nextjs";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect } from "react";
+import { useWelcomeComplete } from "@/lib/onboarding";
 import AppHeader from "./AppHeader";
 import "./app-ui.css";
 
@@ -10,9 +12,22 @@ export default function AuthLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { isSignedIn } = useAuth();
+  const { isLoaded, isSignedIn, userId } = useAuth();
   const pathname = usePathname();
+  const router = useRouter();
+  const welcomeComplete = useWelcomeComplete(userId);
   const isCampaignWorkspace = /^\/campaigns\/[^/]+\/?$/.test(pathname);
+
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn || !userId || welcomeComplete === null) return;
+    if (pathname !== "/welcome" && !welcomeComplete) {
+      router.replace("/welcome");
+    }
+  }, [isLoaded, isSignedIn, userId, welcomeComplete, pathname, router]);
+
+  if (isSignedIn && !welcomeComplete && pathname !== "/welcome") {
+    return <main className="flex-1 bg-white" aria-label="Loading workspace" />;
+  }
 
   if (!isSignedIn) {
     return (

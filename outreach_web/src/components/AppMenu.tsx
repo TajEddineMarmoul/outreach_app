@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useAuth } from "@clerk/nextjs";
+import { showCampaignTips } from "@/lib/onboarding";
 import { Dialog as Drawer } from "@base-ui/react/dialog";
 import {
   ArrowLeft,
@@ -30,10 +32,13 @@ const navigation = [
 
 export default function AppMenu({
   onNavigate,
+  allowGuidedTips = false,
 }: {
   onNavigate?: (href: string) => Promise<void>;
+  allowGuidedTips?: boolean;
 }) {
   const pathname = usePathname();
+  const { userId } = useAuth();
   const [open, setOpen] = useState(false);
   const [help, setHelp] = useState(false);
   const title = useRef<HTMLHeadingElement>(null);
@@ -88,6 +93,16 @@ export default function AppMenu({
               >
                 <ArrowLeft size={18} /> Back to menu
               </button>
+              <Link className="campaign-button is-outline" href="/welcome" onClick={(event) => navigate(event, "/welcome")}>
+                Open getting started
+              </Link>
+              {userId && allowGuidedTips && /^\/campaigns\/[^/]+\/?$/.test(pathname) && (
+                <button className="campaign-button is-outline" onClick={() => {
+                  showCampaignTips(userId);
+                  setOpen(false);
+                  setHelp(false);
+                }}>Show tips again</button>
+              )}
               <h3>Your campaign, step by step</h3>
               <p>
                 Choose an audience, write your message, connect senders, and set
@@ -95,8 +110,8 @@ export default function AppMenu({
               </p>
               <h3>Extra tools when you need them</h3>
               <p>
-                Open the menus beside Add or More for imports, exports, and
-                other options. Preview shows an unsent example of your message.
+                Import contacts by pasting rows, uploading a CSV, or linking a
+                Google Sheet. Preview shows an unsent example of your message.
               </p>
               <h3>Control sending</h3>
               <p>

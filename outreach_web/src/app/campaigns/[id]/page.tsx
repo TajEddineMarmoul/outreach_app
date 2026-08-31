@@ -9,6 +9,7 @@ import {
   useCallback,
 } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useAuth } from "@clerk/nextjs";
 import useSWR, { mutate } from "swr";
 import {
   ArrowLeft,
@@ -22,9 +23,6 @@ import {
   CheckCircle,
   Play,
   Pause,
-  FileSpreadsheet,
-  Upload,
-  ClipboardList,
   Eye,
   Braces,
   X,
@@ -34,8 +32,6 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Popover,
   PopoverContent,
@@ -49,12 +45,14 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import RichTextEditor from "@/components/RichTextEditor";
 import type { Editor } from "@tiptap/react";
 import ScheduleDialog from "@/components/campaigns/dialogs/ScheduleDialog";
 import SenderSelectionDialog from "@/components/campaigns/dialogs/SenderSelectionDialog";
 import PreviewDialog from "@/components/campaigns/dialogs/PreviewDialog";
+import RecipientsImportDialog from "@/components/campaigns/dialogs/RecipientsImportDialog";
+import CampaignGuide from "@/components/onboarding/CampaignGuide";
+import { useCampaignTips, dismissCampaignTip, hideCampaignTips, type GuideStep } from "@/lib/onboarding";
 import AttachmentDialog, {
   type CampaignAttachmentSummary,
 } from "@/components/campaigns/dialogs/AttachmentDialog";
@@ -129,6 +127,8 @@ function CampaignEditor() {
   const [messageToolsOpen, setMessageToolsOpen] = useState(false);
   const [configurationOnly, setConfigurationOnly] = useState(false);
   const { authFetch } = useApiClient();
+  const { userId } = useAuth();
+  const campaignTips = useCampaignTips(userId);
 
   // ----------------------------------------------------
   // SWR Hooks for Data Fetching
@@ -735,6 +735,15 @@ function CampaignEditor() {
   const changeStep = (step: CampaignStep) => {
     void navigateSafely(`/campaigns/${campaignId}?step=${step}`);
   };
+  const hideTips = () => {
+    if (userId) hideCampaignTips(userId);
+  };
+  const dismissTip = (step: GuideStep) => {
+    if (userId) dismissCampaignTip(userId, step);
+  };
+  const guideFor = (step: GuideStep) => !isOperational && campaignTips.includes(step) && activeStep === step
+    ? <CampaignGuide step={step} onDismiss={() => dismissTip(step)} onHideTips={hideTips} />
+    : null;
   const changeTab = (value: string) => {
     void navigateSafely(`/campaigns/${campaignId}?tab=${value}`);
   };
@@ -953,9 +962,12 @@ function CampaignEditor() {
             </button>
           </PopoverContent>
         </Popover>
-        <button className="campaign-button is-outline" onClick={() => void handleOpenPreview()} disabled={isPreviewLoading}>
-          <Eye size={17} /> {isPreviewLoading ? "Opening…" : "Preview"}
-        </button>
+        <div className="campaign-guide-anchor">
+          <button className="campaign-button is-outline" onClick={() => void handleOpenPreview()} disabled={isPreviewLoading}>
+            <Eye size={17} /> {isPreviewLoading ? "Opening…" : isOperational ? "Preview message" : "Preview draft"}
+          </button>
+          {!previewModalOpen && !messageToolsOpen && !variablesOpen && !attachmentModalOpen && !templateModalOpen && guideFor("message")}
+        </div>
       </div>
       <label className="campaign-subject-label" htmlFor="campaign-subject">Subject</label>
       <input
@@ -1228,7 +1240,7 @@ function CampaignEditor() {
                   {activeStep === "message"
                     ? "Write your message"
                     : activeStep === "audience"
-                      ? "Choose your audience"
+                      ? "Who would you like to email?"
                       : activeStep === "senders"
                         ? "Choose your senders"
                         : activeStep === "schedule"
@@ -1237,9 +1249,9 @@ function CampaignEditor() {
                 </h1>
                 <p>
                   {activeStep === "message"
-                    ? "Write your email. Nothing sends until you review and launch."
+                    ? "This is a draft. Nothing sends until you review and launch."
                     : activeStep === "audience"
-                      ? "Choose who will receive this campaign."
+                      ? "Import your contacts to get started."
                       : activeStep === "senders"
                         ? "Choose the connected email accounts that will send your campaign."
                         : activeStep === "schedule"
@@ -1253,6 +1265,7 @@ function CampaignEditor() {
               <RecipientsSection
                 campaignId={campaignId}
                 onOpenImport={() => setRecipientsModalOpen(true)}
+                importGuide={!recipientsModalOpen && guideFor("audience")}
                 readOnly={editingLocked}
                 onAudienceChange={async () => { await Promise.all([mutateSummary(), mutateValSummary(), recheckRecipients()]); }}
               />
@@ -1343,7 +1356,8 @@ function CampaignEditor() {
             </button>
           </div>
           <CampaignSteps current={activeStep} complete={stepComplete} onChange={changeStep} disabled={isSaving || Boolean(busyAction)} />
-          <div className="campaign-footer-next">
+          <div className="campaign-footer-next campaign-guide-anchor">
+            {guideFor("review")}
             <button
               className="campaign-button is-primary"
               onClick={() => void continueStep()}
@@ -1418,12 +1432,18 @@ function CampaignEditor() {
       />
 
       {/* C. Select Recipients Modal */}
-      <RecipientsDialog
+      <RecipientsImportDialog
         isOpen={recipientsModalOpen}
         onClose={() => setRecipientsModalOpen(false)}
         campaignId={campaignId as string}
-        mutateSummary={mutateSummary}
-        mutateValSummary={mutateValSummary}
+        onImported={async () => {
+          await Promise.all([
+            mutate((key) => typeof key === "string" && key.startsWith(`${API_URL}/api/campaigns/${campaignId}/recipients?`)),
+            mutateSummary(),
+            mutateValSummary(),
+            recheckRecipients(),
+          ]);
+        }}
       />
 
       {/* D. Preview Modal */}
@@ -1461,349 +1481,6 @@ function CampaignEditor() {
 // ----------------------------------------------------
 // Dialog Components Helpers
 // ----------------------------------------------------
-
-// 3. Select Recipients Dialog
-function RecipientsDialog({
-  isOpen,
-  onClose,
-  campaignId,
-  mutateSummary,
-  mutateValSummary,
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  campaignId: string;
-  mutateSummary: () => void;
-  mutateValSummary: () => void;
-}) {
-  const [rawPaste, setRawPaste] = useState("");
-  const [sheetUrl, setSheetUrl] = useState("");
-  const [tabName, setTabName] = useState("");
-  const [sheetTabs, setSheetTabs] = useState<
-    Array<{ title: string; gid?: string | null }>
-  >([]);
-  const [tabsLoading, setTabsLoading] = useState(false);
-  const [tabsError, setTabsError] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [csvFile, setCsvFile] = useState<File | null>(null);
-  const { authFetch } = useApiClient();
-
-  const refreshImportedRecipients = async () => {
-    await Promise.all([
-      mutate(
-        (key) =>
-          typeof key === "string" &&
-          key.startsWith(`${API_URL}/api/campaigns/${campaignId}/recipients?`),
-      ),
-      mutateSummary(),
-      mutateValSummary(),
-    ]);
-  };
-
-  useEffect(() => {
-    const trimmedUrl = sheetUrl.trim();
-    const timeoutId = window.setTimeout(async () => {
-      if (!trimmedUrl) {
-        setSheetTabs([]);
-        setTabsError("");
-        setTabsLoading(false);
-        return;
-      }
-      setTabsLoading(true);
-      setTabsError("");
-      try {
-        const res = await authFetch(
-          `${API_URL}/api/google-sheets/public-tabs?url=${encodeURIComponent(trimmedUrl)}`,
-        );
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          throw new Error(data.detail || "Could not load tabs");
-        }
-        const data = await res.json();
-        const tabs = Array.isArray(data.tabs) ? data.tabs : [];
-        setSheetTabs(tabs);
-        if (tabs.length) {
-          setTabName(tabs[0].title);
-        }
-      } catch (err: unknown) {
-        setSheetTabs([]);
-        setTabsError(
-          err instanceof Error
-            ? err.message
-            : "Could not load tabs. The sheet may need to be public.",
-        );
-      } finally {
-        setTabsLoading(false);
-      }
-    }, 500);
-
-    return () => window.clearTimeout(timeoutId);
-  }, [sheetUrl, authFetch]);
-
-  const handlePasteSubmit = async () => {
-    if (!rawPaste.trim()) return;
-    setIsSubmitting(true);
-    try {
-      const res = await authFetch(
-        `${API_URL}/api/campaigns/${campaignId}/recipients/paste`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ raw: rawPaste }),
-        },
-      );
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.detail || "Import failed");
-      await refreshImportedRecipients();
-      if (data.attached === 0) {
-        alert(
-          "No new recipients were added. The valid emails are already in this campaign.",
-        );
-      }
-      onClose();
-    } catch (err: unknown) {
-      alert(
-        err instanceof Error
-          ? err.message
-          : "Request failed. Please try again.",
-      );
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleCSVSubmit = async () => {
-    if (!csvFile) return;
-    setIsSubmitting(true);
-    try {
-      const formData = new FormData();
-      formData.append("file", csvFile);
-      formData.append("mapping_json", JSON.stringify({}));
-
-      const res = await authFetch(
-        `${API_URL}/api/campaigns/${campaignId}/recipients/csv`,
-        {
-          method: "POST",
-          body: formData,
-        },
-      );
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.detail || "CSV upload failed");
-      await refreshImportedRecipients();
-      if (data.attached === 0) {
-        alert(
-          "No new recipients were added. The valid emails are already in this campaign.",
-        );
-      }
-      onClose();
-    } catch (err: unknown) {
-      alert(
-        err instanceof Error
-          ? err.message
-          : "Request failed. Please try again.",
-      );
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleSheetSubmit = async () => {
-    if (!sheetUrl.trim()) return;
-    setIsSubmitting(true);
-    try {
-      const res = await authFetch(
-        `${API_URL}/api/campaigns/${campaignId}/recipients/google-sheet`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            url: sheetUrl,
-            tab_name: tabName,
-            header_row: 1,
-            mapping: {},
-          }),
-        },
-      );
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.detail || "Google Sheet import failed");
-      await refreshImportedRecipients();
-      if (data.attached === 0) {
-        alert(
-          "No new recipients were added. The valid emails are already in this campaign.",
-        );
-      }
-      onClose();
-    } catch (err: unknown) {
-      alert(
-        err instanceof Error
-          ? err.message
-          : "Request failed. Please try again.",
-      );
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Select recipients</DialogTitle>
-        </DialogHeader>
-
-        <Tabs defaultValue="paste" className="w-full">
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="paste" className="gap-1">
-              <ClipboardList className="w-3.5 h-3.5" />
-              <span>Copy / paste</span>
-            </TabsTrigger>
-            <TabsTrigger value="csv" className="gap-1">
-              <Upload className="w-3.5 h-3.5" />
-              <span>Import CSV</span>
-            </TabsTrigger>
-            <TabsTrigger value="sheet" className="gap-1">
-              <FileSpreadsheet className="w-3.5 h-3.5" />
-              <span>Google Sheets</span>
-            </TabsTrigger>
-          </TabsList>
-
-          {/* A. Copy Paste */}
-          <TabsContent value="paste" className="py-4 space-y-4">
-            <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-700">
-                Paste raw email addresses or CSV format
-              </label>
-              <Textarea
-                placeholder="e.g. John Doe, john@company.com, Company Name&#10;Jane Smith, jane@company.com"
-                value={rawPaste}
-                onChange={(e) => setRawPaste(e.target.value)}
-                className="min-h-[160px] text-xs font-mono"
-              />
-            </div>
-            <DialogFooter>
-              <Button
-                variant="outline"
-                onClick={onClose}
-                disabled={isSubmitting}
-              >
-                Cancel
-              </Button>
-              <Button
-                className="bg-blue-600 hover:bg-blue-700 text-white"
-                onClick={handlePasteSubmit}
-                disabled={isSubmitting || !rawPaste.trim()}
-              >
-                {isSubmitting ? "Importing..." : "Use contacts"}
-              </Button>
-            </DialogFooter>
-          </TabsContent>
-
-          {/* B. Import CSV */}
-          <TabsContent value="csv" className="py-4 space-y-4">
-            <div className="border-2 border-dashed border-slate-200 hover:border-blue-400 rounded-lg p-8 text-center cursor-pointer transition-colors relative">
-              <input
-                type="file"
-                accept=".csv"
-                onChange={(e) => setCsvFile(e.target.files?.[0] || null)}
-                className="absolute inset-0 opacity-0 w-full h-full cursor-pointer"
-              />
-              <Upload className="w-8 h-8 text-slate-400 mx-auto mb-2" />
-              <div className="text-sm font-semibold text-slate-700">
-                {csvFile ? csvFile.name : "Click to select CSV File"}
-              </div>
-              <p className="text-xs text-slate-400 mt-1">
-                Accepts CSV files with headers Email, First Name, Company Name
-              </p>
-            </div>
-            <DialogFooter>
-              <Button
-                variant="outline"
-                onClick={onClose}
-                disabled={isSubmitting}
-              >
-                Cancel
-              </Button>
-              <Button
-                className="bg-blue-600 hover:bg-blue-700 text-white"
-                onClick={handleCSVSubmit}
-                disabled={isSubmitting || !csvFile}
-              >
-                {isSubmitting ? "Uploading..." : "Import CSV"}
-              </Button>
-            </DialogFooter>
-          </TabsContent>
-
-          {/* C. Google Sheets */}
-          <TabsContent value="sheet" className="py-4 space-y-4">
-            <div className="space-y-3">
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-700">
-                  Google Sheet Shareable link
-                </label>
-                <Input
-                  placeholder="https://docs.google.com/spreadsheets/d/.../edit?usp=sharing"
-                  value={sheetUrl}
-                  onChange={(e) => setSheetUrl(e.target.value)}
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-700">
-                  Sheet tab
-                </label>
-                {sheetTabs.length > 0 ? (
-                  <select
-                    value={tabName}
-                    onChange={(e) => setTabName(e.target.value)}
-                    className="w-full h-10 rounded-md border border-slate-200 bg-white px-3 text-sm outline-none focus:ring-1 focus:ring-blue-500/20"
-                  >
-                    {sheetTabs.map((tab) => (
-                      <option
-                        key={`${tab.title}-${tab.gid || ""}`}
-                        value={tab.title}
-                      >
-                        {tab.title}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <Input
-                    placeholder={
-                      tabsLoading ? "Loading tabs..." : "Default first tab"
-                    }
-                    value={tabName}
-                    onChange={(e) => setTabName(e.target.value)}
-                    disabled={tabsLoading}
-                  />
-                )}
-                {tabsError && (
-                  <p className="text-[11px] text-amber-600 leading-relaxed">
-                    {tabsError}
-                  </p>
-                )}
-              </div>
-            </div>
-            <DialogFooter>
-              <Button
-                variant="outline"
-                onClick={onClose}
-                disabled={isSubmitting}
-              >
-                Cancel
-              </Button>
-              <Button
-                className="bg-blue-600 hover:bg-blue-700 text-white"
-                onClick={handleSheetSubmit}
-                disabled={isSubmitting || !sheetUrl.trim()}
-              >
-                {isSubmitting ? "Fetching..." : "Use sheet data"}
-              </Button>
-            </DialogFooter>
-          </TabsContent>
-        </Tabs>
-      </DialogContent>
-    </Dialog>
-  );
-}
 
 // 6. Template Dialog
 function TemplateDialog({

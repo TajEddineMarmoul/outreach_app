@@ -46,7 +46,7 @@ export default function CampaignHeader({
       >
         OUTREACH
       </Link>
-      <AppMenu onNavigate={onNavigate} />
+      <AppMenu onNavigate={onNavigate} allowGuidedTips={!readOnly} />
       <Link
         href="/campaigns"
         className="campaign-back-link"

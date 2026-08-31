@@ -1,0 +1,51 @@
+.welcome-page { flex: 1; display: flex; align-items: center; padding: 36px 32px; }
+.welcome-content { width: 100%; max-width: 960px; margin: 0 auto; }
+.welcome-eyebrow { color: #0751f8; text-transform: uppercase; font-size: 12px; font-weight: 650; letter-spacing: 1.7px; margin-bottom: 16px; }
+.welcome-content h1 { color: #101a34; font-size: clamp(30px, 3.5vw, 44px); font-weight: 650; letter-spacing: -1.3px; line-height: 1.2; margin: 0 0 20px; }
+.welcome-intro { max-width: 740px; color: #506184; font-size: 16px; line-height: 1.7; }
+.welcome-assurance { margin-top: 8px; color: #506184; font-size: 14px; }
+.welcome-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 26px; list-style: none; margin: 32px 0; padding: 0; }
+.welcome-steps li + li { border-left: 1px solid #dce2ec; padding-left: 26px; }
+.welcome-step-symbol { display: flex; align-items: center; gap: 14px; color: #0751f8; margin-bottom: 14px; }
+.welcome-step-symbol span { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid #0751f8; border-radius: 50%; font-size: 13px; }
+.welcome-steps h2 { font-size: 17px; font-weight: 600; margin: 0 0 6px; color: #101a34; }
+.welcome-steps p { font-size: 14px; color: #506184; max-width: 240px; line-height: 1.65; }
+.welcome-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.welcome-actions .app-button { min-height: 46px; }
+.welcome-guide-choice { display: flex; align-items: center; gap: 9px; width: fit-content; min-height: 44px; margin-top: 10px; font-size: 13px; color: #506184; cursor: pointer; }
+.welcome-guide-choice input { accent-color: #0751f8; width: 16px; height: 16px; }
+.welcome-sample-note { font-size: 12px; color: #506184; margin-top: 4px; }
+.welcome-skip { display: inline-block; margin-top: 26px; min-height: 44px; color: #506184; font-size: 14px; text-decoration: underline; text-underline-offset: 4px; cursor: pointer; }
+.welcome-sample { list-style: none; display: grid; gap: 24px; margin: 8px 0 24px; padding: 0; }
+.welcome-sample li { display: flex; gap: 14px; }
+.welcome-sample li > span { display: grid; place-items: center; flex-shrink: 0; width: 28px; height: 28px; border: 1px solid #c7d7ff; color: #0751f8; border-radius: 50%; }
+.welcome-sample h3 { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
+.welcome-sample p { color: #506184; line-height: 1.65; font-size: 14px; }
+.campaign-guide-anchor { position: relative; }
+.campaign-guide { position: absolute; top: calc(100% + 14px); right: 0; z-index: 35; width: 320px; max-width: calc(100vw - 40px); padding: 18px 20px; background: #fff; border: 1px solid #0751f8; border-radius: 6px; box-shadow: 0 5px 20px #101a3414; color: #101a34; text-align: left; }
+.campaign-guide::before { content: ""; position: absolute; right: 44px; top: -7px; width: 12px; height: 12px; background: #fff; border-top: 1px solid #0751f8; border-left: 1px solid #0751f8; transform: rotate(45deg); }
+.campaign-guide-top { display: flex; align-items: center; justify-content: space-between; color: #506184; font-size: 12px; margin-bottom: 12px; }
+.campaign-guide-top button { display: grid; place-items: center; min-width: 32px; min-height: 32px; }
+.campaign-ui .campaign-guide h2 { font-size: 17px; font-weight: 600; line-height: 1.4; margin: 0 0 10px; }
+.campaign-guide p { color: #506184; font-size: 14px; line-height: 1.65; }
+.campaign-guide-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 18px; gap: 12px; }
+.campaign-guide-actions .campaign-text-button { font-size: 13px; color: #0751f8; }
+.campaign-guide.is-review { top: auto; bottom: calc(100% + 14px); }
+.campaign-guide.is-review::before { top: auto; bottom: -7px; transform: rotate(225deg); }
+@media (max-width: 650px) {
+  .welcome-page { align-items: flex-start; padding: 28px 22px; }
+  .welcome-break { display: none; }
+  .welcome-steps { grid-template-columns: 1fr; gap: 20px; margin: 26px 0; }
+  .welcome-steps li + li { border-left: 0; border-top: 1px solid #dce2ec; padding: 20px 0 0; }
+  .welcome-step-symbol { float: left; margin-right: 16px; margin-bottom: 0; }
+  .welcome-step-symbol svg { display: none; }
+  .welcome-steps h2, .welcome-steps p { margin-left: 44px; max-width: none; }
+  .welcome-content h1 { letter-spacing: -.8px; }
+  .welcome-skip { margin-top: 16px; }
+  .campaign-guide { width: 280px; padding: 14px 16px; }
+}
+@media (min-width: 651px) and (max-height: 760px) {
+  .welcome-page { padding-block: 24px; }
+  .welcome-steps { margin-block: 24px; }
+  .welcome-skip { margin-top: 12px; }
+}

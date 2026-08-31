@@ -492,6 +492,32 @@ def import_and_attach_df(conn, campaign_id: int, df: pd.DataFrame, mapping: dict
     attached = db.add_campaign_recipients_by_emails(conn, campaign_id, emails, user_id)
     return {**result.model_dump(), "attached": attached}
 
+
+def read_recipient_text(raw: str, *, pasted: bool = False) -> pd.DataFrame:
+    if len(raw.encode("utf-8")) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=422, detail="The import exceeds the 20 MB limit")
+    text = raw.lstrip("\ufeff")
+    first_row = text.splitlines()[0] if text.splitlines() else ""
+    separator = "\t" if pasted and "\t" in first_row else ","
+    try:
+        return pd.read_csv(StringIO(text), sep=separator, dtype=str, keep_default_na=False)
+    except (pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
+        raise HTTPException(status_code=422, detail="Could not read the rows. Include an email header and use the same number of columns in each row.") from exc
+
+
+def preview_recipient_frame(df: pd.DataFrame, mapping: dict | None = None) -> dict:
+    if df.empty:
+        raise HTTPException(status_code=422, detail="The import contains no recipient rows")
+    resolved = resolve_import_mapping(df, mapping)
+    rows = df.head(5).fillna("").astype(str).to_dict(orient="records")
+    return {
+        "columns": [str(column) for column in df.columns],
+        "rows": rows,
+        "total_rows": len(df),
+        "email_column": resolved["email"],
+    }
+
+
 @router.post("/api/campaigns/{campaign_id}/recipients/csv")
 async def post_recipients_csv(
     campaign_id: int,
@@ -511,9 +537,9 @@ async def post_recipients_csv(
 
     content = await file.read()
     try:
-        df = pd.read_csv(StringIO(content.decode("utf-8-sig")))
-    except (UnicodeDecodeError, pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
-        raise HTTPException(status_code=422, detail=f"Could not read CSV: {exc}") from exc
+        df = read_recipient_text(content.decode("utf-8-sig"))
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=422, detail="Save your CSV with UTF-8 encoding, then try again.") from exc
     
     res = import_and_attach_df(conn, campaign_id, df, mapping, "csv", file.filename or "", user_id)
     return res
@@ -546,23 +572,16 @@ def post_recipient_one(
 @router.post("/api/campaigns/{campaign_id}/recipients/paste")
 def post_recipients_paste(campaign_id: int, req: RecipientsPaste, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
     campaign = require_editable_campaign(conn, campaign_id, user_id)
-        
-    try:
-        df = pd.read_csv(StringIO(req.raw))
-    except (pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
-        raise HTTPException(status_code=422, detail=f"Could not read pasted recipients: {exc}") from exc
+    df = read_recipient_text(req.raw, pasted=True)
     res = import_and_attach_df(conn, campaign_id, df, None, "paste", user_id=user_id)
     return res
 
-@router.post("/api/campaigns/{campaign_id}/recipients/google-sheet")
-def post_recipients_sheet(campaign_id: int, req: RecipientsGoogleSheet, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
-    campaign = require_editable_campaign(conn, campaign_id, user_id)
-        
+
+def read_recipient_sheet(req: RecipientsGoogleSheet) -> pd.DataFrame:
     sheet_url = req.url
     tab_name = req.tab_name
     header_row = req.header_row
     use_private = req.use_private
-    mapping = req.mapping
     if use_private:
         raise HTTPException(status_code=400, detail="Private Google Sheets import is not supported. Use a public or published sheet link.")
     
@@ -589,9 +608,36 @@ def post_recipients_sheet(campaign_id: int, req: RecipientsGoogleSheet, conn=Dep
         raise HTTPException(status_code=502, detail="Could not connect to Google Sheets") from exc
     except (ValueError, pd.errors.EmptyDataError, pd.errors.ParserError) as exc:
         raise HTTPException(status_code=422, detail=f"Could not read Google Sheet: {exc}") from exc
-            
-    res = import_and_attach_df(conn, campaign_id, df, mapping, "google_sheet", sheet_url, user_id)
-    return res
+    return df
+
+
+@router.post("/api/campaigns/{campaign_id}/recipients/google-sheet")
+def post_recipients_sheet(campaign_id: int, req: RecipientsGoogleSheet, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    require_editable_campaign(conn, campaign_id, user_id)
+    df = read_recipient_sheet(req)
+    return import_and_attach_df(conn, campaign_id, df, req.mapping, "google_sheet", req.url, user_id)
+
+
+@router.post("/api/campaigns/{campaign_id}/recipients/preview/paste")
+def preview_recipients_paste(campaign_id: int, req: RecipientsPaste, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    require_editable_campaign(conn, campaign_id, user_id)
+    return preview_recipient_frame(read_recipient_text(req.raw, pasted=True))
+
+
+@router.post("/api/campaigns/{campaign_id}/recipients/preview/csv")
+async def preview_recipients_csv(campaign_id: int, file: UploadFile = File(...), conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    require_editable_campaign(conn, campaign_id, user_id)
+    try:
+        raw = (await file.read()).decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=422, detail="Save your CSV with UTF-8 encoding, then try again.") from exc
+    return preview_recipient_frame(read_recipient_text(raw))
+
+
+@router.post("/api/campaigns/{campaign_id}/recipients/preview/google-sheet")
+def preview_recipients_sheet(campaign_id: int, req: RecipientsGoogleSheet, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    require_editable_campaign(conn, campaign_id, user_id)
+    return preview_recipient_frame(read_recipient_sheet(req), req.mapping)
 
 @router.post("/api/campaigns/{campaign_id}/recipients/select-existing")
 def post_recipients_select_existing(campaign_id: int, req: RecipientsSelectExisting, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):

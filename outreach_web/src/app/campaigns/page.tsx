@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { Plus } from "lucide-react";
 import { useApiClient } from "@/lib/api";
@@ -32,6 +32,10 @@ interface Campaign {
 const PAGE_SIZE = 6;
 
 export default function CampaignsPage() {
+  return <Suspense fallback={<div className="app-page">Loading campaigns…</div>}><CampaignsContent /></Suspense>;
+}
+
+function CampaignsContent() {
   const { API_URL, authFetch } = useApiClient();
   const {
     data: campaigns = [],
@@ -40,6 +44,7 @@ export default function CampaignsPage() {
     mutate,
   } = useSWR<Campaign[]>(`${API_URL}/api/campaigns`);
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
   const [page, setPage] = useState(1);
@@ -47,6 +52,13 @@ export default function CampaignsPage() {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState("");
+  const fromWelcome = searchParams.get("create") === "1";
+  const createOpen = open || fromWelcome;
+  const closeCreate = () => {
+    if (busy) return;
+    setOpen(false);
+    if (fromWelcome) router.replace("/campaigns", { scroll: false });
+  };
   const filtered = campaigns.filter(
     (item) =>
       item.name.toLowerCase().includes(search.toLowerCase()) &&
@@ -115,7 +127,7 @@ export default function CampaignsPage() {
           </button>
         }
       />
-      {!open && <Notice error={actionError} />}
+      {!createOpen && <Notice error={actionError} />}
       <div className="app-toolbar">
         <SearchField
           label="Search campaigns"
@@ -241,10 +253,8 @@ export default function CampaignsPage() {
         />
       )}
       <AppDialog
-        open={open}
-        onClose={() => {
-          if (!busy) setOpen(false);
-        }}
+        open={createOpen}
+        onClose={closeCreate}
         title="Create campaign"
         description="Give this campaign a name you’ll recognize."
       >
@@ -266,7 +276,7 @@ export default function CampaignsPage() {
               type="button"
               className="app-button"
               disabled={busy}
-              onClick={() => setOpen(false)}
+              onClick={closeCreate}
             >
               Cancel
             </button>
