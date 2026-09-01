@@ -13,10 +13,8 @@ const people = [
 const THREAD_START = 750;
 const THREAD_DURATION = 3000;
 const CHECK_LEAD = 800;
-const CHECK_START = THREAD_START + THREAD_DURATION - CHECK_LEAD;
 const EASE_IN_OUT = "ease-in-out";
 const RECIPIENT_LEAD = 100;
-const LENA_POP_TIME = 2550;
 
 type ThreadPoint = readonly [number, number];
 
@@ -72,10 +70,10 @@ const threadPaths = {
   ]),
 };
 
-function envelopeArrivals(root: HTMLDivElement, mobile: boolean) {
+function threadProgressAtTarget(root: HTMLDivElement, mobile: boolean, target: Element) {
   const path = root.querySelector<SVGPathElement>(`.story-thread--${mobile ? "mobile" : "desktop"} [data-thread]`);
   const svg = path?.ownerSVGElement;
-  if (!path || !svg) return [];
+  if (!path || !svg) return 0;
   const frame = svg.getBoundingClientRect();
   const viewBox = svg.viewBox.baseVal;
 
@@ -85,22 +83,34 @@ function envelopeArrivals(root: HTMLDivElement, mobile: boolean) {
     point: path.getPointAtLength(length * index / 400),
   }));
 
+  const bounds = target.getBoundingClientRect();
+  // Compare in SVG coordinates so zoom, centered frames and screen size do
+  // not change the percentage where the moving line reaches a target.
+  const left = (bounds.left - frame.left) / frame.width * viewBox.width;
+  const right = (bounds.right - frame.left) / frame.width * viewBox.width;
+  const top = (bounds.top - frame.top) / frame.height * viewBox.height;
+  const bottom = (bounds.bottom - frame.top) / frame.height * viewBox.height;
+  const arrival = samples.find(({ point }) => point.x >= left && point.x <= right && point.y >= top && point.y <= bottom);
+  const closest = arrival ?? samples.reduce((best, sample) => {
+    const distance = (p: ThreadPoint) => (p[0] - (left + right) / 2) ** 2 + (p[1] - (top + bottom) / 2) ** 2;
+    return distance([sample.point.x, sample.point.y]) < distance([best.point.x, best.point.y]) ? sample : best;
+  });
+  return closest.progress;
+}
+
+function threadTimeAtProgress(progress: number) {
+  return THREAD_START + easeInOutTimeForProgress(progress) * THREAD_DURATION;
+}
+
+function envelopeArrivals(root: HTMLDivElement, mobile: boolean) {
   return people.map(({ id }) => {
-    const bounds = root.querySelector(`.story-envelope--${id}`)!.getBoundingClientRect();
-    // Compare in SVG coordinates so zoom, centered frames and screen size do
-    // not change when an envelope appears along the same curve.
-    const left = (bounds.left - frame.left) / frame.width * viewBox.width;
-    const right = (bounds.right - frame.left) / frame.width * viewBox.width;
-    const top = (bounds.top - frame.top) / frame.height * viewBox.height;
-    const bottom = (bounds.bottom - frame.top) / frame.height * viewBox.height;
-    const arrival = samples.find(({ point }) => point.x >= left && point.x <= right && point.y >= top && point.y <= bottom);
-    const closest = arrival ?? samples.reduce((best, sample) => {
-      const distance = (p: ThreadPoint) => (p[0] - (left + right) / 2) ** 2 + (p[1] - (top + bottom) / 2) ** 2;
-      return distance([sample.point.x, sample.point.y]) < distance([best.point.x, best.point.y]) ? sample : best;
-    });
-    const arrivalTime = THREAD_START + easeInOutTimeForProgress(closest.progress) * THREAD_DURATION;
-    const synchronizedDelay = Math.max(THREAD_START, arrivalTime - RECIPIENT_LEAD);
-    return { id, delay: id === "lena" ? Math.min(synchronizedDelay, LENA_POP_TIME) : synchronizedDelay };
+    const target = root.querySelector(`.story-envelope--${id}`)!;
+    const progress = threadProgressAtTarget(root, mobile, target);
+    return {
+      id,
+      progress,
+      delay: Math.max(THREAD_START, threadTimeAtProgress(progress) - RECIPIENT_LEAD),
+    };
   });
 }
 
@@ -192,6 +202,9 @@ export default function EnvelopeStory() {
     if (!root) return;
     const preference = window.matchMedia("(prefers-reduced-motion: reduce)");
     const mobileLayout = window.matchMedia("(max-width: 1100px) and (orientation: portrait)");
+    let resizeTimer: number | undefined;
+    let measuredWidth = root.getBoundingClientRect().width;
+    let measuredHeight = root.getBoundingClientRect().height;
 
     const clear = () => {
       animations.current.forEach((animation) => animation.cancel());
@@ -263,19 +276,35 @@ export default function EnvelopeStory() {
         { transform: "translateY(-4px)", offset: .5 },
         { transform: "translateY(0)" },
       ], { duration: 6400, delay: THREAD_START, iterations: Infinity, easing: EASE_IN_OUT });
-      // Share the route's initial animation clock so the badge is fully visible
-      // at 2.95s, then pops while the route draws its final 0.8s.
-      animate(".story-delivered-icon", [{ opacity: 0 }, { opacity: 1 }], { duration: 1, delay: CHECK_START, easing: EASE_IN_OUT });
-      animate(".story-delivered-icon", deliveredPop, { duration: CHECK_LEAD, delay: CHECK_START, easing: EASE_IN_OUT });
-      animate(".story-delivered-text", [{ opacity: 0, transform: "translateX(-5px)" }, { opacity: 1, transform: "translateX(0)" }], { duration: 400, delay: CHECK_START, easing: EASE_IN_OUT });
+      // The badge is fully visible when the moving tip reaches it. Its start
+      // follows that target percentage instead of a fixed global timestamp.
+      const deliveredTarget = root.querySelector(".story-delivered-icon-shell")!;
+      const deliveredProgress = threadProgressAtTarget(root, mobileLayout.matches, deliveredTarget);
+      const deliveredArrival = threadTimeAtProgress(deliveredProgress);
+      const deliveredStart = Math.max(THREAD_START, deliveredArrival - CHECK_LEAD);
+      const deliveredDuration = Math.max(1, deliveredArrival - deliveredStart);
+      animate(".story-delivered-icon", [{ opacity: 0 }, { opacity: 1 }], { duration: 1, delay: deliveredStart, easing: EASE_IN_OUT });
+      animate(".story-delivered-icon", deliveredPop, { duration: deliveredDuration, delay: deliveredStart, easing: EASE_IN_OUT });
+      animate(".story-delivered-text", [{ opacity: 0, transform: "translateX(-5px)" }, { opacity: 1, transform: "translateX(0)" }], { duration: Math.min(400, deliveredDuration), delay: deliveredStart, easing: EASE_IN_OUT });
     };
 
     start();
     const respectReducedMotion = () => {
       if (preference.matches) clear();
     };
+    const resizeObserver = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect;
+      if (Math.abs(width - measuredWidth) < 1 && Math.abs(height - measuredHeight) < 1) return;
+      measuredWidth = width;
+      measuredHeight = height;
+      window.clearTimeout(resizeTimer);
+      resizeTimer = window.setTimeout(start, 120);
+    });
+    resizeObserver.observe(root);
     preference.addEventListener("change", respectReducedMotion);
     return () => {
+      resizeObserver.disconnect();
+      window.clearTimeout(resizeTimer);
       clear();
       preference.removeEventListener("change", respectReducedMotion);
     };
