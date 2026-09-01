@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 
 export default clerkMiddleware(async (auth, request) => {
   const url = new URL(request.url);
-  const isPublicRoute = url.pathname.startsWith("/sign-in") || url.pathname.startsWith("/sign-up");
+  const isPublicRoute = url.pathname === "/" || url.pathname.startsWith("/sign-in") || url.pathname.startsWith("/sign-up");
 
   if (isPublicRoute) return;
 

@@ -1,0 +1,54 @@
+.envelope-story {
+  position: absolute;
+  inset: 0 0 0 37.68%;
+  container-type: inline-size;
+  scroll-margin-top: 48px;
+}
+
+.story-art { position: absolute; inset: 0; }
+.story-thread { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.story-thread--mobile { display: none; }
+.story-thread path { stroke: #123dff; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; shape-rendering: geometricPrecision; }
+.story-thread g { transform-box: fill-box; transform-origin: center; }
+.story-envelope { position: absolute; }
+.story-envelope--template { left: 37.33%; top: 9.14%; width: 26.49%; }
+.story-envelope--alex { left: 56.43%; top: 45.91%; width: 22.94%; }
+.story-envelope--sam { left: 6.53%; top: 53.45%; width: 23.13%; }
+.story-envelope--lena { left: 45.78%; top: 73.01%; width: 26.49%; }
+.story-template-label { position: absolute; bottom: calc(100% + 10px); left: -10%; width: 120%; text-align: center; font-size: 2.13cqw; line-height: 1.4; white-space: nowrap; }
+.envelope-reveal, .envelope-float { transform-origin: 50% 75%; }
+.envelope-paperwork { display: block; width: 100%; height: auto; overflow: visible; filter: drop-shadow(0 6px 4px #235aa125); }
+.story-envelope--template .envelope-paperwork { filter: drop-shadow(0 6px 4px #0050d923); }
+.envelope-letter-text { font-family: var(--font-geist-sans), Arial, sans-serif; font-size: 26px; font-weight: 400; letter-spacing: -1px; }
+.envelope-letter-text.is-template { font-size: 28px; letter-spacing: -.7px; }
+.story-envelope--lena .envelope-letter-text { font-size: 22.5px; letter-spacing: -.9px; }
+.envelope-fruit { font-family: "Apple Color Emoji", "Segoe UI Emoji", sans-serif; font-size: 25px; letter-spacing: 0; }
+.story-delivered { position: absolute; left: 75.62%; top: 81.51%; display: flex; align-items: center; gap: 1.9cqw; }
+.story-delivered-icon-shell { flex: 0 0 auto; display: block; width: 5cqw; height: 5cqw; transition: transform 180ms ease-in-out, filter 180ms ease-in-out; }
+.story-delivered-icon { display: block; width: 100%; height: 100%; overflow: visible; transform-box: fill-box; transform-origin: center; }
+.story-delivered-text { font-size: 1.9cqw; line-height: 1.4; white-space: nowrap; letter-spacing: -.5px; transition: color 180ms ease-in-out, transform 180ms ease-in-out; }
+@media (hover: hover) and (pointer: fine) {
+  .story-delivered:hover .story-delivered-icon-shell { transform: translateY(-2px) scale(1.06); filter: drop-shadow(0 7px 8px #00b98542); }
+  .story-delivered:hover .story-delivered-text { color: #0055ff; transform: translateX(2px); }
+}
+
+@media (max-width: 1100px) and (orientation: portrait) {
+  .envelope-story { position: relative; inset: auto; width: 100%; height: 100%; min-height: 0; margin: 0; container-type: size; }
+  .story-art { inset: auto; left: 50%; top: calc((100% - 40px) / 2); width: min(calc(100% - 16px), calc((100cqh - 40px) * 600 / 670), 600px); aspect-ratio: 600 / 670; transform: translate(-50%, -50%); container-type: inline-size; }
+  .story-thread--desktop { display: none; }
+  .story-thread--mobile { display: block; }
+  .story-thread path { stroke-width: 2; }
+  .story-envelope--template { left: 12%; top: 0; width: 42%; }
+  .story-envelope--alex { left: 56%; top: 26.8657%; width: 42%; }
+  .story-envelope--sam { left: 3%; top: 40.597%; width: 42%; }
+  .story-envelope--lena { left: 49%; top: 62.3881%; width: 46%; }
+  .story-template-label { bottom: calc(100% + 6px); font-size: clamp(12px, 3.5cqw, 20px); }
+  .story-delivered { left: 7%; top: 82.0896%; gap: 3cqw; }
+  .story-delivered-icon-shell { width: 8.33cqw; height: 8.33cqw; }
+  .story-delivered-text { font-size: 3.7cqw; letter-spacing: -.3px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .story-delivered-icon-shell, .story-delivered-text { transition: none; }
+  .story-delivered:hover .story-delivered-icon-shell, .story-delivered:hover .story-delivered-text { transform: none; filter: none; }
+}

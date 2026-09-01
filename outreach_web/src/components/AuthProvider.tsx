@@ -1,15 +1,17 @@
 "use client";
 
 import { useAuth } from "@clerk/nextjs";
+import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useMemo } from "react";
 import { SWRConfig } from "swr";
 import { toBackendProxyUrl } from "@/lib/api";
 
 export default function AuthProvider({ children }: { children: React.ReactNode }) {
   const { isSignedIn } = useAuth();
+  const isPublicHome = usePathname() === "/";
 
   useEffect(() => {
-    if (!isSignedIn) return;
+    if (!isSignedIn || isPublicHome) return;
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     if (!timezone) return;
 
@@ -27,7 +29,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
     };
 
     void syncTimezone().catch((error) => console.error("[Timezone]", error));
-  }, [isSignedIn]);
+  }, [isSignedIn, isPublicHome]);
 
   const fetcher = useCallback(async (url: string) => {
     const res = await fetch(toBackendProxyUrl(url));

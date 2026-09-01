@@ -1,0 +1,97 @@
+/* Fit the reference composition to BOTH viewport dimensions. Its container
+   controls the type scale, so shrinking the illustration also shrinks the copy. */
+.product-home {
+  --product-ink: #080e4b;
+  --product-blue: #0055ff;
+}
+
+.product-stage {
+  position: relative;
+  display: grid;
+  align-items: center;
+  width: min(100%, calc(100svh * 1672 / 941), 1672px);
+  height: 100svh;
+  min-height: 0;
+  margin-inline: auto;
+  container-type: inline-size;
+  background: #fff;
+}
+
+.product-stage .product-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  max-width: none;
+  min-height: 0;
+  border: 0;
+  padding: 1.9cqw 3.94cqw 1.9cqw 2.3cqw;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.product-stage .product-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: max(7px, .65cqw);
+  font-size: clamp(16px, 1.49cqw, 25px);
+  font-weight: 650;
+  line-height: 1;
+  letter-spacing: .085em;
+}
+
+.product-stage .product-brand svg { width: clamp(23px, 2.1cqw, 36px); height: clamp(23px, 2.1cqw, 36px); }
+.product-stage .product-sign-in { min-height: 44px; font-size: clamp(14px, 1.37cqw, 23px); text-decoration: none; }
+
+.product-stage .product-hero {
+  display: block;
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1672 / 941;
+  padding: 0;
+  outline: none;
+}
+
+.product-stage .product-intro { position: absolute; left: 4.65%; top: 28.8%; width: 35%; z-index: 1; }
+.product-stage .product-intro h1 { margin: 0; font-size: 4.06cqw; font-weight: 620; line-height: 1.12; letter-spacing: -.038em; }
+.product-stage .product-intro h1 > span { color: var(--product-blue); }
+.product-stage .product-lead { max-width: none; margin: 1.76cqw 0 0; color: var(--product-ink); font-size: 1.69cqw; line-height: 1.43; letter-spacing: -.035em; }
+.product-hero-cta { display: inline-flex; align-items: center; justify-content: center; min-width: 16.3cqw; min-height: 4.19cqw; margin-top: 2.4cqw; padding: 12px 24px; border-radius: 11px; background: var(--product-blue); color: #fff; font-size: 1.49cqw; font-weight: 400; letter-spacing: -.03em; text-decoration: none; transition: background .2s, box-shadow .2s; }
+.product-hero-cta:hover { background: #0048df; box-shadow: 0 5px 18px #0055ff20; }
+
+/* Portrait screens stack the copy and illustration. The drawing receives the
+   remaining height instead of adding a full-width, oversized canvas below it. */
+@media (max-width: 1100px) and (orientation: portrait) {
+  .product-stage { display: flex; flex-direction: column; align-items: stretch; width: 100%; padding-bottom: clamp(8px, 1.4svh, 16px); }
+  .product-stage .product-header { position: relative; flex-shrink: 0; padding: clamp(4px, 1svh, 12px) 6%; }
+  .product-stage .product-brand { gap: 9px; font-size: 20px; }
+  .product-stage .product-brand svg { width: 27px; height: 27px; }
+  .product-stage .product-sign-in { font-size: 16px; }
+  .product-stage .product-hero { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); align-items: stretch; row-gap: clamp(30px, 3.5svh, 36px); flex: 1; min-height: 0; aspect-ratio: auto; padding-top: clamp(6px, 1.3svh, 14px); }
+  .product-stage .product-intro { position: relative; left: auto; top: auto; width: 88%; margin: 0 auto; }
+  .product-stage .product-intro h1 { font-size: clamp(28px, min(8.8cqw, 5svh), 48px); line-height: 1.1; letter-spacing: -.04em; }
+  .product-stage .product-lead { margin-top: clamp(8px, 1.6svh, 16px); font-size: clamp(14px, min(4.4cqw, 2.25svh), 20px); line-height: 1.4; letter-spacing: -.025em; }
+  .product-hero-cta { min-width: clamp(154px, 46cqw, 220px); min-height: clamp(44px, 5.7svh, 50px); margin-top: clamp(12px, 2.1svh, 20px); padding: 8px 22px; font-size: clamp(16px, 4.4cqw, 19px); border-radius: 9px; }
+}
+
+@media (max-width: 480px) and (orientation: portrait) {
+  .product-stage .product-brand { font-size: 17px; gap: 7px; }
+  .product-stage .product-brand svg { width: 25px; height: 25px; }
+  .product-stage .product-sign-in { font-size: 15px; }
+}
+
+/* Keep controls and body copy usable when browser chrome or a landscape phone
+   leaves little vertical space; the composition itself still fits the frame. */
+@media (orientation: landscape) and (max-height: 500px) {
+  .product-stage .product-header { padding-block: 6px; }
+  .product-stage .product-intro h1 { font-size: clamp(22px, 4.06cqw, 36px); }
+  .product-stage .product-lead { margin-top: 10px; font-size: clamp(13px, 1.69cqw, 17px); line-height: 1.35; }
+  .product-hero-cta { min-width: 136px; min-height: 44px; margin-top: 12px; padding: 7px 16px; font-size: 16px; border-radius: 8px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .product-hero-cta { transition: none; }
+}

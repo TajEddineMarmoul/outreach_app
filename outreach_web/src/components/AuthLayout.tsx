@@ -16,14 +16,19 @@ export default function AuthLayout({
   const pathname = usePathname();
   const router = useRouter();
   const welcomeComplete = useWelcomeComplete(userId);
+  const isPublicHome = pathname === "/";
   const isCampaignWorkspace = /^\/campaigns\/[^/]+\/?$/.test(pathname);
 
   useEffect(() => {
-    if (!isLoaded || !isSignedIn || !userId || welcomeComplete === null) return;
+    if (isPublicHome || !isLoaded || !isSignedIn || !userId || welcomeComplete === null) return;
     if (pathname !== "/welcome" && !welcomeComplete) {
       router.replace("/welcome");
     }
-  }, [isLoaded, isSignedIn, userId, welcomeComplete, pathname, router]);
+  }, [isPublicHome, isLoaded, isSignedIn, userId, welcomeComplete, pathname, router]);
+
+  if (isPublicHome) {
+    return <main className="min-w-0 flex-1">{children}</main>;
+  }
 
   if (isSignedIn && !welcomeComplete && pathname !== "/welcome") {
     return <main className="flex-1 bg-white" aria-label="Loading workspace" />;
