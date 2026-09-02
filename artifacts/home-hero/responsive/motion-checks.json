@@ -1,0 +1,163 @@
+[
+  {
+    "envelopes": [
+      {
+        "id": "story-envelope story-envelope--template",
+        "opacity": "1"
+      },
+      {
+        "id": "story-envelope story-envelope--alex",
+        "opacity": "0"
+      },
+      {
+        "id": "story-envelope story-envelope--sam",
+        "opacity": "0"
+      },
+      {
+        "id": "story-envelope story-envelope--lena",
+        "opacity": "0"
+      }
+    ],
+    "offset": "0.957895px",
+    "time": 3300,
+    "visiblePaths": 1
+  },
+  {
+    "envelopes": [
+      {
+        "id": "story-envelope story-envelope--template",
+        "opacity": "1"
+      },
+      {
+        "id": "story-envelope story-envelope--alex",
+        "opacity": "1"
+      },
+      {
+        "id": "story-envelope story-envelope--sam",
+        "opacity": "0"
+      },
+      {
+        "id": "story-envelope story-envelope--lena",
+        "opacity": "0"
+      }
+    ],
+    "offset": "0.831579px",
+    "time": 3900,
+    "visiblePaths": 1
+  },
+  {
+    "envelopes": [
+      {
+        "id": "story-envelope story-envelope--template",
+        "opacity": "1"
+      },
+      {
+        "id": "story-envelope story-envelope--alex",
+        "opacity": "1"
+      },
+      {
+        "id": "story-envelope story-envelope--sam",
+        "opacity": "0"
+      },
+      {
+        "id": "story-envelope story-envelope--lena",
+        "opacity": "0"
+      }
+    ],
+    "offset": "0.642105px",
+    "time": 4800,
+    "visiblePaths": 1
+  },
+  {
+    "envelopes": [
+      {
+        "id": "story-envelope story-envelope--template",
+        "opacity": "1"
+      },
+      {
+        "id": "story-envelope story-envelope--alex",
+        "opacity": "1"
+      },
+      {
+        "id": "story-envelope story-envelope--sam",
+        "opacity": "1"
+      },
+      {
+        "id": "story-envelope story-envelope--lena",
+        "opacity": "0"
+      }
+    ],
+    "offset": "0.473684px",
+    "time": 5600,
+    "visiblePaths": 1
+  },
+  {
+    "envelopes": [
+      {
+        "id": "story-envelope story-envelope--template",
+        "opacity": "1"
+      },
+      {
+        "id": "story-envelope story-envelope--alex",
+        "opacity": "1"
+      },
+      {
+        "id": "story-envelope story-envelope--sam",
+        "opacity": "1"
+      },
+      {
+        "id": "story-envelope story-envelope--lena",
+        "opacity": "0"
+      }
+    ],
+    "offset": "0.2px",
+    "time": 6900,
+    "visiblePaths": 1
+  },
+  {
+    "envelopes": [
+      {
+        "id": "story-envelope story-envelope--template",
+        "opacity": "1"
+      },
+      {
+        "id": "story-envelope story-envelope--alex",
+        "opacity": "1"
+      },
+      {
+        "id": "story-envelope story-envelope--sam",
+        "opacity": "1"
+      },
+      {
+        "id": "story-envelope story-envelope--lena",
+        "opacity": "1"
+      }
+    ],
+    "offset": "0.0315789px",
+    "time": 7700,
+    "visiblePaths": 1
+  },
+  {
+    "envelopes": [
+      {
+        "id": "story-envelope story-envelope--template",
+        "opacity": "1"
+      },
+      {
+        "id": "story-envelope story-envelope--alex",
+        "opacity": "1"
+      },
+      {
+        "id": "story-envelope story-envelope--sam",
+        "opacity": "1"
+      },
+      {
+        "id": "story-envelope story-envelope--lena",
+        "opacity": "1"
+      }
+    ],
+    "offset": "0px",
+    "time": 9000,
+    "visiblePaths": 1
+  }
+]

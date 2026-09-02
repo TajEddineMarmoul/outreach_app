@@ -1,0 +1,123 @@
+[
+  {
+    "at": 4160,
+    "easing": "linear",
+    "offset": 0.754336,
+    "pathCount": 1,
+    "subpaths": 1,
+    "visiblePeople": [
+      "story-envelope story-envelope--template",
+      "story-envelope story-envelope--alex"
+    ]
+  },
+  {
+    "at": 4230,
+    "easing": "linear",
+    "offset": 0.736792,
+    "pathCount": 1,
+    "subpaths": 1,
+    "visiblePeople": [
+      "story-envelope story-envelope--template",
+      "story-envelope story-envelope--alex"
+    ]
+  },
+  {
+    "at": 4300,
+    "easing": "linear",
+    "offset": 0.722758,
+    "pathCount": 1,
+    "subpaths": 1,
+    "visiblePeople": [
+      "story-envelope story-envelope--template",
+      "story-envelope story-envelope--alex"
+    ]
+  },
+  {
+    "at": 5350,
+    "easing": "linear",
+    "offset": 0.501702,
+    "pathCount": 1,
+    "subpaths": 1,
+    "visiblePeople": [
+      "story-envelope story-envelope--template",
+      "story-envelope story-envelope--alex",
+      "story-envelope story-envelope--sam"
+    ]
+  },
+  {
+    "at": 5440,
+    "easing": "linear",
+    "offset": 0.484159,
+    "pathCount": 1,
+    "subpaths": 1,
+    "visiblePeople": [
+      "story-envelope story-envelope--template",
+      "story-envelope story-envelope--alex",
+      "story-envelope story-envelope--sam"
+    ]
+  },
+  {
+    "at": 5530,
+    "easing": "linear",
+    "offset": 0.463099,
+    "pathCount": 1,
+    "subpaths": 1,
+    "visiblePeople": [
+      "story-envelope story-envelope--template",
+      "story-envelope story-envelope--alex",
+      "story-envelope story-envelope--sam"
+    ]
+  },
+  {
+    "at": 7000,
+    "easing": "linear",
+    "offset": 0.150799,
+    "pathCount": 1,
+    "subpaths": 1,
+    "visiblePeople": [
+      "story-envelope story-envelope--template",
+      "story-envelope story-envelope--alex",
+      "story-envelope story-envelope--sam",
+      "story-envelope story-envelope--lena"
+    ]
+  },
+  {
+    "at": 7090,
+    "easing": "linear",
+    "offset": 0.136764,
+    "pathCount": 1,
+    "subpaths": 1,
+    "visiblePeople": [
+      "story-envelope story-envelope--template",
+      "story-envelope story-envelope--alex",
+      "story-envelope story-envelope--sam",
+      "story-envelope story-envelope--lena"
+    ]
+  },
+  {
+    "at": 7180,
+    "easing": "linear",
+    "offset": 0.115712,
+    "pathCount": 1,
+    "subpaths": 1,
+    "visiblePeople": [
+      "story-envelope story-envelope--template",
+      "story-envelope story-envelope--alex",
+      "story-envelope story-envelope--sam",
+      "story-envelope story-envelope--lena"
+    ]
+  },
+  {
+    "at": 8700,
+    "easing": "linear",
+    "offset": 0,
+    "pathCount": 1,
+    "subpaths": 1,
+    "visiblePeople": [
+      "story-envelope story-envelope--template",
+      "story-envelope story-envelope--alex",
+      "story-envelope story-envelope--sam",
+      "story-envelope story-envelope--lena"
+    ]
+  }
+]

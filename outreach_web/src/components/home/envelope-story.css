@@ -8,7 +8,9 @@
 .story-art { position: absolute; inset: 0; }
 .story-thread { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
 .story-thread--mobile { display: none; }
-.story-thread path { stroke: #123dff; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; shape-rendering: geometricPrecision; }
+.story-thread path { stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; shape-rendering: geometricPrecision; }
+.story-thread [data-thread-source] { stroke: transparent; }
+.story-thread [data-thread-progress] { stroke: #123dff; }
 .story-thread g { transform-box: fill-box; transform-origin: center; }
 .story-envelope { position: absolute; }
 .story-envelope--template { left: 37.33%; top: 9.14%; width: 26.49%; }

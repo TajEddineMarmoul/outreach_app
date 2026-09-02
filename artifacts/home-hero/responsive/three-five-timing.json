@@ -1,0 +1,292 @@
+[
+  {
+    "check": 0,
+    "checkStroke": 1,
+    "envelopes": [
+      {
+        "id": "template",
+        "letter": "matrix(1, 0, 0, 1, 0, 0)",
+        "opacity": 1
+      },
+      {
+        "id": "alex",
+        "letter": "matrix(1, 0, 0, 1, 0, 119)",
+        "opacity": 0
+      },
+      {
+        "id": "sam",
+        "letter": "matrix(1, 0, 0, 1, 0, 119)",
+        "opacity": 0
+      },
+      {
+        "id": "lena",
+        "letter": "matrix(1, 0, 0, 1, 0, 119)",
+        "opacity": 0
+      }
+    ],
+    "offset": 1,
+    "text": 0,
+    "time": 650
+  },
+  {
+    "check": 0,
+    "checkStroke": 1,
+    "envelopes": [
+      {
+        "id": "template",
+        "letter": "matrix(1, 0, 0, 1, 0, 0)",
+        "opacity": 1
+      },
+      {
+        "id": "alex",
+        "letter": "matrix(1, 0, 0, 1, 0, 119)",
+        "opacity": 0
+      },
+      {
+        "id": "sam",
+        "letter": "matrix(1, 0, 0, 1, 0, 119)",
+        "opacity": 0
+      },
+      {
+        "id": "lena",
+        "letter": "matrix(1, 0, 0, 1, 0, 119)",
+        "opacity": 0
+      }
+    ],
+    "offset": 0.978145,
+    "text": 0,
+    "time": 1000
+  },
+  {
+    "check": 0,
+    "checkStroke": 1,
+    "envelopes": [
+      {
+        "id": "template",
+        "letter": "matrix(1, 0, 0, 1, 0, 0)",
+        "opacity": 1
+      },
+      {
+        "id": "alex",
+        "letter": "matrix(1, 0, 0, 1, 0, 119)",
+        "opacity": 0
+      },
+      {
+        "id": "sam",
+        "letter": "matrix(1, 0, 0, 1, 0, 119)",
+        "opacity": 0
+      },
+      {
+        "id": "lena",
+        "letter": "matrix(1, 0, 0, 1, 0, 119)",
+        "opacity": 0
+      }
+    ],
+    "offset": 0.862139,
+    "text": 0,
+    "time": 1350
+  },
+  {
+    "check": 0,
+    "checkStroke": 1,
+    "envelopes": [
+      {
+        "id": "template",
+        "letter": "matrix(1, 0, 0, 1, 0, 0)",
+        "opacity": 1
+      },
+      {
+        "id": "alex",
+        "letter": "matrix(1, 0, 0, 1, 0, 0)",
+        "opacity": 1
+      },
+      {
+        "id": "sam",
+        "letter": "matrix(1, 0, 0, 1, 0, 112.275)",
+        "opacity": 1
+      },
+      {
+        "id": "lena",
+        "letter": "matrix(1, 0, 0, 1, 0, 119)",
+        "opacity": 0
+      }
+    ],
+    "offset": 0.560391,
+    "text": 0,
+    "time": 1800
+  },
+  {
+    "check": 0,
+    "checkStroke": 1,
+    "envelopes": [
+      {
+        "id": "template",
+        "letter": "matrix(1, 0, 0, 1, 0, 0)",
+        "opacity": 1
+      },
+      {
+        "id": "alex",
+        "letter": "matrix(1, 0, 0, 1, 0, 0)",
+        "opacity": 1
+      },
+      {
+        "id": "sam",
+        "letter": "matrix(1, 0, 0, 1, 0, 0)",
+        "opacity": 1
+      },
+      {
+        "id": "lena",
+        "letter": "matrix(1, 0, 0, 1, 0, 119)",
+        "opacity": 0
+      }
+    ],
+    "offset": 0.253696,
+    "text": 0,
+    "time": 2200
+  },
+  {
+    "check": 0,
+    "checkStroke": 1,
+    "envelopes": [
+      {
+        "id": "template",
+        "letter": "matrix(1, 0, 0, 1, 0, 0)",
+        "opacity": 1
+      },
+      {
+        "id": "alex",
+        "letter": "matrix(1, 0, 0, 1, 0, 0)",
+        "opacity": 1
+      },
+      {
+        "id": "sam",
+        "letter": "matrix(1, 0, 0, 1, 0, 0)",
+        "opacity": 1
+      },
+      {
+        "id": "lena",
+        "letter": "matrix(1, 0, 0, 1, 0, -2.25201)",
+        "opacity": 1
+      }
+    ],
+    "offset": 0.0935294,
+    "text": 0,
+    "time": 2500
+  },
+  {
+    "check": 0,
+    "checkStroke": 1,
+    "envelopes": [
+      {
+        "id": "template",
+        "letter": "matrix(1, 0, 0, 1, 0, 0)",
+        "opacity": 1
+      },
+      {
+        "id": "alex",
+        "letter": "matrix(1, 0, 0, 1, 0, 0)",
+        "opacity": 1
+      },
+      {
+        "id": "sam",
+        "letter": "matrix(1, 0, 0, 1, 0, 0)",
+        "opacity": 1
+      },
+      {
+        "id": "lena",
+        "letter": "matrix(1, 0, 0, 1, 0, 0)",
+        "opacity": 1
+      }
+    ],
+    "offset": 0.0137876,
+    "text": 0,
+    "time": 2800
+  },
+  {
+    "check": 0.311838,
+    "checkStroke": 1,
+    "envelopes": [
+      {
+        "id": "template",
+        "letter": "matrix(1, 0, 0, 1, 0, 0)",
+        "opacity": 1
+      },
+      {
+        "id": "alex",
+        "letter": "matrix(1, 0, 0, 1, 0, 0)",
+        "opacity": 1
+      },
+      {
+        "id": "sam",
+        "letter": "matrix(1, 0, 0, 1, 0, 0)",
+        "opacity": 1
+      },
+      {
+        "id": "lena",
+        "letter": "matrix(1, 0, 0, 1, 0, 0)",
+        "opacity": 1
+      }
+    ],
+    "offset": 0,
+    "text": 0,
+    "time": 3050
+  },
+  {
+    "check": 1,
+    "checkStroke": 0.00597685,
+    "envelopes": [
+      {
+        "id": "template",
+        "letter": "matrix(1, 0, 0, 1, 0, 0)",
+        "opacity": 1
+      },
+      {
+        "id": "alex",
+        "letter": "matrix(1, 0, 0, 1, 0, 0)",
+        "opacity": 1
+      },
+      {
+        "id": "sam",
+        "letter": "matrix(1, 0, 0, 1, 0, 0)",
+        "opacity": 1
+      },
+      {
+        "id": "lena",
+        "letter": "matrix(1, 0, 0, 1, 0, 0)",
+        "opacity": 1
+      }
+    ],
+    "offset": 0,
+    "text": 0.244134,
+    "time": 3250
+  },
+  {
+    "check": 1,
+    "checkStroke": 0,
+    "envelopes": [
+      {
+        "id": "template",
+        "letter": "matrix(1, 0, 0, 1, 0, 0)",
+        "opacity": 1
+      },
+      {
+        "id": "alex",
+        "letter": "matrix(1, 0, 0, 1, 0, 0)",
+        "opacity": 1
+      },
+      {
+        "id": "sam",
+        "letter": "matrix(1, 0, 0, 1, 0, 0)",
+        "opacity": 1
+      },
+      {
+        "id": "lena",
+        "letter": "matrix(1, 0, 0, 1, 0, 0)",
+        "opacity": 1
+      }
+    ],
+    "offset": 0,
+    "text": 1,
+    "time": 3500
+  }
+]

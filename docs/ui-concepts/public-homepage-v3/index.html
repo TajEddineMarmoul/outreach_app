@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Outreach homepage concept · Revision 3</title>
+<style>
+:root{color-scheme:light;--ink:#0b174b;--blue:#0754ff;--line:#d6e3f4}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:100px}
+body{margin:0;background:#fff;color:var(--ink);font:14px/1.5 Arial,sans-serif}
+a{color:inherit;text-decoration:none}
+a:focus-visible,button:focus-visible{outline:3px solid #0754ff;outline-offset:4px}
+.review-bar{position:sticky;top:0;z-index:10;display:flex;justify-content:space-between;gap:16px;align-items:center;padding:10px 24px;background:#fff;border-bottom:1px solid var(--line)}
+.review-label{display:flex;align-items:center;gap:10px;white-space:nowrap;font-size:13px}
+.review-label strong{letter-spacing:.05em;font-size:12px}
+.review-label span{color:#53617c}
+nav{display:flex;gap:4px;flex-wrap:wrap}
+nav a{display:inline-flex;align-items:center;padding:10px 14px;min-height:44px;border-radius:5px;font-size:13px}
+nav a:hover{background:#f5f8ff;color:var(--blue)}
+.review-note{margin:0;padding:8px 24px;text-align:center;font-size:12px;color:#53617c;background:#f5f8ff;border-bottom:1px solid var(--line)}
+main{max-width:1672px;margin:auto}
+figure{margin:0;scroll-margin-top:90px}
+figure img{display:block;width:100%;height:auto;background:white}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.review-end{padding:24px;text-align:center;border-top:1px solid var(--line);color:#53617c}
+.review-end a{color:var(--blue);text-decoration:underline;display:inline-flex;align-items:center;min-height:44px;padding:0 8px}
+@media(max-width:760px){.review-bar{position:relative;align-items:flex-start;flex-direction:column;padding:10px 14px;gap:4px}nav{width:100%;gap:0}nav a{padding:8px 12px;font-size:12px}.review-note{padding:8px 14px}.review-label span{white-space:normal}html{scroll-padding-top:12px}figure{scroll-margin-top:12px}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+@media print{.review-bar,.review-note,.review-end{display:none}figure{break-inside:avoid}}
+</style>
+</head>
+<body>
+<header class="review-bar">
+<div class="review-label"><strong>HOMEPAGE CONCEPT</strong><span>Revision 3</span></div>
+<nav aria-label="Jump to a concept section">
+<a href="#hero">Hero</a><a href="#personalization">Personalization</a><a href="#scheduling">Sending &amp; control</a><a href="#faq">FAQ &amp; start</a>
+</nav>
+</header>
+<p class="review-note">Static desktop design preview. Buttons and profiles inside the artwork are illustrative. Hero and FAQ are unchanged.</p>
+<main id="concept">
+<figure id="hero" aria-labelledby="hero-caption">
+<img src="../public-homepage-v1/01-approved-hero.png" width="1672" height="941" alt="Approved Outreach hero. Write one email. Make it personal for everyone. A sample email becomes individual messages, with a Get started action.">
+<figcaption id="hero-caption" class="sr-only">Approved hero, unchanged.</figcaption>
+</figure>
+<figure id="personalization" aria-labelledby="personalization-caption">
+<img src="02-personalization.png" width="1672" height="941" alt="Skip the copy, paste, repeat. Write your message once. Outreach adds each person's details from your list. A Get started action is followed by preview reassurance and reusable templates. Three illustrative profiles show Sam selected; Sam's email highlights his name and company, Brightside. No email is sent.">
+<figcaption id="personalization-caption" class="sr-only">Revised personalization section with fictional profile photos and a clear next step.</figcaption>
+</figure>
+<figure id="scheduling" aria-labelledby="scheduling-caption">
+<img src="03-scheduling-and-control.png" width="1586" height="992" alt="Set the time. Get on with your day. A paper calendar illustrates Monday through Friday, 9 AM to 4 PM UTC. Outreach sends on your schedule after you launch. Send now, schedule for later, or use Autopilot. Nothing sends until you say so. Send from Gmail, review before launch, and pause future sends.">
+<figcaption id="scheduling-caption" class="sr-only">Revised scheduling and control section.</figcaption>
+</figure>
+<figure id="faq" aria-labelledby="faq-caption">
+<img src="../public-homepage-v1/04-faq-and-get-started.png" width="1448" height="1086" alt="Approved FAQ and closing invitation. Before you get started: no email sends before launch. Questions cover supported email accounts, custom spreadsheet columns, reusable messages, audiences, and pausing. Your next email starts here. Get started.">
+<figcaption id="faq-caption" class="sr-only">Approved FAQ and final invitation, unchanged.</figcaption>
+</figure>
+</main>
+<footer class="review-end">
+<p>Concept review only. This page does not submit signups or send email.</p>
+<a href="02-personalization.png">Open personalization image</a>
+<a href="03-scheduling-and-control.png">Open scheduling image</a>
+<a href="README.md">Design notes</a>
+<a href="#hero">Back to top</a>
+</footer>
+</body>
+</html>
+

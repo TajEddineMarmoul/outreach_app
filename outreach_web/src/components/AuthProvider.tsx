@@ -16,19 +16,25 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
     if (!timezone) return;
 
     const syncTimezone = async () => {
-      const response = await fetch(toBackendProxyUrl(`${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"}/api/settings/timezone`), {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ timezone, only_if_unset: true }),
-      });
-      if (!response.ok) {
-        throw new Error(`Timezone sync failed with status ${response.status}`);
+      try {
+        const response = await fetch(toBackendProxyUrl(`${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"}/api/settings/timezone`), {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ timezone, only_if_unset: true }),
+        });
+        if (!response.ok && process.env.NODE_ENV === "development") {
+          console.warn(`[Timezone] Background sync skipped (status ${response.status}).`);
+        }
+      } catch {
+        if (process.env.NODE_ENV === "development") {
+          console.warn("[Timezone] Background sync skipped because the backend is unavailable.");
+        }
       }
     };
 
-    void syncTimezone().catch((error) => console.error("[Timezone]", error));
+    void syncTimezone();
   }, [isSignedIn, isPublicHome]);
 
   const fetcher = useCallback(async (url: string) => {

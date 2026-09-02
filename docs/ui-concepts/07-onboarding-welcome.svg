@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1366" height="768" viewBox="0 0 1366 768">
+  <rect width="1366" height="768" fill="#f5f7fb"/>
+  <rect x="24" y="24" width="1318" height="720" rx="10" fill="#fff" stroke="#dce2ec"/>
+  <path d="M24 82h1318" stroke="#dce2ec"/>
+  <text x="52" y="61" fill="#0751f8" font-family="Arial,sans-serif" font-size="21" font-weight="700">OUTREACH</text>
+  <rect x="183" y="39" width="94" height="34" rx="5" fill="#fff" stroke="#dce2ec"/>
+  <text x="201" y="61" fill="#101a34" font-family="Arial,sans-serif" font-size="14">☰  Menu</text>
+  <circle cx="1300" cy="56" r="16" fill="#d6e5ff"/>
+  <text x="153" y="132" fill="#0751f8" font-family="Arial,sans-serif" font-size="13" font-weight="700">WELCOME TO OUTREACH</text>
+  <text x="153" y="174" fill="#101a34" font-family="Arial,sans-serif" font-size="32" font-weight="700">Start your first campaign</text>
+  <text x="153" y="208" fill="#506184" font-family="Arial,sans-serif" font-size="16">A campaign is a planned set of personalized emails for a specific audience.</text>
+  <text x="153" y="233" fill="#506184" font-family="Arial,sans-serif" font-size="16">We’ll guide you through the three steps, and nothing sends until you review it.</text>
+  <g transform="translate(153 282)">
+    <rect width="300" height="166" rx="8" fill="#fff" stroke="#dce2ec"/>
+    <circle cx="29" cy="31" r="14" fill="#e7efff"/><text x="25" y="36" fill="#0751f8" font-family="Arial" font-size="14" font-weight="700">1</text>
+    <text x="20" y="76" fill="#101a34" font-family="Arial" font-size="15" font-weight="700">Choose contacts</text><text x="20" y="103" fill="#60708e" font-family="Arial" font-size="13">Import a list or paste contacts.</text>
+  </g>
+  <g transform="translate(473 282)">
+    <rect width="300" height="166" rx="8" fill="#fff" stroke="#dce2ec"/>
+    <circle cx="29" cy="31" r="14" fill="#e7efff"/><text x="25" y="36" fill="#0751f8" font-family="Arial" font-size="14" font-weight="700">2</text>
+    <text x="20" y="76" fill="#101a34" font-family="Arial" font-size="15" font-weight="700">Write a message</text><text x="20" y="103" fill="#60708e" font-family="Arial" font-size="13">Personalize it when you’re ready.</text>
+  </g>
+  <g transform="translate(793 282)">
+    <rect width="300" height="166" rx="8" fill="#fff" stroke="#dce2ec"/>
+    <circle cx="29" cy="31" r="14" fill="#e7efff"/><text x="25" y="36" fill="#0751f8" font-family="Arial" font-size="14" font-weight="700">3</text>
+    <text x="20" y="76" fill="#101a34" font-family="Arial" font-size="15" font-weight="700">Review and send</text><text x="20" y="103" fill="#60708e" font-family="Arial" font-size="13">Check everything before launch.</text>
+  </g>
+  <rect x="153" y="488" width="180" height="44" rx="5" fill="#0751f8"/><text x="174" y="516" fill="#fff" font-family="Arial" font-size="14" font-weight="700">Create a campaign →</text>
+  <text x="353" y="516" fill="#0751f8" font-family="Arial" font-size="14" font-weight="700">Explore a sample campaign</text>
+  <text x="153" y="570" fill="#60708e" font-family="Arial" font-size="13">You can change this later · </text><text x="320" y="570" fill="#0751f8" font-family="Arial" font-size="13">Show me around</text>
+</svg>

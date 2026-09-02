@@ -1,0 +1,164 @@
+OUTREACH PUBLIC HOMEPAGE CONCEPTS
+
+Purpose: proposed sections after the approved hero, for the public homepage at /.
+Status: visual mockups only. No application code has been changed.
+Generation mode: built-in imagegen.
+The approved hero was copied unchanged as 01-approved-hero.png.
+The other panels are illustrative proposed UI, not screenshots of the running application.
+
+SCROLL ORDER
+1. Approved fruit-personalization hero.
+2. How it works: a contact list supplies the fields used in a message, with a per-person preview.
+3. Scheduling and control: Gmail senders, sending days and times, campaign timezone, daily limits, review and pause.
+4. FAQ and a final Get started action.
+
+FUTURE BUILD NOTES
+Selecting a name in the homepage example should highlight its contact row and change the email preview without sending anything.
+Keep the existing fruit sample consistent across the hero and walkthrough.
+User-facing name/fruit chips are conceptual; the existing template engine uses double-brace variables internally.
+Scheduled sending and Autopilot begin only after the user launches. Pause is for future sends, not a recall of emails already sent.
+The example daily limit of 50 is illustrative, not a product plan allowance.
+Current sending support is Gmail. Public Google Sheets can be imported; restricted sheets need pasted rows or a CSV export.
+Message templates can be saved and reused.
+Do not add claims about opens, replies, guaranteed inbox placement, customer counts, or conversion gains.
+Confirm pricing/access terms and real privacy/support destinations before publication; none were invented in these concepts.
+Preserve visible focus, keyboard access, responsive layouts and a reduced-motion alternative when implementing.
+
+02-HOW-IT-WORKS.PNG
+Use case: ui-mockup. Create one polished desktop WEBSITE SECTION screenshot, not a slide or moodboard. Image 1 is a STYLE REFERENCE ONLY: the already-approved Outreach homepage hero. Do not reproduce the hero or its navigation. This new section belongs farther down the SAME public homepage. Match the airy white background, navy #0B174B, electric cobalt #0754FF, pale blue #F5F8FF, fine borders #D6E3F4, green #00B985 only for meaningful status, the same clean bold sans-serif headlines and readable sans-serif body text. Keep broad margins, large legible type, calm spacing, subtle shadows. The only playful imagery is the existing fruit sample. No stock people, corporate audience labels, decorative blobs, gradients across the page, fabricated testimonials, pricing, usage statistics, revenue claims, or AI claims. No em dashes or slash separators in prose. App panels are illustrative proposed UI, not claimed existing screenshots.
+Asset: the FIRST section visitors see when they scroll past the approved hero. Wide desktop canvas, approximately 1536 by 1024, with ONLY this section filling it.
+
+Main heading near the top: "The details come from your list."
+Use navy text with "your list" cobalt.
+Subheading: "Add your contacts, write one message, and preview the result."
+
+Below the heading, build one generous visual walkthrough using three adjacent stages across the page. This is a purposeful process, not three generic feature cards. Use small blue numbered circles 1, 2, 3 next to the stage headings. The contact table on the left gets more width than the center message, and the preview on the right is comfortably readable. A single thin blue line visually threads behind the three panels, without arrowheads, echoing the approved hero. Do not use any open-envelope graphics here: show simple recognizable product UI, to explain how the hero effect actually happens.
+
+LEFT stage heading: "Add your contacts"
+Small import method options: "CSV" "Paste rows" "Google Sheets".
+A clean spreadsheet-like table with EXACTLY three columns: "Email", "Name", "Fruit".
+EXACT rows:
+alex@example.com | Alex | apples 🍎
+sam@example.com | Sam | bananas 🍌
+lena@example.com | Lena | strawberries 🍓
+Highlight the entire SAM row with pale blue. Keep all table words legible and correctly aligned. Email column is wide enough for the addresses.
+Caption under this stage, in two short lines: "Use a CSV, pasted rows," / "or a public Google Sheet."
+
+CENTER stage heading: "Write your message"
+A clean compact message editor panel showing:
+"Hi [Name],"
+"I like [Fruit]."
+Render [Name] and [Fruit] as pale-blue highlighted field tokens. Small control beneath: "Insert field".
+Caption under this stage: "Your columns become" / "personal details."
+
+RIGHT stage heading: "Preview the result"
+Three compact selectable name tabs "Alex" "Sam" "Lena", with SAM visibly selected in cobalt.
+A light email preview panel shows small address "To: sam@example.com", then generously spaced body:
+"Hi Sam,"
+"I like bananas 🍌"
+Highlight Sam and bananas with pale-blue highlights. This MUST match the selected SAM table row, not Alex. No company language.
+Caption under this stage: "Check each email" / "before sending."
+
+Place a quiet instruction below this demonstration: "Choose a name to see the message change."
+Then one smaller secondary note: "Example only. No email is sent."
+Give the demonstration plenty of space, with large typography and no overlapping content. No hero text, Get started button, FAQ, schedule section, top navigation or footer in this image. No invented app features beyond contact fields and preview.
+
+03-SCHEDULING-AND-CONTROL.PNG
+Use case: ui-mockup. Create one polished desktop WEBSITE SECTION screenshot, not a slide or moodboard. Image 1 is a STYLE REFERENCE ONLY: the already-approved Outreach homepage hero. Do not reproduce the hero or its navigation. This new section belongs farther down the SAME public homepage. Match the airy white background, navy #0B174B, electric cobalt #0754FF, pale blue #F5F8FF, fine borders #D6E3F4, green #00B985 only for meaningful status, the same clean bold sans-serif headlines and readable sans-serif body text. Keep broad margins, large legible type, calm spacing, subtle shadows. The only playful imagery is the existing fruit sample. No stock people, corporate audience labels, decorative blobs, gradients across the page, fabricated testimonials, pricing, usage statistics, revenue claims, or AI claims. No em dashes or slash separators in prose. App panels are illustrative proposed UI, not claimed existing screenshots.
+Asset: the NEXT scroll region on the Outreach homepage after the list-and-message demonstration. Create a generous desktop crop around 1536 by 1152. Show TWO connected sections: scheduling above, control below. These are proposed marketing illustrations of verified product features. No navigation, hero, testimonials, pricing or footer.
+
+UPPER section, roughly top 60%: white to extremely pale-blue background, spacious two-column layout.
+LEFT:
+Large navy heading with final phrase cobalt:
+"Send when"
+"it suits you."
+Body copy, readable and concise:
+"Send now, schedule for later, or let Autopilot follow your chosen days and times."
+Below, two quiet checklist lines with small simple outline icons:
+"Choose your timezone"
+"Set daily sending limits"
+No CTA here.
+
+RIGHT:
+One beautifully clean floating schedule settings panel, light surface, fine blue border, subtle dimensional shadow matching the approved envelope style without becoming a cartoon.
+Top label: "Example schedule"
+Mode tabs: "Send now" "Schedule" "Autopilot", with Autopilot selected in blue.
+Label: "Sending days"
+Weekday toggles: Mon Tue Wed Thu Fri Sat Sun. Mon through Fri blue selected. Sat and Sun white unselected.
+Label: "Sending window"
+Two time fields: "9:00 AM" and "4:00 PM", with plain word "to" between them.
+Lower two settings:
+"Timezone" / "UTC"
+"Daily limit" / "50"
+Bottom secondary note: "These are example settings."
+The number 50 is a user-selected example value, not a plan allowance. No send-start action or fake claim about delivery outcomes.
+
+LOWER section, roughly bottom 40%, white background and lots of breathing room.
+Left-aligned navy heading: "You stay in control."
+Below it, THREE OPEN FEATURE COLUMNS with useful mini-UI illustrations, not chunky generic feature cards. Align them consistently; use small labels and quiet dividers only.
+
+COLUMN 1 heading: "Send from your Gmail"
+Mini sender control showing a simple outlined envelope, "Your Gmail account", and a subtle green "Connected" status.
+Caption: "Choose the account your emails come from."
+
+COLUMN 2 heading: "Review before launch"
+Mini review checklist with readable items "Contacts" "Message" "Sender" "Schedule" and small check icons.
+Caption: "Nothing sends until you launch."
+
+COLUMN 3 heading: "Follow every send"
+Mini progress list:
+"Alex" "Sent"
+"Sam" "Sent"
+"Lena" "Pending"
+Small neutral outlined control: "Pause sending"
+Caption: "See progress and pause future sends."
+Small shared label above these mini controls: "Illustrative examples"
+These sample rows illustrate existing statuses, not testimonial or performance metrics. Do not add open rates, reply rates, inbox guarantees, or analytics charts.
+
+Maintain the approved white-and-cobalt visual identity, consistent font scale, easy scanning and legible UI text. Keep the typography and spacing polished, without adding unrelated ornaments or repeating the fruit emails.
+
+04-FAQ-AND-GET-STARTED.PNG
+Use case: ui-mockup. Create one polished desktop WEBSITE SECTION screenshot, not a slide or moodboard. Image 1 is a STYLE REFERENCE ONLY: the already-approved Outreach homepage hero. Do not reproduce the hero or its navigation. This new section belongs farther down the SAME public homepage. Match the airy white background, navy #0B174B, electric cobalt #0754FF, pale blue #F5F8FF, fine borders #D6E3F4, green #00B985 only for meaningful status, the same clean bold sans-serif headlines and readable sans-serif body text. Keep broad margins, large legible type, calm spacing, subtle shadows. The only playful imagery is the existing fruit sample. No stock people, corporate audience labels, decorative blobs, gradients across the page, fabricated testimonials, pricing, usage statistics, revenue claims, or AI claims. No em dashes or slash separators in prose. App panels are illustrative proposed UI, not claimed existing screenshots.
+Asset: the FINAL scroll region of the same Outreach homepage, following the product walkthrough and scheduling sections. Create a polished desktop crop around 1536 by 1152. It contains a compact FAQ, a final invitation to start, and a minimal footer. Use the same reference palette and typography. This is a continuous website region, not a presentation.
+
+TOP HALF: FAQ on white background in an airy two-column layout.
+LEFT, around one-third width:
+Large navy heading in two lines:
+"Before you"
+"get started"
+A small restrained blue question-mark outline icon may sit above the heading, but no giant decorative graphic.
+Secondary text: "A few things worth knowing."
+
+RIGHT, around two-thirds width:
+Six vertically stacked FAQ rows with subtle pale-blue horizontal separators and small outline chevrons. First row expanded, all others collapsed.
+FIRST QUESTION exactly:
+"Will anything send before I launch?"
+Expanded answer exactly:
+"No. Importing contacts and writing a message do not send email. Sending starts only after you launch."
+The expanded answer is smaller than the question but fully readable with generous line spacing.
+
+Remaining five questions, collapsed, exactly:
+"Which email accounts are supported?"
+"Can I use my own spreadsheet columns?"
+"Can I save and reuse a message?"
+"Is Outreach only for businesses?"
+"Can I pause sending?"
+
+LOWER HALF: a calm final CTA region separated by broad whitespace and a very subtle pale-blue wash, not a dark block. Centered and uncluttered.
+Large heading:
+"Your next email starts here."
+Use navy with "starts here" in cobalt.
+Supporting sentence:
+"Add your contacts and write your first message."
+One prominent cobalt rectangular button with comfortably rounded corners:
+"Get started"
+A small simple blue paper-plane illustration, identical in character to the reference brand, may sit off to one side of this region. Do not add a second row of envelopes or another workflow diagram.
+No pricing, free-trial promises, no-credit-card claims, countdown, sales pitches, testimonials or statistics.
+
+At the very bottom, one thin divider and a restrained footer:
+Left: blue paper-plane OUTREACH wordmark matching the reference.
+Right text links: "Sign in" and "Back to top".
+No invented support address, social accounts, legal-policy text, or nonexistent integration logos.
+
+Ensure complete clean typography, intentional spacing, legible FAQ rows, and no clipping. The questions and CTA must be large enough to comfortably read. No em dashes or slash separators in copy. Do not reproduce the reference hero or any scheduling widgets.
+

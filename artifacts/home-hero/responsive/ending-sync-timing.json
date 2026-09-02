@@ -1,0 +1,92 @@
+[
+  {
+    "target": 0,
+    "actual": 207,
+    "check": 0,
+    "lena": 0,
+    "offset": 1,
+    "stroke": 1,
+    "text": 0
+  },
+  {
+    "target": 2400,
+    "actual": 2596,
+    "check": 0,
+    "lena": 0,
+    "offset": 0.426116,
+    "stroke": 1,
+    "text": 0
+  },
+  {
+    "target": 2550,
+    "actual": 2813,
+    "check": 0,
+    "lena": 0.569868,
+    "offset": 0.311202,
+    "stroke": 1,
+    "text": 0
+  },
+  {
+    "target": 2750,
+    "actual": 3016,
+    "check": 0,
+    "lena": 1,
+    "offset": 0.215791,
+    "stroke": 1,
+    "text": 0
+  },
+  {
+    "target": 3100,
+    "actual": 3312,
+    "check": 0,
+    "lena": 1,
+    "offset": 0.101579,
+    "stroke": 1,
+    "text": 0
+  },
+  {
+    "target": 3300,
+    "actual": 3531,
+    "check": 0.0340338,
+    "lena": 1,
+    "offset": 0.044812,
+    "stroke": 1,
+    "text": 0
+  },
+  {
+    "target": 3450,
+    "actual": 3746,
+    "check": 1,
+    "lena": 1,
+    "offset": 0.0110515,
+    "stroke": 0.0556987,
+    "text": 0.0891141
+  },
+  {
+    "target": 3600,
+    "actual": 3920,
+    "check": 1,
+    "lena": 1,
+    "offset": 0.000256367,
+    "stroke": 0,
+    "text": 0.768589
+  },
+  {
+    "target": 3750,
+    "actual": 4147,
+    "check": 1,
+    "lena": 1,
+    "offset": 0,
+    "stroke": 0,
+    "text": 1
+  },
+  {
+    "target": 3900,
+    "actual": 4364,
+    "check": 1,
+    "lena": 1,
+    "offset": 0,
+    "stroke": 0,
+    "text": 1
+  }
+]

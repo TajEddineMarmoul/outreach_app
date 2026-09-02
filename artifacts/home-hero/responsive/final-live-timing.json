@@ -1,0 +1,158 @@
+[
+  {
+    "target": 0,
+    "actual": 187,
+    "check": 0,
+    "offset": 1,
+    "opacity": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "text": 0
+  },
+  {
+    "target": 700,
+    "actual": 892,
+    "check": 0,
+    "offset": 1,
+    "opacity": [
+      1,
+      0,
+      0,
+      0
+    ],
+    "text": 0
+  },
+  {
+    "target": 1400,
+    "actual": 1578,
+    "check": 0,
+    "offset": 0.903525,
+    "opacity": [
+      1,
+      0,
+      0,
+      0
+    ],
+    "text": 0
+  },
+  {
+    "target": 1800,
+    "actual": 1969,
+    "check": 0,
+    "offset": 0.745949,
+    "opacity": [
+      1,
+      1,
+      0,
+      0
+    ],
+    "text": 0
+  },
+  {
+    "target": 2100,
+    "actual": 2253,
+    "check": 0,
+    "offset": 0.591951,
+    "opacity": [
+      1,
+      1,
+      1,
+      0
+    ],
+    "text": 0
+  },
+  {
+    "target": 2450,
+    "actual": 2622,
+    "check": 0,
+    "offset": 0.398907,
+    "opacity": [
+      1,
+      1,
+      1,
+      0
+    ],
+    "text": 0
+  },
+  {
+    "target": 2800,
+    "actual": 2978,
+    "check": 0,
+    "offset": 0.223152,
+    "opacity": [
+      1,
+      1,
+      1,
+      0
+    ],
+    "text": 0
+  },
+  {
+    "target": 3150,
+    "actual": 3358,
+    "check": 0,
+    "offset": 0.0864784,
+    "opacity": [
+      1,
+      1,
+      1,
+      1
+    ],
+    "text": 0
+  },
+  {
+    "target": 3500,
+    "actual": 3664,
+    "check": 0,
+    "offset": 0.0168051,
+    "opacity": [
+      1,
+      1,
+      1,
+      1
+    ],
+    "text": 0
+  },
+  {
+    "target": 3800,
+    "actual": 3968,
+    "check": 1,
+    "offset": 0,
+    "opacity": [
+      1,
+      1,
+      1,
+      1
+    ],
+    "text": 0
+  },
+  {
+    "target": 4100,
+    "actual": 4306,
+    "check": 1,
+    "offset": 0,
+    "opacity": [
+      1,
+      1,
+      1,
+      1
+    ],
+    "text": 0.768426
+  },
+  {
+    "target": 4400,
+    "actual": 4581,
+    "check": 1,
+    "offset": 0,
+    "opacity": [
+      1,
+      1,
+      1,
+      1
+    ],
+    "text": 1
+  }
+]

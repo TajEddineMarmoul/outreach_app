@@ -1,0 +1,389 @@
+.line-lab {
+  --lab-blue: #075cff;
+  --lab-ink: #071247;
+  min-height: 100dvh;
+  width: 100%;
+  padding: 36px clamp(18px, 4vw, 64px) 56px;
+  color: var(--lab-ink);
+  font-family: var(--font-geist-sans), Arial, sans-serif;
+  background:
+    radial-gradient(circle at 78% 10%, #dce9ff 0, transparent 29%),
+    linear-gradient(145deg, #f8fbff 0%, #ffffff 46%, #f3f7ff 100%);
+}
+
+.line-lab__header {
+  width: min(1400px, 100%);
+  margin: 0 auto 28px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.line-lab__eyebrow {
+  margin: 0 0 7px;
+  color: var(--lab-blue);
+  font-size: 13px;
+  font-weight: 750;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+}
+
+.line-lab__header h1 {
+  margin: 0;
+  font-size: clamp(34px, 4.2vw, 62px);
+  line-height: .98;
+  letter-spacing: -.055em;
+}
+
+.line-lab__header p:not(.line-lab__eyebrow) {
+  max-width: 650px;
+  margin: 15px 0 0;
+  color: #4a5474;
+  font-size: 16px;
+  line-height: 1.55;
+}
+
+.line-lab__home-link {
+  min-height: 44px;
+  padding: 11px 17px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #c8d7f5;
+  border-radius: 999px;
+  color: #17316f;
+  background: #ffffffc9;
+  font-size: 14px;
+  font-weight: 650;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: border-color 180ms ease-in-out, color 180ms ease-in-out, transform 180ms ease-in-out;
+}
+
+.line-lab__home-link:hover {
+  border-color: #80aaff;
+  color: var(--lab-blue);
+  transform: translateY(-1px);
+}
+
+.line-lab__workspace {
+  width: min(1400px, 100%);
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+  align-items: start;
+  gap: 22px;
+}
+
+.line-lab__controls {
+  display: grid;
+  gap: 16px;
+}
+
+.line-lab__control-card,
+.line-lab__canvas-card {
+  border: 1px solid #dce5f7;
+  border-radius: 22px;
+  background: #ffffffed;
+  box-shadow: 0 18px 50px #234b9212;
+}
+
+.line-lab__control-card {
+  padding: 20px;
+}
+
+.line-lab__control-heading,
+.line-lab__section-heading,
+.line-lab__canvas-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.line-lab__control-heading span,
+.line-lab__section-heading span,
+.line-lab__canvas-heading span {
+  display: block;
+  font-size: 15px;
+  font-weight: 750;
+}
+
+.line-lab__control-heading small,
+.line-lab__section-heading small,
+.line-lab__canvas-heading small {
+  display: block;
+  margin-top: 3px;
+  color: #71809f;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.line-lab__control-heading output {
+  color: var(--lab-blue);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 24px;
+  font-weight: 750;
+  letter-spacing: -.04em;
+}
+
+.line-lab__range,
+.line-lab__trigger-control > input[type="range"] {
+  accent-color: var(--lab-blue);
+  cursor: pointer;
+}
+
+.line-lab__range {
+  width: 100%;
+  margin: 24px 0 16px;
+}
+
+.line-lab__presets {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+}
+
+.line-lab__presets button {
+  min-height: 36px;
+  border: 1px solid #d9e2f4;
+  border-radius: 9px;
+  color: #53607d;
+  background: #f8faff;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: color 160ms ease-in-out, border-color 160ms ease-in-out, background 160ms ease-in-out;
+}
+
+.line-lab__presets button:hover,
+.line-lab__presets button.is-active {
+  border-color: #8db2ff;
+  color: #004be0;
+  background: #eaf1ff;
+}
+
+.line-lab__coordinates {
+  margin: 17px 0 0;
+  padding-top: 15px;
+  display: flex;
+  gap: 10px;
+  border-top: 1px solid #edf1f9;
+  color: #71809f;
+  font-size: 12px;
+}
+
+.line-lab__coordinates span {
+  color: #26365f;
+  font-family: var(--font-geist-mono), monospace;
+}
+
+.line-lab__trigger-list {
+  margin-top: 18px;
+  display: grid;
+  gap: 15px;
+}
+
+.line-lab__trigger-control {
+  display: grid;
+  grid-template-columns: 68px minmax(72px, 1fr) 70px;
+  align-items: center;
+  gap: 10px;
+}
+
+.line-lab__trigger-control label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.line-lab__trigger-control label i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 8%, transparent);
+}
+
+.line-lab__number-wrap {
+  height: 36px;
+  display: flex;
+  align-items: center;
+  border: 1px solid #d9e2f4;
+  border-radius: 9px;
+  background: #fbfcff;
+  overflow: hidden;
+}
+
+.line-lab__number-wrap input {
+  min-width: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0 2px 0 9px;
+  border: 0;
+  outline: 0;
+  color: #1c2e5c;
+  background: transparent;
+  font: 650 13px var(--font-geist-mono), monospace;
+}
+
+.line-lab__number-wrap span {
+  padding-right: 9px;
+  color: #75819b;
+  font-size: 12px;
+}
+
+.line-lab__note {
+  margin: 2px 5px 0;
+  color: #697795;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.line-lab__note code {
+  color: #164abb;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 11px;
+}
+
+.line-lab__canvas-card {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.line-lab__canvas-heading {
+  padding: 18px 22px;
+  border-bottom: 1px solid #e7edf8;
+}
+
+.line-lab__canvas-heading strong {
+  color: var(--lab-blue);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 18px;
+}
+
+.line-lab__canvas {
+  min-height: 560px;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background-image:
+    linear-gradient(#d7e1f24d 1px, transparent 1px),
+    linear-gradient(90deg, #d7e1f24d 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+.line-lab__canvas svg {
+  display: block;
+  width: 100%;
+  max-height: 650px;
+  overflow: visible;
+}
+
+.line-lab__route-guide,
+.line-lab__route-progress {
+  fill: none;
+  stroke-width: 5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.line-lab__route-guide { stroke: #d9e4fa; }
+.line-lab__route-progress { stroke: var(--lab-blue); }
+
+.line-lab__trigger-guide {
+  fill: #fff;
+  stroke: var(--trigger-color);
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.line-lab__trigger-percentage {
+  fill: #60708f;
+  font-size: 13px;
+  font-weight: 700;
+  paint-order: stroke;
+  stroke: #fff;
+  stroke-width: 5px;
+  stroke-linejoin: round;
+}
+
+.line-lab__popup {
+  opacity: 0;
+  transform: translateY(8px) scale(.72);
+  transform-box: fill-box;
+  transform-origin: center bottom;
+  transition: opacity 180ms ease-in-out, transform 180ms ease-in-out;
+}
+
+.line-lab__popup.is-visible {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.line-lab__popup rect,
+.line-lab__popup path {
+  fill: #fff;
+  stroke: var(--trigger-color);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.line-lab__popup circle { fill: var(--trigger-color); }
+
+.line-lab__popup text {
+  fill: #101c46;
+  font-size: 16px;
+  font-weight: 750;
+}
+
+.line-lab__tip { pointer-events: none; }
+
+.line-lab__tip-halo {
+  fill: #075cff22;
+  stroke: #075cff55;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.line-lab__tip-dot {
+  fill: var(--lab-blue);
+  stroke: #fff;
+  stroke-width: 4;
+  vector-effect: non-scaling-stroke;
+  filter: url(#line-lab-tip-shadow);
+}
+
+.line-lab__tip text {
+  fill: #0049dd;
+  font-size: 14px;
+  font-weight: 800;
+  paint-order: stroke;
+  stroke: #fff;
+  stroke-width: 6px;
+  stroke-linejoin: round;
+}
+
+@media (max-width: 980px) {
+  .line-lab__workspace { grid-template-columns: 1fr; }
+  .line-lab__controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .line-lab__note { grid-column: 1 / -1; }
+}
+
+@media (max-width: 650px) {
+  .line-lab { padding: 24px 14px 40px; }
+  .line-lab__header { align-items: flex-start; flex-direction: column; }
+  .line-lab__controls { grid-template-columns: 1fr; }
+  .line-lab__note { grid-column: auto; }
+  .line-lab__canvas { min-height: 420px; padding: 18px 8px; }
+  .line-lab__trigger-control { grid-template-columns: 64px minmax(60px, 1fr) 66px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .line-lab__home-link,
+  .line-lab__presets button,
+  .line-lab__popup { transition: none; }
+}

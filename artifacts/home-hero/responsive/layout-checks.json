@@ -1,0 +1,1502 @@
+[
+  {
+    "captionOverlapsCopy": false,
+    "clipped": [],
+    "nodes": [
+      {
+        "class": "product-header",
+        "h": 107.5250015258789,
+        "w": 1672,
+        "x": 80.4000015258789,
+        "y": 0
+      },
+      {
+        "class": "product-intro",
+        "h": 448.5,
+        "w": 585.2000122070312,
+        "x": 158.1374969482422,
+        "y": 292.5
+      },
+      {
+        "class": "product-hero-cta",
+        "h": 70.05000305175781,
+        "w": 272.5249938964844,
+        "x": 158.1374969482422,
+        "y": 670.9500122070312
+      },
+      {
+        "class": "story-template-label",
+        "h": 31.075000762939453,
+        "w": 331.2250061035156,
+        "x": 1071.7750244140625,
+        "y": 66.42500305175781
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 258.5857238769531,
+        "w": 278.14599609375,
+        "x": 1100.312744140625,
+        "y": 101.96273803710938
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 205.7158660888672,
+        "w": 239.7453155517578,
+        "x": 1297.23828125,
+        "y": 451.22900390625
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 208.7500457763672,
+        "w": 242.87413024902344,
+        "x": 779.57177734375,
+        "y": 518.5853881835938
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 207.1133270263672,
+        "w": 276.1005859375,
+        "x": 1187.303955078125,
+        "y": 708.2689208984375
+      },
+      {
+        "class": "story-delivered",
+        "h": 55.42499923706055,
+        "w": 220.1875,
+        "x": 1498.3499755859375,
+        "y": 788.5
+      },
+      {
+        "class": "story-controls",
+        "h": 32,
+        "w": 105.4625015258789,
+        "x": 1609.4375,
+        "y": 922.5
+      }
+    ],
+    "overflow": false,
+    "reveals": [
+      {
+        "delay": 180,
+        "id": "story-envelope story-envelope--template"
+      },
+      {
+        "delay": 3800.625,
+        "id": "story-envelope story-envelope--alex"
+      },
+      {
+        "delay": 5059.375,
+        "id": "story-envelope story-envelope--sam"
+      },
+      {
+        "delay": 7030.625,
+        "id": "story-envelope story-envelope--lena"
+      }
+    ],
+    "size": [
+      1848,
+      984
+    ],
+    "visiblePathCount": 1
+  },
+  {
+    "captionOverlapsCopy": false,
+    "clipped": [],
+    "nodes": [
+      {
+        "class": "product-header",
+        "h": 104.75,
+        "w": 1599.1375732421875,
+        "x": 152.8249969482422,
+        "y": 0
+      },
+      {
+        "class": "product-intro",
+        "h": 428.9250183105469,
+        "w": 559.6875,
+        "x": 227.1750030517578,
+        "y": 259.1875
+      },
+      {
+        "class": "product-hero-cta",
+        "h": 67,
+        "w": 260.6499938964844,
+        "x": 227.1750030517578,
+        "y": 621.1124877929688
+      },
+      {
+        "class": "story-template-label",
+        "h": 29.712499618530273,
+        "w": 316.7749938964844,
+        "x": 1101.0125732421875,
+        "y": 42.53750228881836
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 247.31103515625,
+        "w": 266.01611328125,
+        "x": 1128.3607177734375,
+        "y": 76.76248168945312
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 196.75425720214844,
+        "w": 229.3014678955078,
+        "x": 1316.599365234375,
+        "y": 410.9098205566406
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 199.64268493652344,
+        "w": 232.2804718017578,
+        "x": 821.6044921875,
+        "y": 475.207763671875
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 198.0838928222656,
+        "w": 264.05987548828125,
+        "x": 1211.493896484375,
+        "y": 656.8336181640625
+      },
+      {
+        "class": "story-delivered",
+        "h": 53.025001525878906,
+        "w": 210.2250061035156,
+        "x": 1508.987548828125,
+        "y": 733.5750122070312
+      },
+      {
+        "class": "story-controls",
+        "h": 32,
+        "w": 105.4625015258789,
+        "x": 1610.625,
+        "y": 859.9874877929688
+      }
+    ],
+    "overflow": false,
+    "reveals": [
+      {
+        "delay": 180,
+        "id": "story-envelope story-envelope--template"
+      },
+      {
+        "delay": 3800.625,
+        "id": "story-envelope story-envelope--alex"
+      },
+      {
+        "delay": 5059.375,
+        "id": "story-envelope story-envelope--sam"
+      },
+      {
+        "delay": 7030.625,
+        "id": "story-envelope story-envelope--lena"
+      }
+    ],
+    "size": [
+      1920,
+      900
+    ],
+    "visiblePathCount": 1
+  },
+  {
+    "captionOverlapsCopy": false,
+    "clipped": [],
+    "nodes": [
+      {
+        "class": "product-header",
+        "h": 84.5,
+        "w": 1066.0875244140625,
+        "x": 142.5500030517578,
+        "y": 0
+      },
+      {
+        "class": "product-intro",
+        "h": 290.6750183105469,
+        "w": 373.125,
+        "x": 192.1125030517578,
+        "y": 172.78750610351562
+      },
+      {
+        "class": "product-hero-cta",
+        "h": 49.41250228881836,
+        "w": 173.7624969482422,
+        "x": 192.1125030517578,
+        "y": 414.0500183105469
+      },
+      {
+        "class": "story-template-label",
+        "h": 19.80000114440918,
+        "w": 211.1750030517578,
+        "x": 774.6749877929688,
+        "y": 25.037500381469727
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 164.86981201171875,
+        "w": 177.3398895263672,
+        "x": 793.3914794921875,
+        "y": 49.7136344909668
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 131.1611328125,
+        "w": 152.85928344726562,
+        "x": 918.1967163085938,
+        "y": 273.3187561035156
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 133.0867462158203,
+        "w": 154.849365234375,
+        "x": 588.9271240234375,
+        "y": 315.20379638671875
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 132.0518035888672,
+        "w": 176.03575134277344,
+        "x": 848.2994384765625,
+        "y": 437.8246765136719
+      },
+      {
+        "class": "story-delivered",
+        "h": 35.35000228881836,
+        "w": 137.46250915527344,
+        "x": 1046.6500244140625,
+        "y": 489.0375061035156
+      },
+      {
+        "class": "story-controls",
+        "h": 32,
+        "w": 105.4625015258789,
+        "x": 1079.2625732421875,
+        "y": 559.9874877929688
+      }
+    ],
+    "overflow": false,
+    "reveals": [
+      {
+        "delay": 180,
+        "id": "story-envelope story-envelope--template"
+      },
+      {
+        "delay": 3800.625,
+        "id": "story-envelope story-envelope--alex"
+      },
+      {
+        "delay": 5059.375,
+        "id": "story-envelope story-envelope--sam"
+      },
+      {
+        "delay": 7030.625,
+        "id": "story-envelope story-envelope--lena"
+      }
+    ],
+    "size": [
+      1366,
+      600
+    ],
+    "visiblePathCount": 1
+  },
+  {
+    "captionOverlapsCopy": false,
+    "clipped": [],
+    "nodes": [
+      {
+        "class": "product-header",
+        "h": 92.0500030517578,
+        "w": 1264.800048828125,
+        "x": 0,
+        "y": 0
+      },
+      {
+        "class": "product-intro",
+        "h": 340.375,
+        "w": 442.6750183105469,
+        "x": 58.8125,
+        "y": 209.08750915527344
+      },
+      {
+        "class": "product-hero-cta",
+        "h": 54.150001525878906,
+        "w": 206.15000915527344,
+        "x": 58.8125,
+        "y": 495.3125
+      },
+      {
+        "class": "story-template-label",
+        "h": 23.5,
+        "w": 250.5500030517578,
+        "x": 749.9375,
+        "y": 35.63750076293945
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 195.6040496826172,
+        "w": 210.4044952392578,
+        "x": 771.8787231445312,
+        "y": 63.8780403137207
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 155.611083984375,
+        "w": 181.357421875,
+        "x": 920.3324584960938,
+        "y": 328.6938171386719
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 157.90782165527344,
+        "w": 183.7207489013672,
+        "x": 529.2845458984375,
+        "y": 378.937255859375
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 156.67626953125,
+        "w": 208.8572235107422,
+        "x": 837.30517578125,
+        "y": 523.55615234375
+      },
+      {
+        "class": "story-delivered",
+        "h": 41.92499923706055,
+        "w": 164.65000915527344,
+        "x": 1072.625,
+        "y": 584.2875366210938
+      },
+      {
+        "class": "story-controls",
+        "h": 32,
+        "w": 105.4625015258789,
+        "x": 1130.9625244140625,
+        "y": 675.9125366210938
+      }
+    ],
+    "overflow": false,
+    "reveals": [
+      {
+        "delay": 180,
+        "id": "story-envelope story-envelope--template"
+      },
+      {
+        "delay": 3800.625,
+        "id": "story-envelope story-envelope--alex"
+      },
+      {
+        "delay": 5059.375,
+        "id": "story-envelope story-envelope--sam"
+      },
+      {
+        "delay": 7030.625,
+        "id": "story-envelope story-envelope--lena"
+      }
+    ],
+    "size": [
+      1280,
+      720
+    ],
+    "visiblePathCount": 1
+  },
+  {
+    "captionOverlapsCopy": false,
+    "clipped": [],
+    "nodes": [
+      {
+        "class": "product-header",
+        "h": 82.32500457763672,
+        "w": 1008.7999877929688,
+        "x": 0,
+        "y": 0
+      },
+      {
+        "class": "product-intro",
+        "h": 276.3625183105469,
+        "w": 353.07501220703125,
+        "x": 46.900001525878906,
+        "y": 263.625
+      },
+      {
+        "class": "product-hero-cta",
+        "h": 48.03750228881836,
+        "w": 164.4250030517578,
+        "x": 46.900001525878906,
+        "y": 491.9500122070313
+      },
+      {
+        "class": "story-template-label",
+        "h": 18.73750114440918,
+        "w": 199.83750915527344,
+        "x": 598.1500244140625,
+        "y": 123.2750015258789
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 156.0165557861328,
+        "w": 167.81724548339844,
+        "x": 615.947021484375,
+        "y": 146.9276885986328
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 124.1072998046875,
+        "w": 144.64707946777344,
+        "x": 733.927734375,
+        "y": 358.65814208984375
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 125.94978332519533,
+        "w": 146.53575134277344,
+        "x": 422.4804382324219,
+        "y": 398.1284484863281
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 124.9607925415039,
+        "w": 166.58311462402344,
+        "x": 667.8263549804688,
+        "y": 514.4139404296875
+      },
+      {
+        "class": "story-delivered",
+        "h": 33.45000076293945,
+        "w": 129.6875,
+        "x": 855.5250244140625,
+        "y": 562.8875122070312
+      },
+      {
+        "class": "story-controls",
+        "h": 32,
+        "w": 105.4625015258789,
+        "x": 880.7125244140625,
+        "y": 627.875
+      }
+    ],
+    "overflow": false,
+    "reveals": [
+      {
+        "delay": 180,
+        "id": "story-envelope story-envelope--template"
+      },
+      {
+        "delay": 3800.625,
+        "id": "story-envelope story-envelope--alex"
+      },
+      {
+        "delay": 5059.375,
+        "id": "story-envelope story-envelope--sam"
+      },
+      {
+        "delay": 7030.625,
+        "id": "story-envelope story-envelope--lena"
+      }
+    ],
+    "size": [
+      1024,
+      768
+    ],
+    "visiblePathCount": 1
+  },
+  {
+    "captionOverlapsCopy": false,
+    "clipped": [],
+    "nodes": [
+      {
+        "class": "product-header",
+        "h": 62,
+        "w": 884.7999877929688,
+        "x": 0,
+        "y": 0
+      },
+      {
+        "class": "product-intro",
+        "h": 287.8000183105469,
+        "w": 778.6124877929688,
+        "x": 53.087501525878906,
+        "y": 73.70000457763672
+      },
+      {
+        "class": "product-hero-cta",
+        "h": 50,
+        "w": 220,
+        "x": 53.087501525878906,
+        "y": 311.5
+      },
+      {
+        "class": "story-template-label",
+        "h": 19.92500114440918,
+        "w": 205.0749969482422,
+        "x": 270.6812438964844,
+        "y": 367.0874938964844
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 160.1027069091797,
+        "w": 172.2132568359375,
+        "x": 288.9074401855469,
+        "y": 387.9096374511719
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 146.8896026611328,
+        "w": 171.25523376464844,
+        "x": 466.111572265625,
+        "y": 513.5834350585938
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 148.18077087402344,
+        "w": 172.3596649169922,
+        "x": 252.54820251464844,
+        "y": 571.3223876953125
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 140.86143493652344,
+        "w": 187.5395050048828,
+        "x": 437.5866394042969,
+        "y": 674.86865234375
+      },
+      {
+        "class": "story-delivered",
+        "h": 42.125,
+        "w": 160.125,
+        "x": 267.41876220703125,
+        "y": 766
+      },
+      {
+        "class": "story-controls",
+        "h": 44,
+        "w": 117.4625015258789,
+        "x": 731.9500122070312,
+        "y": 843.4000244140625
+      }
+    ],
+    "overflow": false,
+    "reveals": [
+      {
+        "delay": 180,
+        "id": "story-envelope story-envelope--template"
+      },
+      {
+        "delay": 3563.125,
+        "id": "story-envelope story-envelope--alex"
+      },
+      {
+        "delay": 4525,
+        "id": "story-envelope story-envelope--sam"
+      },
+      {
+        "delay": 6116.25,
+        "id": "story-envelope story-envelope--lena"
+      }
+    ],
+    "size": [
+      900,
+      900
+    ],
+    "visiblePathCount": 1
+  },
+  {
+    "captionOverlapsCopy": false,
+    "clipped": [],
+    "nodes": [
+      {
+        "class": "product-header",
+        "h": 64.4749984741211,
+        "w": 752.7999877929688,
+        "x": 0,
+        "y": 0
+      },
+      {
+        "class": "product-intro",
+        "h": 300.3999938964844,
+        "w": 662.4625244140625,
+        "x": 45.16250228881836,
+        "y": 77.7750015258789
+      },
+      {
+        "class": "product-hero-cta",
+        "h": 50,
+        "w": 220,
+        "x": 45.16250228881836,
+        "y": 328.1750183105469
+      },
+      {
+        "class": "story-template-label",
+        "h": 24.375,
+        "w": 250.77500915527344,
+        "x": 166.41250610351562,
+        "y": 383.6375122070313
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 195.7805938720703,
+        "w": 210.59341430664065,
+        "x": 188.36587524414065,
+        "y": 408.7522888183594
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 179.6320343017578,
+        "w": 209.42185974121097,
+        "x": 405.4959411621094,
+        "y": 561.7496948242188
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 181.2108459472656,
+        "w": 210.77256774902344,
+        "x": 143.8485565185547,
+        "y": 633.2452392578125
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 172.25732421875,
+        "w": 229.333251953125,
+        "x": 370.619384765625,
+        "y": 758.9894409179688
+      },
+      {
+        "class": "story-delivered",
+        "h": 51.54999923706055,
+        "w": 196.9375,
+        "x": 162.4250030517578,
+        "y": 870.1375122070312
+      },
+      {
+        "class": "story-controls",
+        "h": 44,
+        "w": 117.4625015258789,
+        "x": 605.2374877929688,
+        "y": 965.6749877929688
+      }
+    ],
+    "overflow": false,
+    "reveals": [
+      {
+        "delay": 180,
+        "id": "story-envelope story-envelope--template"
+      },
+      {
+        "delay": 3563.125,
+        "id": "story-envelope story-envelope--alex"
+      },
+      {
+        "delay": 4525,
+        "id": "story-envelope story-envelope--sam"
+      },
+      {
+        "delay": 6116.25,
+        "id": "story-envelope story-envelope--lena"
+      }
+    ],
+    "size": [
+      768,
+      1024
+    ],
+    "visiblePathCount": 1
+  },
+  {
+    "captionOverlapsCopy": false,
+    "clipped": [],
+    "nodes": [
+      {
+        "class": "product-header",
+        "h": 68,
+        "w": 1008.7999877929688,
+        "x": 0,
+        "y": 0
+      },
+      {
+        "class": "product-intro",
+        "h": 300.3999938964844,
+        "w": 887.7374877929688,
+        "x": 60.525001525878906,
+        "y": 82
+      },
+      {
+        "class": "product-hero-cta",
+        "h": 50,
+        "w": 220,
+        "x": 60.525001525878906,
+        "y": 332.3999938964844
+      },
+      {
+        "class": "story-template-label",
+        "h": 28,
+        "w": 302.3999938964844,
+        "x": 251.1999969482422,
+        "y": 495.3999938964844
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 236.08677673339844,
+        "w": 253.9365234375,
+        "x": 277.38360595703125,
+        "y": 523.9620361328125
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 216.611328125,
+        "w": 252.5238342285156,
+        "x": 539.5787963867188,
+        "y": 707.81005859375
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 218.5151824951172,
+        "w": 254.1525421142578,
+        "x": 223.6322326660156,
+        "y": 794.8309936523438
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 207.7171936035156,
+        "w": 276.5375671386719,
+        "x": 497.5380554199219,
+        "y": 945.6658325195312
+      },
+      {
+        "class": "story-delivered",
+        "h": 62.150001525878906,
+        "w": 238.5,
+        "x": 246.40000915527344,
+        "y": 1079.4000244140625
+      },
+      {
+        "class": "story-controls",
+        "h": 44,
+        "w": 117.4625015258789,
+        "x": 850.9874877929688,
+        "y": 1306.4000244140625
+      }
+    ],
+    "overflow": false,
+    "reveals": [
+      {
+        "delay": 180,
+        "id": "story-envelope story-envelope--template"
+      },
+      {
+        "delay": 3563.125,
+        "id": "story-envelope story-envelope--alex"
+      },
+      {
+        "delay": 4525,
+        "id": "story-envelope story-envelope--sam"
+      },
+      {
+        "delay": 6116.25,
+        "id": "story-envelope story-envelope--lena"
+      }
+    ],
+    "size": [
+      1024,
+      1366
+    ],
+    "visiblePathCount": 1
+  },
+  {
+    "captionOverlapsCopy": false,
+    "clipped": [],
+    "nodes": [
+      {
+        "class": "product-header",
+        "h": 60.875,
+        "w": 375.2000122070313,
+        "x": 0,
+        "y": 0
+      },
+      {
+        "class": "product-intro",
+        "h": 234.4750061035156,
+        "w": 330.1750183105469,
+        "x": 22.512500762939453,
+        "y": 71.8375015258789
+      },
+      {
+        "class": "product-hero-cta",
+        "h": 48.10000228881836,
+        "w": 172.5749969482422,
+        "x": 22.512500762939453,
+        "y": 258.2124938964844
+      },
+      {
+        "class": "story-template-label",
+        "h": 17.600000381469727,
+        "w": 181.02500915527344,
+        "x": 36.025001525878906,
+        "y": 340.1000061035156
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 141.32424926757812,
+        "w": 152.02171325683594,
+        "x": 52.27703857421875,
+        "y": 358.6799621582031
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 129.666015625,
+        "w": 151.1760711669922,
+        "x": 208.486572265625,
+        "y": 469.982666015625
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 130.8057098388672,
+        "w": 152.15101623535156,
+        "x": 20.221969604492188,
+        "y": 520.47216796875
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 124.34185028076172,
+        "w": 165.54678344726562,
+        "x": 183.29995727539065,
+        "y": 612.34716796875
+      },
+      {
+        "class": "story-delivered",
+        "h": 37.20000076293945,
+        "w": 140.8249969482422,
+        "x": 33.13750076293945,
+        "y": 692.9500122070312
+      },
+      {
+        "class": "story-controls",
+        "h": 44,
+        "w": 117.4625015258789,
+        "x": 242.7375030517578,
+        "y": 788.1875
+      }
+    ],
+    "overflow": false,
+    "reveals": [
+      {
+        "delay": 180,
+        "id": "story-envelope story-envelope--template"
+      },
+      {
+        "delay": 3563.125,
+        "id": "story-envelope story-envelope--alex"
+      },
+      {
+        "delay": 4525,
+        "id": "story-envelope story-envelope--sam"
+      },
+      {
+        "delay": 6116.25,
+        "id": "story-envelope story-envelope--lena"
+      }
+    ],
+    "size": [
+      390,
+      844
+    ],
+    "visiblePathCount": 1
+  },
+  {
+    "captionOverlapsCopy": false,
+    "clipped": [],
+    "nodes": [
+      {
+        "class": "product-header",
+        "h": 57.32500076293945,
+        "w": 360,
+        "x": 0,
+        "y": 0
+      },
+      {
+        "class": "product-intro",
+        "h": 215.21250915527344,
+        "w": 316.8000183105469,
+        "x": 21.600000381469727,
+        "y": 65.98750305175781
+      },
+      {
+        "class": "product-hero-cta",
+        "h": 44,
+        "w": 165.60000610351562,
+        "x": 21.600000381469727,
+        "y": 237.1999969482422
+      },
+      {
+        "class": "story-template-label",
+        "h": 16.80000114440918,
+        "w": 138.3874969482422,
+        "x": 64.1187515258789,
+        "y": 288.3999938964844
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 108.04248046875,
+        "w": 116.21121978759766,
+        "x": 76.88873291015625,
+        "y": 306.3268127441406
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 99.12981414794922,
+        "w": 115.5647201538086,
+        "x": 195.8607482910156,
+        "y": 392.1507568359375
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 100.00102996826172,
+        "w": 116.31007385253906,
+        "x": 52.45363998413086,
+        "y": 429.8116149902344
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 95.05322265625,
+        "w": 126.55846405029295,
+        "x": 176.60057067871094,
+        "y": 500.97271728515625
+      },
+      {
+        "class": "story-delivered",
+        "h": 28.450000762939453,
+        "w": 106.5374984741211,
+        "x": 61.90625,
+        "y": 562.9249877929688
+      },
+      {
+        "class": "story-controls",
+        "h": 44,
+        "w": 117.4625015258789,
+        "x": 228.1374969482422,
+        "y": 613.8624877929688
+      }
+    ],
+    "overflow": false,
+    "reveals": [
+      {
+        "delay": 180,
+        "id": "story-envelope story-envelope--template"
+      },
+      {
+        "delay": 3563.125,
+        "id": "story-envelope story-envelope--alex"
+      },
+      {
+        "delay": 4525,
+        "id": "story-envelope story-envelope--sam"
+      },
+      {
+        "delay": 6116.25,
+        "id": "story-envelope story-envelope--lena"
+      }
+    ],
+    "size": [
+      375,
+      667
+    ],
+    "visiblePathCount": 1
+  },
+  {
+    "captionOverlapsCopy": false,
+    "clipped": [],
+    "nodes": [
+      {
+        "class": "product-header",
+        "h": 55.35000228881836,
+        "w": 304.8000183105469,
+        "x": 0,
+        "y": 0
+      },
+      {
+        "class": "product-intro",
+        "h": 196.6875,
+        "w": 268.2124938964844,
+        "x": 18.287500381469727,
+        "y": 62.72500228881836
+      },
+      {
+        "class": "product-hero-cta",
+        "h": 44,
+        "w": 154,
+        "x": 18.287500381469727,
+        "y": 215.4125061035156
+      },
+      {
+        "class": "story-template-label",
+        "h": 16.80000114440918,
+        "w": 104.0500030517578,
+        "x": 65.26875305175781,
+        "y": 266.6125183105469
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 81.2305679321289,
+        "w": 87.3788070678711,
+        "x": 75.23096466064453,
+        "y": 284.6575622558594
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 74.53535461425781,
+        "w": 86.89273834228516,
+        "x": 164.21786499023438,
+        "y": 349.96044921875
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 75.1904296875,
+        "w": 87.45317840576172,
+        "x": 56.926876068115234,
+        "y": 377.2791137695313
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 71.4718246459961,
+        "w": 95.15996551513672,
+        "x": 149.73387145996094,
+        "y": 431.7633972167969
+      },
+      {
+        "class": "story-delivered",
+        "h": 21.375,
+        "w": 78.86250305175781,
+        "x": 63.60625076293945,
+        "y": 478.6875
+      },
+      {
+        "class": "story-controls",
+        "h": 44,
+        "w": 117.4625015258789,
+        "x": 175.15000915527344,
+        "y": 516
+      }
+    ],
+    "overflow": false,
+    "reveals": [
+      {
+        "delay": 180,
+        "id": "story-envelope story-envelope--template"
+      },
+      {
+        "delay": 3563.125,
+        "id": "story-envelope story-envelope--alex"
+      },
+      {
+        "delay": 4525,
+        "id": "story-envelope story-envelope--sam"
+      },
+      {
+        "delay": 6116.25,
+        "id": "story-envelope story-envelope--lena"
+      }
+    ],
+    "size": [
+      320,
+      568
+    ],
+    "visiblePathCount": 1
+  },
+  {
+    "captionOverlapsCopy": false,
+    "clipped": [],
+    "nodes": [
+      {
+        "class": "product-header",
+        "h": 56,
+        "w": 693.6625366210938,
+        "x": 67.5625,
+        "y": 0
+      },
+      {
+        "class": "product-intro",
+        "h": 195.71250915527344,
+        "w": 242.77500915527344,
+        "x": 99.8125,
+        "y": 112.4250030517578
+      },
+      {
+        "class": "product-hero-cta",
+        "h": 44,
+        "w": 136,
+        "x": 99.8125,
+        "y": 264.13751220703125
+      },
+      {
+        "class": "story-template-label",
+        "h": 12.887499809265137,
+        "w": 137.41250610351562,
+        "x": 478.8500061035156,
+        "y": 12.787500381469728
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 107.27326965332033,
+        "w": 115.3924331665039,
+        "x": 491.5465393066406,
+        "y": 30.8051700592041
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 85.33634185791016,
+        "w": 99.4613265991211,
+        "x": 572.01708984375,
+        "y": 177.18731689453125
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 86.60237121582031,
+        "w": 100.75981903076172,
+        "x": 358.55517578125,
+        "y": 203.4080047607422
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 85.91682434082031,
+        "w": 114.5438995361328,
+        "x": 526.737060546875,
+        "y": 284.79840087890625
+      },
+      {
+        "class": "story-delivered",
+        "h": 22.975000381469727,
+        "w": 86.6500015258789,
+        "x": 655.8250122070312,
+        "y": 318.20001220703125
+      },
+      {
+        "class": "story-controls",
+        "h": 32,
+        "w": 105.4625015258789,
+        "x": 640.2000122070312,
+        "y": 350.38751220703125
+      }
+    ],
+    "overflow": false,
+    "reveals": [
+      {
+        "delay": 180,
+        "id": "story-envelope story-envelope--template"
+      },
+      {
+        "delay": 3800.625,
+        "id": "story-envelope story-envelope--alex"
+      },
+      {
+        "delay": 5059.375,
+        "id": "story-envelope story-envelope--sam"
+      },
+      {
+        "delay": 7030.625,
+        "id": "story-envelope story-envelope--lena"
+      }
+    ],
+    "size": [
+      844,
+      390
+    ],
+    "visiblePathCount": 1
+  },
+  {
+    "captionOverlapsCopy": false,
+    "clipped": [],
+    "nodes": [
+      {
+        "class": "product-header",
+        "h": 56,
+        "w": 652,
+        "x": 0,
+        "y": 0
+      },
+      {
+        "class": "product-intro",
+        "h": 190.0500030517578,
+        "w": 228.1999969482422,
+        "x": 30.3125,
+        "y": 109.8000030517578
+      },
+      {
+        "class": "product-hero-cta",
+        "h": 44,
+        "w": 136,
+        "x": 30.3125,
+        "y": 255.8500061035156
+      },
+      {
+        "class": "story-template-label",
+        "h": 12.100000381469728,
+        "w": 129.16250610351562,
+        "x": 386.5750122070313,
+        "y": 15.5625
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 100.82881927490234,
+        "w": 108.4645538330078,
+        "x": 398.59722900390625,
+        "y": 32.821083068847656
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 80.21541595458984,
+        "w": 93.4933624267578,
+        "x": 474.1180725097656,
+        "y": 170.5477752685547
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 81.39808654785156,
+        "w": 94.7009048461914,
+        "x": 273.6042175292969,
+        "y": 195.03509521484375
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 80.7643051147461,
+        "w": 107.6669921875,
+        "x": 431.5884704589844,
+        "y": 271.8121643066406
+      },
+      {
+        "class": "story-delivered",
+        "h": 21.625,
+        "w": 81,
+        "x": 552.9249877929688,
+        "y": 303.2124938964844
+      },
+      {
+        "class": "story-controls",
+        "h": 32,
+        "w": 105.4625015258789,
+        "x": 531.9125366210938,
+        "y": 331.0625
+      }
+    ],
+    "overflow": false,
+    "reveals": [
+      {
+        "delay": 180,
+        "id": "story-envelope story-envelope--template"
+      },
+      {
+        "delay": 3800.625,
+        "id": "story-envelope story-envelope--alex"
+      },
+      {
+        "delay": 5059.375,
+        "id": "story-envelope story-envelope--sam"
+      },
+      {
+        "delay": 7030.625,
+        "id": "story-envelope story-envelope--lena"
+      }
+    ],
+    "size": [
+      667,
+      375
+    ],
+    "visiblePathCount": 1
+  },
+  {
+    "captionOverlapsCopy": false,
+    "clipped": [],
+    "nodes": [
+      {
+        "class": "product-header",
+        "h": 56,
+        "w": 552.7999877929688,
+        "x": 0,
+        "y": 0
+      },
+      {
+        "class": "product-intro",
+        "h": 176.47500610351562,
+        "w": 193.4750061035156,
+        "x": 25.700000762939453,
+        "y": 94.0374984741211
+      },
+      {
+        "class": "product-hero-cta",
+        "h": 44,
+        "w": 136,
+        "x": 25.700000762939453,
+        "y": 226.5124969482422
+      },
+      {
+        "class": "story-template-label",
+        "h": 10.262499809265137,
+        "w": 109.5,
+        "x": 327.76251220703125,
+        "y": 12.600000381469728
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 85.48063659667969,
+        "w": 91.9511489868164,
+        "x": 338.1785583496094,
+        "y": 28.08880043029785
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 68.00300598144531,
+        "w": 79.26313781738281,
+        "x": 401.8876647949219,
+        "y": 145.2602081298828
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 69.00654602050781,
+        "w": 80.2904052734375,
+        "x": 232.2191925048828,
+        "y": 165.57449340820312
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 68.4708251953125,
+        "w": 91.2750015258789,
+        "x": 365.9168395996094,
+        "y": 231.3651428222656
+      },
+      {
+        "class": "story-delivered",
+        "h": 18.325000762939453,
+        "w": 67.45000457763672,
+        "x": 468.8000183105469,
+        "y": 258.0249938964844
+      },
+      {
+        "class": "story-controls",
+        "h": 32,
+        "w": 105.4625015258789,
+        "x": 434.9375,
+        "y": 275.5500183105469
+      }
+    ],
+    "overflow": false,
+    "reveals": [
+      {
+        "delay": 180,
+        "id": "story-envelope story-envelope--template"
+      },
+      {
+        "delay": 3800.625,
+        "id": "story-envelope story-envelope--alex"
+      },
+      {
+        "delay": 5059.375,
+        "id": "story-envelope story-envelope--sam"
+      },
+      {
+        "delay": 7030.625,
+        "id": "story-envelope story-envelope--lena"
+      }
+    ],
+    "size": [
+      568,
+      320
+    ],
+    "visiblePathCount": 1
+  },
+  {
+    "captionOverlapsCopy": false,
+    "clipped": [],
+    "nodes": [
+      {
+        "class": "product-header",
+        "h": 107.5250015258789,
+        "w": 1672,
+        "x": 436.3999938964844,
+        "y": 0
+      },
+      {
+        "class": "product-intro",
+        "h": 448.5,
+        "w": 585.2000122070312,
+        "x": 514.1375122070312,
+        "y": 340.5
+      },
+      {
+        "class": "product-hero-cta",
+        "h": 70.05000305175781,
+        "w": 272.5249938964844,
+        "x": 514.1375122070312,
+        "y": 718.9500122070312
+      },
+      {
+        "class": "story-template-label",
+        "h": 31.075000762939453,
+        "w": 331.2250061035156,
+        "x": 1427.7750244140625,
+        "y": 114.4250030517578
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 258.58575439453125,
+        "w": 278.1460876464844,
+        "x": 1456.312744140625,
+        "y": 149.96273803710938
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 205.7158660888672,
+        "w": 239.7453155517578,
+        "x": 1653.23828125,
+        "y": 499.22900390625
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 208.7500457763672,
+        "w": 242.87413024902344,
+        "x": 1135.57177734375,
+        "y": 566.5853881835938
+      },
+      {
+        "class": "envelope-paperwork",
+        "h": 207.1133270263672,
+        "w": 276.1005859375,
+        "x": 1543.303955078125,
+        "y": 756.2689208984375
+      },
+      {
+        "class": "story-delivered",
+        "h": 55.42499923706055,
+        "w": 220.1875,
+        "x": 1854.3499755859375,
+        "y": 836.5
+      },
+      {
+        "class": "story-controls",
+        "h": 32,
+        "w": 105.4625015258789,
+        "x": 1965.4375,
+        "y": 970.5
+      }
+    ],
+    "overflow": false,
+    "reveals": [
+      {
+        "delay": 180,
+        "id": "story-envelope story-envelope--template"
+      },
+      {
+        "delay": 3800.625,
+        "id": "story-envelope story-envelope--alex"
+      },
+      {
+        "delay": 5059.375,
+        "id": "story-envelope story-envelope--sam"
+      },
+      {
+        "delay": 7030.625,
+        "id": "story-envelope story-envelope--lena"
+      }
+    ],
+    "size": [
+      2560,
+      1080
+    ],
+    "visiblePathCount": 1
+  }
+]

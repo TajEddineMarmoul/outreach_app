@@ -40,13 +40,21 @@ async function proxyRequest(
   headers.set("authorization", `Bearer ${apiToken || `local_dev_${localDevUserId}`}`);
 
   const hasBody = request.method !== "GET" && request.method !== "HEAD";
-  const backendResponse = await fetch(target, {
-    method: request.method,
-    headers,
-    body: hasBody ? await request.arrayBuffer() : undefined,
-    redirect: "manual",
-    cache: "no-store",
-  });
+  let backendResponse: Response;
+  try {
+    backendResponse = await fetch(target, {
+      method: request.method,
+      headers,
+      body: hasBody ? await request.arrayBuffer() : undefined,
+      redirect: "manual",
+      cache: "no-store",
+    });
+  } catch {
+    return NextResponse.json(
+      { detail: "The backend service is unavailable" },
+      { status: 503 }
+    );
+  }
 
   const responseHeaders = new Headers();
   for (const name of ["content-type", "content-disposition", "cache-control", "location"]) {
