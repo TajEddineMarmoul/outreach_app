@@ -1,36 +1,23 @@
 "use client";
 
-import { useEffect, useId, useRef } from "react";
-import { sampleThreadToPercentage, storyTriggerPercentages, threadPaths } from "./thread-paths";
+import { useId, useLayoutEffect, useRef } from "react";
+import {
+  hasReachedThreadPercentage,
+  sampleThreadToPercentage,
+  storyTriggerPercentages,
+  threadPaths,
+} from "./thread-paths";
 
 const people = [
-  { id: "alex", name: "Alex", fruit: "apples", emoji: "🍎", progress: storyTriggerPercentages.alex / 100 },
-  { id: "sam", name: "Sam", fruit: "bananas", emoji: "🍌", progress: storyTriggerPercentages.sam / 100 },
-  { id: "lena", name: "Lena", fruit: "strawberries", emoji: "🍓", progress: storyTriggerPercentages.lena / 100 },
+  { id: "alex", name: "Alex", fruit: "apples", emoji: "🍎", progress: storyTriggerPercentages.alex },
+  { id: "sam", name: "Sam", fruit: "bananas", emoji: "🍌", progress: storyTriggerPercentages.sam },
+  { id: "lena", name: "Lena", fruit: "strawberries", emoji: "🍓", progress: storyTriggerPercentages.lena },
 ];
 
 const THREAD_START = 750;
 const THREAD_DURATION = 3000;
-const CHECK_PROGRESS = storyTriggerPercentages.check / 100;
+const CHECK_PROGRESS = storyTriggerPercentages.check;
 const EASE_IN_OUT = "ease-in-out";
-
-function easeInOutTimeAtProgress(progress: number) {
-  // Invert CSS ease-in-out (cubic-bezier(.42, 0, .58, 1)). This converts a
-  // percentage on the SVG path into the exact matching animation time.
-  let low = 0;
-  let high = 1;
-  for (let index = 0; index < 24; index++) {
-    const parameter = (low + high) / 2;
-    const easedProgress = 3 * parameter ** 2 - 2 * parameter ** 3;
-    if (easedProgress < progress) low = parameter;
-    else high = parameter;
-  }
-  const parameter = (low + high) / 2;
-  const inverse = 1 - parameter;
-  return 3 * inverse ** 2 * parameter * .42
-    + 3 * inverse * parameter ** 2 * .58
-    + parameter ** 3;
-}
 
 function easeInOutProgressAtTime(time: number) {
   let low = 0;
@@ -46,10 +33,6 @@ function easeInOutProgressAtTime(time: number) {
   }
   const parameter = (low + high) / 2;
   return 3 * parameter ** 2 - 2 * parameter ** 3;
-}
-
-function threadDelayAtProgress(progress: number) {
-  return THREAD_START + easeInOutTimeAtProgress(progress) * THREAD_DURATION;
 }
 
 function TypedLine({ children, x, y }: { children: string; x: number; y: number }) {
@@ -75,7 +58,10 @@ function Envelope({ person }: { person?: typeof people[number] }) {
   const fill = (name: string) => `url(#${id}-${name})`;
 
   return (
-    <div className={`story-envelope story-envelope--${person?.id ?? "template"}`}>
+    <div
+      className={`story-envelope story-envelope--${person?.id ?? "template"}`}
+      data-thread-trigger={person?.id}
+    >
       {template && <p className="story-template-label">You write this once</p>}
       <div className="envelope-reveal">
         <div className="envelope-float">
@@ -135,7 +121,7 @@ export default function EnvelopeStory() {
   const scene = useRef<HTMLDivElement>(null);
   const animations = useRef<Animation[]>([]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const root = scene.current;
     if (!root) return;
     const preference = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -147,6 +133,10 @@ export default function EnvelopeStory() {
       threadFrame = null;
       animations.current.forEach((animation) => animation.cancel());
       animations.current = [];
+      root.removeAttribute("data-thread-animating");
+      root.querySelectorAll<HTMLElement>("[data-thread-trigger]").forEach((element) => {
+        element.removeAttribute("data-thread-visible");
+      });
     };
     const animate = (selector: string, frames: Keyframe[], options: KeyframeAnimationOptions) => {
       const created: Animation[] = [];
@@ -175,6 +165,10 @@ export default function EnvelopeStory() {
       const animationStartedAt = performance.now();
       progressPath.setAttribute("d", sampleThreadToPercentage(sourcePath, 0).d);
       progressPath.dataset.progress = "0";
+      root.querySelectorAll<HTMLElement>("[data-thread-trigger]").forEach((element) => {
+        element.dataset.threadVisible = "false";
+      });
+      root.dataset.threadAnimating = "true";
 
       const pop = [
         { opacity: 0, transform: "translateY(20px) scale(.86)" },
@@ -182,38 +176,21 @@ export default function EnvelopeStory() {
         { opacity: 1, transform: "translateY(-3px) scale(1.025)", offset: .76 },
         { opacity: 1, transform: "translateY(0) scale(1)" },
       ];
-      const deliveredPop = [
-        { transform: "scale(.58)" },
-        { transform: "scale(1.1)", offset: .68 },
-        { transform: "scale(1)" },
-      ];
-      // Each recipient is tied to a percentage on the same SVG path used by
-      // the lab. No viewport measurements or hard-coded arrival seconds.
-      [{ id: "template", delay: 40 }, ...people.map(({ id, progress }) => ({
-        id,
-        delay: threadDelayAtProgress(progress),
-      }))].forEach(({ id, delay }, index) => {
-        const target = `.story-envelope--${id}`;
-        animate(`${target} .envelope-reveal`, pop, {
-          duration: id === "template" ? 300 : 230,
-          delay,
-          easing: EASE_IN_OUT,
-        });
-        animate(`${target} .envelope-letter`, [
-          { transform: "translateY(119px)" },
-          { transform: "translateY(-4px)", offset: .8 },
-          { transform: "translateY(0)" },
-        ], {
-          duration: id === "template" ? 520 : 290,
-          delay: delay + (id === "template" ? 90 : 30),
-          easing: EASE_IN_OUT,
-        });
-        animate(`${target} .envelope-float`, [
-          { transform: "translate(0, 0) rotate(0deg)" },
-          { transform: `translate(${index % 2 ? -2 : 2}px, -6px) rotate(${index % 2 ? -.65 : .65}deg)`, offset: .5 },
-          { transform: "translate(0, 0) rotate(0deg)" },
-        ], { duration: 4700 + index * 530, delay: delay + 650, iterations: Infinity, easing: EASE_IN_OUT });
+      // The template has its own short intro. Recipient visibility is not
+      // scheduled: it is toggled below by the live path percentage itself.
+      animate(".story-envelope--template .envelope-reveal", pop, {
+        duration: 300, delay: 40, easing: EASE_IN_OUT,
       });
+      animate(".story-envelope--template .envelope-letter", [
+        { transform: "translateY(119px)" },
+        { transform: "translateY(-4px)", offset: .8 },
+        { transform: "translateY(0)" },
+      ], { duration: 520, delay: 130, easing: EASE_IN_OUT });
+      animate(".story-envelope--template .envelope-float", [
+        { transform: "translate(0, 0) rotate(0deg)" },
+        { transform: "translate(2px, -6px) rotate(.65deg)", offset: .5 },
+        { transform: "translate(0, 0) rotate(0deg)" },
+      ], { duration: 4700, delay: 690, iterations: Infinity, easing: EASE_IN_OUT });
       animate(".story-template-label", [{ opacity: 0 }, { opacity: 1 }], { duration: 220, delay: 160, easing: EASE_IN_OUT });
       root.querySelectorAll(".template-character").forEach((character, index) => {
         animations.current.push(character.animate([{ opacity: 0 }, { opacity: 1 }], {
@@ -227,17 +204,18 @@ export default function EnvelopeStory() {
         { transform: "translateY(0)" },
       ], { duration: 6400, delay: THREAD_START, iterations: Infinity, easing: EASE_IN_OUT });
 
-      const deliveredStart = threadDelayAtProgress(CHECK_PROGRESS);
-      animate(".story-delivered-icon", [{ opacity: 0 }, { opacity: 1 }], { duration: 1, delay: deliveredStart, easing: EASE_IN_OUT });
-      animate(".story-delivered-icon", deliveredPop, { duration: 300, delay: deliveredStart, easing: EASE_IN_OUT });
-      animate(".story-delivered-text", [{ opacity: 0, transform: "translateX(-5px)" }, { opacity: 1, transform: "translateX(0)" }], { duration: 300, delay: deliveredStart, easing: EASE_IN_OUT });
-
       const drawThread = (now: number) => {
         const time = Math.min(1, Math.max(0, (now - animationStartedAt - THREAD_START) / THREAD_DURATION));
         const progress = easeInOutProgressAtTime(time);
         const percentage = progress * 100;
         progressPath.setAttribute("d", sampleThreadToPercentage(sourcePath, percentage).d);
         progressPath.dataset.progress = percentage.toFixed(3);
+        people.forEach(({ id, progress: trigger }) => {
+          const target = root.querySelector<HTMLElement>(`[data-thread-trigger="${id}"]`);
+          if (target) target.dataset.threadVisible = String(hasReachedThreadPercentage(percentage, trigger));
+        });
+        const delivered = root.querySelector<HTMLElement>("[data-thread-trigger=check]");
+        if (delivered) delivered.dataset.threadVisible = String(hasReachedThreadPercentage(percentage, CHECK_PROGRESS));
         if (time < 1) threadFrame = requestAnimationFrame(drawThread);
         else threadFrame = null;
       };
@@ -269,7 +247,7 @@ export default function EnvelopeStory() {
         ))}
         <Envelope />
         {people.map((person) => <Envelope key={person.id} person={person} />)}
-        <div className="story-delivered" aria-hidden="true">
+        <div className="story-delivered" data-thread-trigger="check" aria-hidden="true">
           <span className="story-delivered-icon-shell">
             <svg className="story-delivered-icon" viewBox="0 0 52 52" fill="none">
               <defs><linearGradient id="story-check-green" x1="0" y1="0" x2="1" y2="1"><stop stopColor="#00d3a0" /><stop offset="1" stopColor="#00b47d" /></linearGradient></defs>

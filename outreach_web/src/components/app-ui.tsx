@@ -3,12 +3,22 @@
 import { type ReactNode } from "react";
 import { Menu } from "@base-ui/react/menu";
 import {
+  Ban,
+  Bot,
+  CheckCircle2,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  CircleAlert,
+  CircleDashed,
+  Clock3,
   EllipsisVertical,
   Loader2,
+  MailX,
+  MessageSquareReply,
+  PauseCircle,
   Search,
+  type LucideIcon,
 } from "lucide-react";
 import {
   Dialog,
@@ -229,18 +239,55 @@ export function Pager({
   );
 }
 
-export function StatusBadge({ status }: { status: string }) {
-  const labels: Record<string, string> = {
-    sending: "Running",
-    autopilot: "Running",
-    ended: "Completed",
-    sent: "Sent",
-    success: "Sent",
-    do_not_contact: "Do not contact",
-  };
+const STATUS_LABELS: Record<string, string> = {
+  sending: "Running",
+  autopilot: "Running",
+  ended: "Completed",
+  sent: "Sent",
+  success: "Sent",
+  bounced: "Undelivered",
+  failed: "Send error",
+  error: "Send error",
+  replied: "Human reply",
+  automated_response: "Automated reply",
+  do_not_contact: "Do not contact",
+  rejected: "Skipped",
+  approved: "Ready",
+  ready: "Ready",
+  queued: "Waiting to send",
+  test_sent: "Test sent",
+};
+
+const STATUS_ICONS: Record<string, LucideIcon> = {
+  connected: CheckCircle2,
+  approved: CheckCircle2,
+  ready: CheckCircle2,
+  sending: CheckCircle2,
+  autopilot: CheckCircle2,
+  ended: CheckCircle2,
+  sent: CheckCircle2,
+  success: CheckCircle2,
+  test_sent: CheckCircle2,
+  replied: MessageSquareReply,
+  automated_response: Bot,
+  bounced: MailX,
+  failed: CircleAlert,
+  error: CircleAlert,
+  revoked: CircleAlert,
+  queued: Clock3,
+  scheduled: Clock3,
+  pending: Clock3,
+  paused: PauseCircle,
+  do_not_contact: Ban,
+  rejected: Ban,
+};
+
+export function StatusBadge({ status, title }: { status: string; title?: string }) {
+  const Icon = STATUS_ICONS[status] || CircleDashed;
   return (
-    <span className={`app-status status-${status}`}>
-      {labels[status] ||
+    <span className={`app-status status-${status}`} title={title}>
+      <Icon size={13} strokeWidth={2.2} aria-hidden="true" />
+      {STATUS_LABELS[status] ||
         status.replaceAll("_", " ").replace(/^./, (c) => c.toUpperCase())}
     </span>
   );
@@ -362,19 +409,3 @@ export function downloadCsv(
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-
-export async function checkResponse(response: Response) {
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok)
-    throw new Error(
-      typeof data.detail === "string"
-        ? data.detail
-        : "We couldn’t save this change. Please try again.",
-    );
-  return data;
-}
-
-export const errorMessage = (error: unknown) =>
-  error instanceof Error
-    ? error.message
-    : "Something went wrong. Please try again.";

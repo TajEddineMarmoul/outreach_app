@@ -23,9 +23,14 @@ from . import db
 os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
 
 
+GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
+GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
+USERINFO_EMAIL_SCOPE = "https://www.googleapis.com/auth/userinfo.email"
+
 SCOPES = [
-    "https://www.googleapis.com/auth/gmail.send",
-    "https://www.googleapis.com/auth/userinfo.email",
+    GMAIL_SEND_SCOPE,
+    GMAIL_READONLY_SCOPE,
+    USERINFO_EMAIL_SCOPE,
 ]
 
 
@@ -123,10 +128,11 @@ def get_google_credentials(
 ):
     credentials_path = credentials_file_path()
     final_token_path = resolve_token_path(token_path)
-    required = [
-        "https://www.googleapis.com/auth/gmail.send",
-        "https://www.googleapis.com/auth/userinfo.email",
-    ]
+    # The legacy local app can continue sending with an existing token. The
+    # platform checks the separately stored granted scopes before it reads
+    # delivery notices, and asks the user to reconnect when read access is
+    # missing.
+    required = [GMAIL_SEND_SCOPE, USERINFO_EMAIL_SCOPE]
     
     if force_reauth and final_token_path.exists():
         final_token_path.unlink()

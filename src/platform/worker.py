@@ -6,6 +6,7 @@ from datetime import timedelta
 
 from sqlalchemy import select, update
 
+from src.platform.gmail_activity import process_pending_gmail_notifications, renew_due_gmail_watches
 from src.platform.db import SessionLocal
 from src.platform.delivery_safety import delivery_block_reason, delivery_enabled
 from src.platform.jobs import perform_send_job
@@ -69,6 +70,18 @@ def run_worker_cycle(*, max_jobs: int = 25) -> int:
         logger.exception("Campaign scheduling cycle failed")
     finally:
         session.close()
+
+    gmail_session = SessionLocal()
+    try:
+        # These are indexed, bounded queue lookups. Gmail mailboxes are only
+        # read when a push notification has marked that specific sender due.
+        renew_due_gmail_watches(gmail_session)
+        process_pending_gmail_notifications(gmail_session)
+    except Exception:
+        gmail_session.rollback()
+        logger.exception("Gmail event-processing cycle failed")
+    finally:
+        gmail_session.close()
 
     processed = 0
     while processed < max_jobs and (job_id := claim_next_due_job()):

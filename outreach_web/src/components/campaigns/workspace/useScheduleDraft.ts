@@ -1,17 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useApiClient } from "@/lib/api";
+import { API_URL, responseProblem, useApiClient } from "@/lib/api";
 import {
   hydrateSchedule,
-  responseProblem,
   schedulePayload,
   scheduleProblem,
   type SavedSchedule,
   type ScheduleDraft,
 } from "./scheduleDraft";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 export default function useScheduleDraft(
   campaignId: string,
   summary: SavedSchedule | undefined,

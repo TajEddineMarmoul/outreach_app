@@ -255,36 +255,58 @@
 }
 .app-status {
   display: inline-flex;
+  align-items: center;
+  gap: 5px;
   white-space: nowrap;
-  padding: 3px 9px;
+  padding: 4px 8px;
   border-radius: 5px;
   font-size: 12px;
+  font-weight: 600;
+  line-height: 1.25;
   color: #4d5e7c;
   background: #f0f3f8;
+}
+.app-status svg {
+  flex: 0 0 auto;
 }
 .status-sending,
 .status-autopilot,
 .status-connected,
 .status-approved,
+.status-ended,
 .status-sent,
 .status-success {
   color: #00724f;
   background: #e7f6ef;
 }
+.status-replied {
+  color: #0751ce;
+  background: #edf3ff;
+}
+.status-automated_response {
+  color: #7a571c;
+  background: #fbf3e1;
+}
 .status-scheduled,
+.status-queued,
+.status-test_sent,
 .status-ready {
   color: #0751ce;
   background: #edf3ff;
 }
 .status-paused,
-.status-pending {
+.status-pending,
+.status-rejected {
   color: #7a571c;
   background: #fbf3e1;
+}
+.status-bounced {
+  color: #9a4c0b;
+  background: #fff3e6;
 }
 .status-failed,
 .status-error,
 .status-do_not_contact,
-.status-rejected,
 .status-revoked {
   color: #b42318;
   background: #fff0ed;
@@ -498,6 +520,30 @@
   padding: 16px 0;
   margin-bottom: 16px;
 }
+.app-outcome-board {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr);
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.app-outcome-board h2 {
+  margin: 0 0 7px;
+  color: var(--app-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.app-outcome-board .app-stats {
+  height: calc(100% - 23px);
+  margin-bottom: 0;
+}
+.app-stats.is-delivery-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.app-stats.is-response-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
 .app-stats > div {
   padding: 0 28px;
   border-right: 1px solid var(--app-line);
@@ -509,6 +555,36 @@
   font-size: 13px;
   color: var(--app-muted);
 }
+.app-metric-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 550;
+}
+.app-metric-label svg {
+  flex: 0 0 auto;
+}
+.app-metric-label.is-success { color: #00724f; }
+.app-metric-label.is-info { color: #0751ce; }
+.app-metric-label.is-warning { color: #8a5a13; }
+.app-metric-label.is-undelivered { color: #9a4c0b; }
+.app-metric-label.is-error { color: #b42318; }
+.sender-tracking-state {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 7px;
+  font-size: 12px;
+  font-weight: 550;
+  line-height: 1.35;
+}
+.sender-tracking-state svg {
+  flex: 0 0 auto;
+}
+.sender-tracking-state.is-active { color: #00724f; }
+.sender-tracking-state.is-pending { color: #0751ce; }
+.sender-tracking-state.is-warning { color: #8a5a13; }
+.sender-tracking-state.is-error { color: #b42318; }
 .app-stats dd {
   font-size: 28px;
   font-weight: 600;
@@ -665,6 +741,18 @@
   }
   .app-chart-heading h2 {
     margin-bottom: 2px;
+  }
+}
+@media (max-width: 900px) {
+  .app-outcome-board {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .app-stats.is-delivery-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .app-stats.is-delivery-grid > div:nth-child(even),
+  .app-stats.is-response-grid > div:nth-child(even) {
+    border-right: 0;
   }
 }
 @media (prefers-reduced-motion: reduce) {

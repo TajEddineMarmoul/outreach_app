@@ -3,8 +3,15 @@
 import { Suspense, useEffect, useState } from "react";
 import useSWR from "swr";
 import { useSearchParams } from "next/navigation";
-import { Plus } from "lucide-react";
-import { useApiClient } from "@/lib/api";
+import {
+  CircleAlert,
+  LoaderCircle,
+  Plus,
+  RadioTower,
+  Unplug,
+} from "lucide-react";
+import { checkResponse, errorMessage, useApiClient } from "@/lib/api";
+import type { Sender, SenderGroup } from "@/types/senders";
 import {
   ActionMenu,
   AppDialog,
@@ -15,26 +22,42 @@ import {
   PageState,
   Pager,
   StatusBadge,
-  checkResponse,
-  errorMessage,
 } from "@/components/app-ui";
 
-interface Sender {
-  id: number;
-  group_id: number;
-  email: string;
-  display_name: string;
-  status: string;
-  daily_cap: number;
-  is_default: boolean;
-  sent_today: number;
-  last_error?: string;
-}
-interface Group {
-  id: number;
-  name: string;
-  senders: Sender[];
-  connected_sender_count: number;
+function GmailTrackingState({ sender }: { sender: Sender }) {
+  if (sender.gmail_tracking_enabled) {
+    return (
+      <span className="sender-tracking-state is-active">
+        <RadioTower size={14} aria-hidden="true" />
+        Live reply tracking on
+      </span>
+    );
+  }
+  if (!sender.gmail_tracking_permission) {
+    return (
+      <span className="sender-tracking-state is-warning">
+        <Unplug size={14} aria-hidden="true" />
+        Reconnect Gmail to track replies
+      </span>
+    );
+  }
+  if (sender.gmail_tracking_status === "error") {
+    return (
+      <span
+        className="sender-tracking-state is-error"
+        title={sender.gmail_sync_error || undefined}
+      >
+        <CircleAlert size={14} aria-hidden="true" />
+        Gmail tracking needs attention
+      </span>
+    );
+  }
+  return (
+    <span className="sender-tracking-state is-pending">
+      <LoaderCircle className="animate-spin" size={14} aria-hidden="true" />
+      Setting up live tracking
+    </span>
+  );
 }
 
 function SendersContent() {
@@ -44,7 +67,7 @@ function SendersContent() {
     error,
     isLoading,
     mutate,
-  } = useSWR<Group[]>(`${API_URL}/api/sender-groups`);
+  } = useSWR<SenderGroup[]>(`${API_URL}/api/sender-groups`);
   const params = useSearchParams();
   const [groupId, setGroupId] = useState<number | null>(null);
   const group = groups.find((item) => item.id === groupId) || groups[0];
@@ -68,7 +91,7 @@ function SendersContent() {
     setBusy(true);
     setActionError("");
     try {
-      const result = await checkResponse(
+      const result = await checkResponse<{ auth_url?: string }>(
         await authFetch(
           `${API_URL}/api/sender-groups/${id}/senders/oauth/start`,
           { method: "POST" },
@@ -83,8 +106,12 @@ function SendersContent() {
       setBusy(false);
     }
   };
-  const request = async (path: string, method: string, body?: object) => {
-    return checkResponse(
+  const request = async <T = Record<string, unknown>>(
+    path: string,
+    method: string,
+    body?: object,
+  ) => {
+    return checkResponse<T>(
       await authFetch(`${API_URL}${path}`, {
         method,
         ...(body
@@ -101,7 +128,7 @@ function SendersContent() {
     setBusy(true);
     setActionError("");
     try {
-      const result = await request(
+      const result = await request<{ id: number }>(
         `/api/sender-groups${groupDialog === "rename" ? `/${group.id}` : ""}`,
         groupDialog === "rename" ? "PATCH" : "POST",
         { name: groupName.trim() },
@@ -316,6 +343,7 @@ function SendersContent() {
                     </td>
                     <td>
                       <StatusBadge status={sender.status} />
+                      <GmailTrackingState sender={sender} />
                     </td>
                     <td>{sender.daily_cap} / day</td>
                     <td>
@@ -379,7 +407,8 @@ function SendersContent() {
         />
       )}
       <p className="app-footnote">
-        Limits help control how many emails each account sends.
+        Limits control daily sends. Connected accounts can also check Gmail for
+        replies, automated responses, and undelivered addresses.
       </p>
       <AppDialog
         open={!!groupDialog}

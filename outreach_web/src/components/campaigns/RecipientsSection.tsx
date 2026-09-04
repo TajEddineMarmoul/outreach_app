@@ -14,13 +14,13 @@ import {
   EllipsisVertical,
   Upload,
 } from "lucide-react";
-import { useApiClient } from "@/lib/api";
+import { API_URL, useApiClient } from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { StatusBadge } from "@/components/app-ui";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 const RECIPIENTS_PAGE_SIZE = 10;
 
 interface RecipientEntry {
@@ -28,6 +28,10 @@ interface RecipientEntry {
   email: string;
   custom_fields: Record<string, unknown>;
   status: string;
+  response_status: "replied" | "automated_response" | null;
+  delivery_detail: string | null;
+  responded_at: string | null;
+  bounced_at: string | null;
   source_type: string;
   created_at: string | null;
 }
@@ -40,29 +44,14 @@ interface RecipientsResponse {
   pages: number;
 }
 
-const STATUS_BADGES: Record<string, string> = {
-  approved: "bg-green-100 text-green-700",
-  queued: "bg-blue-100 text-blue-700",
-  sent: "bg-slate-100 text-slate-600",
-  failed: "bg-red-100 text-red-700",
-  rejected: "bg-amber-100 text-amber-700",
-  pending: "bg-amber-100 text-amber-700",
-};
-
-const STATUS_LABELS: Record<string, string> = {
-  approved: "Ready",
-  queued: "Waiting to send",
-  sent: "Sent",
-  failed: "Failed",
-  rejected: "Skipped",
-  pending: "Ready",
-};
-
 const STATUS_DESCRIPTIONS: Record<string, string> = {
   approved: "Ready for a future sending batch",
   queued: "Reserved for the delivery worker; no email has been sent yet",
   sent: "Email sent successfully",
-  failed: "Delivery failed and can be retried",
+  failed: "The app could not hand the email to Gmail; this can be retried",
+  bounced: "Gmail sent the email, but the recipient's mail server returned it",
+  replied: "A human reply was received in Gmail",
+  automated_response: "An automated reply or out-of-office response was received in Gmail",
   rejected: "Skipped before sending because required data was missing or the recipient was otherwise ineligible",
   pending: "Ready for a future sending batch",
 };
@@ -303,7 +292,7 @@ export default function RecipientsSection({
                 <tr className="bg-slate-50 border-b">
                   <th className="w-[36%] text-left px-4 py-2.5 font-semibold text-slate-600">Email</th>
                   <th className="text-left px-4 py-2.5 font-semibold text-slate-600">Details</th>
-                  <th className="text-left px-4 py-2.5 font-semibold text-slate-600 w-24">Status</th>
+                  <th className="text-left px-4 py-2.5 font-semibold text-slate-600 w-[30%]">Status</th>
                   <th className="text-right px-4 py-2.5 font-semibold text-slate-600 w-24">Actions</th>
                 </tr>
               </thead>
@@ -312,7 +301,13 @@ export default function RecipientsSection({
                   const fields = recipientFields(r.custom_fields || {});
                   const preview = fields.slice(0, 2).map(([name, value]) => `${name}: ${value}`).join(" · ");
                   const isExpanded = expandedRecipients.has(r.contact_id);
-                  const canReset = ["sent", "failed"].includes(r.status);
+                  const displayStatus = r.status === "bounced" ? "bounced" : r.response_status || r.status;
+                  const canReset = ["sent", "failed", "bounced"].includes(r.status);
+                  const statusDetail = r.delivery_detail || (
+                    ["replied", "automated_response"].includes(displayStatus)
+                      ? STATUS_DESCRIPTIONS[displayStatus]
+                      : null
+                  );
                   return (
                     <Fragment key={r.contact_id}>
                       <tr className="border-b hover:bg-slate-50">
@@ -326,12 +321,15 @@ export default function RecipientsSection({
                           </div>
                         </td>
                         <td className="px-4 py-2.5">
-                          <span
-                            className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${STATUS_BADGES[r.status] || "bg-slate-100 text-slate-600"}`}
-                            title={STATUS_DESCRIPTIONS[r.status] || r.status}
-                          >
-                            {STATUS_LABELS[r.status] || r.status}
-                          </span>
+                          <StatusBadge
+                            status={displayStatus}
+                            title={statusDetail || STATUS_DESCRIPTIONS[displayStatus] || displayStatus}
+                          />
+                          {statusDetail && (
+                            <span className="mt-1.5 block text-xs leading-4 text-slate-500">
+                              {statusDetail}
+                            </span>
+                          )}
                         </td>
                         <td className="px-4 py-2.5 text-right">
                           <div className="flex items-center justify-end gap-1">

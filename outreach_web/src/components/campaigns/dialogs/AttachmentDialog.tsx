@@ -2,9 +2,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { FileText, Loader2, Paperclip, Trash2, X } from "lucide-react";
-import { useApiClient } from "@/lib/api";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+import { API_URL, useApiClient } from "@/lib/api";
 
 export interface CampaignAttachmentSummary {
   id: number;

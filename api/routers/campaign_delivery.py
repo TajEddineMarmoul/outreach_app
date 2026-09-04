@@ -3,20 +3,24 @@ from __future__ import annotations
 import logging
 import hmac
 import os
+import csv
 from datetime import datetime, time, timezone
+from io import StringIO
 from typing import Literal
 
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from api.auth import get_current_user_id
 from api.delivery_safety import require_delivery_enabled
+from src.platform.gmail_activity import sync_selected_gmail_activity
 from src.platform.db import get_session
 from src.platform.jobs import create_send_jobs_for_next_batch
-from src.platform.models import AutopilotDaySchedule, Campaign, CampaignRecipient, Contact, SendJob, SendLog, Sender
+from src.platform.models import AutopilotDaySchedule, Campaign, CampaignRecipient, Contact, GmailActivityEvent, SendJob, SendLog, Sender
 from src.platform.scheduler import WEEKDAY_NAMES, next_autopilot_run
 from src.platform.services import campaign_sent_today, campaign_zone, connected_senders, ensure_user, require_group, serialize_group, user_zone, validate_timezone_name
 from src.platform.time import utcnow
@@ -845,6 +849,14 @@ def get_campaign_send_progress(
             CampaignRecipient.status == "failed",
         )
     ) or 0
+    bounced = session.scalar(
+        select(func.count())
+        .select_from(CampaignRecipient)
+        .where(
+            CampaignRecipient.campaign_id == campaign_id,
+            CampaignRecipient.status == "bounced",
+        )
+    ) or 0
     skipped = session.scalar(
         select(func.count())
         .select_from(CampaignRecipient)
@@ -860,6 +872,28 @@ def get_campaign_send_progress(
         select(func.count()).select_from(SendJob)
         .where(SendJob.campaign_id == campaign_id, SendJob.status.in_(("queued", "retry")))
     ) or 0
+    response_counts = dict(
+        session.execute(
+            select(GmailActivityEvent.event_type, func.count(func.distinct(SendLog.recipient_id)))
+            .join(SendLog, SendLog.id == GmailActivityEvent.send_log_id)
+            .join(
+                CampaignRecipient,
+                (CampaignRecipient.campaign_id == SendLog.campaign_id)
+                & (CampaignRecipient.contact_id == SendLog.recipient_id),
+            )
+            .where(
+                SendLog.campaign_id == campaign_id,
+                SendLog.user_id == user_id,
+                GmailActivityEvent.user_id == user_id,
+                GmailActivityEvent.event_type.in_(("replied", "automated_response")),
+                (
+                    CampaignRecipient.reset_at.is_(None)
+                    | (GmailActivityEvent.occurred_at >= CampaignRecipient.reset_at)
+                ),
+            )
+            .group_by(GmailActivityEvent.event_type)
+        ).all()
+    )
     current_recipient = None
     if running_job:
         contact = session.get(Contact, running_job.recipient_id)
@@ -876,7 +910,7 @@ def get_campaign_send_progress(
             .where(
                 SendLog.campaign_id == campaign_id,
                 SendLog.user_id == user_id,
-                SendLog.status.in_(("sent", "test_sent")),
+                SendLog.status.in_(("sent", "test_sent", "bounced")),
                 (CampaignRecipient.reset_at.is_(None) | (SendLog.sent_at >= CampaignRecipient.reset_at)),
             )
             .group_by(SendLog.sender_id)
@@ -902,12 +936,18 @@ def get_campaign_send_progress(
                         "remaining_today": remaining,
                         "capacity_state": "exhausted" if remaining == 0 else "low" if remaining <= warning_threshold else "available",
                         "last_error": sender["last_error"],
+                        "gmail_tracking_enabled": sender["gmail_tracking_enabled"],
+                        "gmail_tracking_permission": sender["gmail_tracking_permission"],
+                        "gmail_tracking_status": sender["gmail_tracking_status"],
+                        "gmail_watch_expiration_at": sender["gmail_watch_expiration_at"],
+                        "gmail_sync_checked_at": sender["gmail_sync_checked_at"],
+                        "gmail_sync_error": sender["gmail_sync_error"],
                     }
                 )
         except LookupError:
             pass
     is_running = running_job is not None
-    has_pending_work = sent + failed + skipped < total
+    has_pending_work = sent + bounced + failed + skipped < total
     worker_managed = campaign.status in {"sending", "scheduled", "autopilot"}
     is_waiting = worker_managed and has_pending_work and not is_running and queued == 0
     pause_reason = (campaign.send_settings or {}).get("pause_reason")
@@ -925,6 +965,11 @@ def get_campaign_send_progress(
         "timezone": campaign_zone(session, campaign).key,
         "total_recipients": total,
         "sent_count": sent,
+        "replied_count": response_counts.get("replied", 0),
+        "automated_response_count": response_counts.get("automated_response", 0),
+        "bounced_count": bounced,
+        "send_error_count": failed,
+        # Kept as a compatibility alias for older clients.
         "failed_count": failed,
         "skipped_count": skipped,
         "queued_count": queued,
@@ -939,6 +984,30 @@ def get_campaign_send_progress(
         "send_settings": dict(campaign.send_settings or {}),
         "pause_reason": pause_reason,
         "senders": sender_details,
+        "gmail_tracking": {
+            "enabled": any(sender["gmail_tracking_enabled"] for sender in sender_details),
+            "reconnect_required": any(not sender["gmail_tracking_permission"] for sender in sender_details),
+            "setup_required": any(
+                sender["gmail_tracking_permission"] and sender["gmail_tracking_status"] != "active"
+                for sender in sender_details
+            ),
+            "last_checked_at": max(
+                (
+                    sender["gmail_sync_checked_at"]
+                    for sender in sender_details
+                    if sender["gmail_sync_checked_at"]
+                ),
+                default=None,
+            ),
+            "error": next(
+                (
+                    sender["gmail_sync_error"]
+                    for sender in sender_details
+                    if sender["gmail_sync_error"]
+                ),
+                None,
+            ),
+        },
         "autopilot_schedule": [
             {"day": s.day_of_week, "cap": s.daily_cap, "start": s.start_time, "end": s.end_time}
             for s in day_schedules
@@ -950,6 +1019,27 @@ def get_campaign_send_progress(
     }
     logger.info("send-progress campaign=%s %s", campaign_id, {k: v for k, v in result.items() if k != "senders"})
     return result
+
+
+@router.post("/api/campaigns/{campaign_id}/sync-gmail-activity")
+def post_campaign_gmail_activity_sync(
+    campaign_id: int,
+    session: Session = Depends(get_session),
+    user_id: str = Depends(get_current_user_id),
+):
+    campaign = require_campaign(session, campaign_id, user_id)
+    sender_ids: list[int] = []
+    if campaign.selected_sender_group_id:
+        sender_ids = list(
+            session.scalars(
+                select(Sender.id).where(
+                    Sender.user_id == user_id,
+                    Sender.group_id == campaign.selected_sender_group_id,
+                    Sender.status == "connected",
+                )
+            )
+        )
+    return sync_selected_gmail_activity(session, sender_ids=sender_ids)
 
 
 @router.get("/api/campaigns/{campaign_id}/send-logs")
@@ -980,11 +1070,12 @@ def get_campaign_send_logs(
         .where(SendLog.campaign_id == campaign_id, SendLog.user_id == user_id)
         .subquery()
     )
+    activity_at = func.coalesce(SendLog.responded_at, SendLog.bounced_at, SendLog.sent_at, SendLog.created_at)
     logs = list(
         session.execute(
             select(SendLog, ranked_logs.c.attempt_number, ranked_logs.c.attempt_count)
             .join(ranked_logs, ranked_logs.c.log_id == SendLog.id)
-            .order_by(SendLog.created_at.desc(), SendLog.id.desc())
+            .order_by(activity_at.desc(), SendLog.id.desc())
             .offset((page - 1) * page_size)
             .limit(page_size)
         )
@@ -997,10 +1088,13 @@ def get_campaign_send_logs(
                 "sender_email": log.sender_email,
                 "subject": log.subject,
                 "status": log.status,
+                "response_status": log.response_status,
                 "error_message": log.error_message,
                 "attempt_number": attempt_number,
                 "attempt_count": attempt_count,
                 "sent_at": log.sent_at.isoformat() if log.sent_at else None,
+                "bounced_at": log.bounced_at.isoformat() if log.bounced_at else None,
+                "responded_at": log.responded_at.isoformat() if log.responded_at else None,
                 "created_at": log.created_at.isoformat() if log.created_at else None,
             }
             for log, attempt_number, attempt_count in logs
@@ -1048,6 +1142,35 @@ def get_campaign_recipients(
             .limit(page_size)
         )
     )
+    recipients_by_contact = {cr.contact_id: cr for cr, _ in rows}
+    activity_by_contact: dict[int, SendLog] = {}
+    if recipients_by_contact:
+        activity_logs = session.scalars(
+            select(SendLog)
+            .where(
+                SendLog.campaign_id == campaign_id,
+                SendLog.user_id == user_id,
+                SendLog.recipient_id.in_(recipients_by_contact),
+                SendLog.status.in_(("sent", "success", "bounced", "failed", "error")),
+            )
+            .order_by(
+                func.coalesce(
+                    SendLog.responded_at,
+                    SendLog.bounced_at,
+                    SendLog.sent_at,
+                    SendLog.created_at,
+                ).desc(),
+                SendLog.id.desc(),
+            )
+        )
+        for log in activity_logs:
+            recipient = recipients_by_contact.get(log.recipient_id or -1)
+            if not recipient or log.recipient_id in activity_by_contact:
+                continue
+            log_activity_at = log.responded_at or log.bounced_at or log.sent_at or log.created_at
+            if recipient.reset_at and (not log_activity_at or log_activity_at < recipient.reset_at):
+                continue
+            activity_by_contact[log.recipient_id] = log
 
     return {
         "items": [
@@ -1056,6 +1179,18 @@ def get_campaign_recipients(
                 "email": c.email_normalized,
                 "custom_fields": c.custom_fields or {},
                 "status": cr.status if c.status in {"approved", "sent"} else c.status,
+                "response_status": activity_by_contact[cr.contact_id].response_status if cr.contact_id in activity_by_contact else None,
+                "delivery_detail": activity_by_contact[cr.contact_id].error_message if cr.contact_id in activity_by_contact else None,
+                "responded_at": (
+                    activity_by_contact[cr.contact_id].responded_at.isoformat()
+                    if cr.contact_id in activity_by_contact and activity_by_contact[cr.contact_id].responded_at
+                    else None
+                ),
+                "bounced_at": (
+                    activity_by_contact[cr.contact_id].bounced_at.isoformat()
+                    if cr.contact_id in activity_by_contact and activity_by_contact[cr.contact_id].bounced_at
+                    else None
+                ),
                 "source_type": c.source_type,
                 "created_at": cr.created_at.isoformat() if cr.created_at else None,
             }
@@ -1066,6 +1201,58 @@ def get_campaign_recipients(
         "page_size": page_size,
         "pages": max(1, (total + page_size - 1) // page_size),
     }
+
+
+@router.get("/api/campaigns/{campaign_id}/send-logs/export")
+def export_campaign_send_logs(
+    campaign_id: int,
+    session: Session = Depends(get_session),
+    user_id: str = Depends(get_current_user_id),
+):
+    require_campaign(session, campaign_id, user_id)
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "Recipient",
+        "Sender",
+        "Subject",
+        "Delivery status",
+        "Response",
+        "Sent at (UTC)",
+        "Responded at (UTC)",
+        "Details",
+    ])
+    rows = session.scalars(
+        select(SendLog)
+        .where(SendLog.campaign_id == campaign_id, SendLog.user_id == user_id)
+        .order_by(SendLog.created_at.desc(), SendLog.id.desc())
+    )
+    delivery_labels = {
+        "sent": "Sent",
+        "success": "Sent",
+        "bounced": "Undelivered",
+        "failed": "Send error",
+        "error": "Send error",
+        "test_sent": "Test sent",
+    }
+    response_labels = {"replied": "Human reply", "automated_response": "Automated response"}
+    for row in rows:
+        values = [
+            row.recipient_email,
+            row.sender_email,
+            row.subject,
+            delivery_labels.get(row.status, row.status),
+            response_labels.get(row.response_status or "", ""),
+            row.sent_at.isoformat() if row.sent_at else "",
+            row.responded_at.isoformat() if row.responded_at else "",
+            row.error_message or "",
+        ]
+        writer.writerow(["'" + value if value.lstrip().startswith(("=", "+", "-", "@")) else value for value in values])
+    return Response(
+        "\ufeff" + output.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="campaign_{campaign_id}_activity.csv"'},
+    )
 
 
 @router.delete("/api/campaigns/{campaign_id}/recipients")
@@ -1116,7 +1303,7 @@ def patch_recipient_reset(
     )
     recipient.status = "approved"
     contact = session.get(Contact, contact_id)
-    if contact and contact.user_id == user_id and contact.status in {"pending", "sent"}:
+    if contact and contact.user_id == user_id and contact.status in {"pending", "sent", "bounced"}:
         contact.status = "approved"
     recipient.reset_at = utcnow()
     session.commit()

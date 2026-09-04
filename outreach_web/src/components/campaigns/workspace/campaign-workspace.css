@@ -550,6 +550,12 @@
 .campaign-ui .is-red {
   color: #cf2626;
 }
+.campaign-ui .is-orange {
+  color: #b45309;
+}
+.campaign-ui .is-amber {
+  color: #946012;
+}
 .campaign-ui .is-muted {
   color: var(--campaign-muted);
 }
@@ -1194,6 +1200,26 @@
   padding: 12px 0;
   margin-bottom: 0;
 }
+.campaign-outcome-board {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(250px, 1fr);
+  gap: 18px;
+}
+.campaign-outcome-board h2 {
+  margin: 0 0 7px;
+  color: var(--campaign-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.campaign-stats.is-delivery {
+  grid-template-columns: repeat(5, 1fr);
+}
+.campaign-stats.is-responses {
+  grid-template-columns: repeat(2, 1fr);
+}
 .campaign-stats > div {
   text-align: center;
   position: relative;
@@ -1717,6 +1743,9 @@
   .campaign-overview-grid {
     grid-template-columns: minmax(0, 1fr);
   }
+  .campaign-outcome-board {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .campaign-stats {
     grid-column: 1;
   }
@@ -1851,6 +1880,19 @@
   }
   .campaign-stats {
     padding: 18px 0;
+  }
+  .campaign-stats.is-delivery {
+    grid-template-columns: repeat(2, 1fr);
+    padding-block: 0;
+  }
+  .campaign-stats.is-delivery > div {
+    padding-block: 12px;
+  }
+  .campaign-stats.is-delivery > div:nth-child(n + 3) {
+    border-top: 1px solid var(--campaign-line);
+  }
+  .campaign-stats.is-delivery > div:nth-child(odd)::before {
+    display: none;
   }
   .campaign-stats dd {
     font-size: 25px;

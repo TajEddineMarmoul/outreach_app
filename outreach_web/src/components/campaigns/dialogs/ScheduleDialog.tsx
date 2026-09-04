@@ -5,7 +5,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useApiClient } from "@/lib/api";
+import {
+  API_URL,
+  checkResponse,
+  errorMessage,
+  useApiClient,
+} from "@/lib/api";
 import {
   formatTimeZoneLabel,
   formatViewerConversion,
@@ -13,24 +18,6 @@ import {
   supportedTimeZones,
   toZonedDateTimeInput,
 } from "@/lib/timezones";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Request failed";
-}
-
-function responseErrorMessage(data: unknown): string {
-  if (!data || typeof data !== "object") return "Request failed";
-  const detail = (data as { detail?: unknown }).detail;
-  if (typeof detail === "string") return detail;
-  if (detail && typeof detail === "object") {
-    const message = (detail as { message?: unknown; msg?: unknown }).message
-      ?? (detail as { msg?: unknown }).msg;
-    if (typeof message === "string") return message;
-  }
-  return "Request failed";
-}
 
 interface RecipientTemplateValidation {
   checked_recipient_count: number;
@@ -183,13 +170,14 @@ export default function ScheduleDialog({
       body.pacing_mode = autoPacing;
     }
     body.scheduled_at = naiveDateTimePayload(draftDate);
-    const res = await authFetch(`${API_URL}/api/campaigns/${campaignId}/send-settings`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.detail || "Failed to save send settings");
+    await checkResponse(
+      await authFetch(`${API_URL}/api/campaigns/${campaignId}/send-settings`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+      "Failed to save send settings",
+    );
   }, [authFetch, autoDelay, autoPacing, autoSchedule, autoStartAt, bulkDelay, campaignId, dryRun, scheduledAt, timezone]);
 
   useEffect(() => {
@@ -245,21 +233,17 @@ export default function ScheduleDialog({
       if (mode === "schedule" && scheduledAt) {
         body.scheduled_at = naiveDateTimePayload(scheduledAt);
       }
-      console.log(`[Send] POST /api/campaigns/${campaignId}/${endpoint}`, body);
-      const res = await authFetch(`${API_URL}/api/campaigns/${campaignId}/${endpoint}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json().catch(() => ({}));
-      console.log(`[Send] Response ${res.status}:`, data);
-      if (!res.ok) {
-        throw new Error(responseErrorMessage(data));
-      }
+      await checkResponse(
+        await authFetch(`${API_URL}/api/campaigns/${campaignId}/${endpoint}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+        "Request failed",
+      );
       finishClose();
     } catch (error: unknown) {
-      console.error("[Send] Error:", errorMessage(error));
-      alert(errorMessage(error));
+      alert(errorMessage(error, "Request failed"));
     } finally {
       setSendingAction(false);
     }
@@ -288,18 +272,17 @@ export default function ScheduleDialog({
       if (autoStartAt) {
         body.scheduled_at = naiveDateTimePayload(autoStartAt);
       }
-      const res = await authFetch(`${API_URL}/api/campaigns/${campaignId}/autopilot/start`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(responseErrorMessage(data));
-      }
+      await checkResponse(
+        await authFetch(`${API_URL}/api/campaigns/${campaignId}/autopilot/start`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+        "Request failed",
+      );
       finishClose();
     } catch (error: unknown) {
-      alert(errorMessage(error));
+      alert(errorMessage(error, "Request failed"));
     } finally {
       setSendingAction(false);
     }

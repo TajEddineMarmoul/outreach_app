@@ -6,28 +6,13 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Loader2, Plus, CheckCircle, Trash2, FolderPlus, AtSign, Pencil, Check, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useApiClient } from "@/lib/api";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
-
-interface Sender {
-  id: number;
-  group_id: number;
-  email: string;
-  display_name: string;
-  status: string;
-  daily_cap: number;
-  daily_cap_remaining?: number;
-}
-
-interface SenderGroup {
-  id: number;
-  name: string;
-  senders: Sender[];
-  connected_sender_count: number;
-  total_daily_cap: number;
-  error_sender_count: number;
-}
+import {
+  API_URL,
+  checkResponse,
+  errorMessage,
+  useApiClient,
+} from "@/lib/api";
+import type { Sender, SenderGroup } from "@/types/senders";
 
 function InlineEditSender({
   value,
@@ -113,37 +98,51 @@ export default function SenderSelectionDialog({
   const [connectingGroupId, setConnectingGroupId] = useState<number | null>(null);
   const [connectError, setConnectError] = useState("");
 
+  const request = async <T = Record<string, unknown>>(
+    path: string,
+    options: RequestInit,
+    fallback: string,
+  ) => {
+    return checkResponse<T>(
+      await authFetch(`${API_URL}${path}`, options),
+      fallback,
+    );
+  };
+
+  const refreshGroups = async () => {
+    await Promise.all([
+      mutateGroups(),
+      mutate(`${API_URL}/api/sender-groups`),
+    ]);
+  };
+
   const handlePatchSender = async (id: number, patch: Partial<Sender>) => {
     try {
-      const res = await authFetch(`${API_URL}/api/senders/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(patch),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        setConnectError(err.detail ?? "Could not update sender");
-        return;
-      }
-      mutateGroups();
-      mutate(`${API_URL}/api/sender-groups`);
-    } catch (err: any) {
-      setConnectError(err?.message ?? "Could not reach backend");
+      await request(
+        `/api/senders/${id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(patch),
+        },
+        "Could not update sender",
+      );
+      await refreshGroups();
+    } catch (error: unknown) {
+      setConnectError(errorMessage(error, "Could not reach backend"));
     }
   };
 
   const handleDelete = async (id: number) => {
     try {
-      const res = await authFetch(`${API_URL}/api/senders/${id}`, { method: "DELETE" });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        setConnectError(err.detail ?? "Could not remove sender");
-        return;
-      }
-      mutateGroups();
-      mutate(`${API_URL}/api/sender-groups`);
-    } catch (err: any) {
-      setConnectError(err?.message ?? "Could not reach backend");
+      await request(
+        `/api/senders/${id}`,
+        { method: "DELETE" },
+        "Could not remove sender",
+      );
+      await refreshGroups();
+    } catch (error: unknown) {
+      setConnectError(errorMessage(error, "Could not reach backend"));
     }
   };
 
@@ -151,20 +150,18 @@ export default function SenderSelectionDialog({
     const name = newName.trim();
     if (!name) return;
     try {
-      const res = await authFetch(`${API_URL}/api/sender-groups/${groupId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        setConnectError(err.detail ?? "Could not rename group");
-        return;
-      }
-      mutateGroups();
-      mutate(`${API_URL}/api/sender-groups`);
-    } catch (err: any) {
-      setConnectError(err?.message ?? "Could not reach backend");
+      await request(
+        `/api/sender-groups/${groupId}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name }),
+        },
+        "Could not rename group",
+      );
+      await refreshGroups();
+    } catch (error: unknown) {
+      setConnectError(errorMessage(error, "Could not reach backend"));
     }
   };
 
@@ -172,16 +169,15 @@ export default function SenderSelectionDialog({
     setConnectingGroupId(groupId);
     setConnectError("");
     try {
-      const res = await authFetch(`${API_URL}/api/sender-groups/${groupId}/senders/oauth/start`, { method: "POST" });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail ?? "Failed to start Gmail OAuth");
-      }
-      const { auth_url } = await res.json();
+      const { auth_url } = await request<{ auth_url?: string }>(
+        `/api/sender-groups/${groupId}/senders/oauth/start`,
+        { method: "POST" },
+        "Failed to start Gmail OAuth",
+      );
       if (!auth_url) throw new Error("OAuth start did not return an authorization URL");
       window.location.href = auth_url;
-    } catch (err: any) {
-      setConnectError(err?.message ?? "Could not reach backend");
+    } catch (error: unknown) {
+      setConnectError(errorMessage(error, "Could not reach backend"));
       setConnectingGroupId(null);
     }
   };
@@ -191,27 +187,25 @@ export default function SenderSelectionDialog({
     if (!name) return;
     setConnectError("");
     try {
-      const res = await authFetch(`${API_URL}/api/sender-groups`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        setConnectError(err.detail ?? "Could not create group");
-        return;
-      }
-      mutateGroups();
-      mutate(`${API_URL}/api/sender-groups`);
+      await request(
+        "/api/sender-groups",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name }),
+        },
+        "Could not create group",
+      );
+      await refreshGroups();
       setNewGroupName("");
       setAddingGroup(false);
-    } catch (err: any) {
-      setConnectError(err?.message ?? "Could not reach backend");
+    } catch (error: unknown) {
+      setConnectError(errorMessage(error, "Could not reach backend"));
     }
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
+    <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent className="sm:max-w-xl max-h-[85vh] flex flex-col p-6">
         <DialogHeader className="flex flex-row items-center justify-between space-y-0 pb-2 border-b border-slate-100 shrink-0">
           <div>

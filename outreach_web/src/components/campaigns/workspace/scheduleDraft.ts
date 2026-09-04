@@ -207,19 +207,3 @@ export function scheduleLabel(draft: ScheduleDraft) {
       : days.map((day) => day[0].toUpperCase() + day.slice(1, 3)).join(", ");
   return `${label || "No sending days"}${uniform ? `, ${clockLabel(first.start)}–${clockLabel(first.end)}` : " · Custom daily windows"} · ${draft.timezone}`;
 }
-
-export function responseProblem(
-  data: unknown,
-  fallback = "Could not save. Please try again.",
-): string {
-  if (!data || typeof data !== "object") return fallback;
-  const detail = (data as { detail?: unknown }).detail;
-  if (typeof detail === "string") return detail;
-  if (detail && typeof detail === "object") {
-    const message =
-      (detail as { message?: unknown; msg?: unknown }).message ??
-      (detail as { msg?: unknown }).msg;
-    if (typeof message === "string") return message;
-  }
-  return fallback;
-}

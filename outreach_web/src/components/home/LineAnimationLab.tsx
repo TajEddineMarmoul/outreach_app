@@ -4,6 +4,7 @@ import Link from "next/link";
 import { type CSSProperties, useLayoutEffect, useRef, useState } from "react";
 import {
   clampThreadPercentage,
+  hasReachedThreadPercentage,
   sampleThreadToPercentage,
   storyTriggerPercentages,
   threadPaths,
@@ -179,7 +180,7 @@ export default function LineAnimationLab() {
               {triggers.map((trigger) => {
                 const point = triggerPoints[trigger.id];
                 if (!point) return null;
-                const visible = progress >= trigger.percentage;
+                const visible = hasReachedThreadPercentage(progress, trigger.percentage);
                 const triggerStyle = { "--trigger-color": trigger.color } as CSSProperties;
 
                 return (

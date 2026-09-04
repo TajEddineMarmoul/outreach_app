@@ -8,18 +8,25 @@ import {
   CircleCheck,
   Pause,
   Mail,
+  MailX,
+  MessageSquareReply,
+  Bot,
   AlertCircle,
   ArrowRight,
   Loader2,
 } from "lucide-react";
 import { formatViewerWindow } from "@/lib/timezones";
+import { API_URL } from "@/lib/api";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 export interface CampaignProgress {
   campaign_status: string;
   timezone: string;
   total_recipients: number;
   sent_count: number;
+  replied_count: number;
+  automated_response_count: number;
+  bounced_count: number;
+  send_error_count: number;
   failed_count: number;
   skipped_count: number;
   queued_count: number;
@@ -238,8 +245,11 @@ export default function CampaignOverview({
     items: {
       id: number;
       status: string;
+      response_status: string | null;
       recipient_email: string;
       sent_at: string | null;
+      bounced_at: string | null;
+      responded_at: string | null;
       created_at: string | null;
     }[];
   }>(`${API_URL}/api/campaigns/${campaignId}/send-logs?page=1&page_size=3`, {
@@ -262,14 +272,20 @@ export default function CampaignOverview({
     0,
     progress.total_recipients -
       progress.sent_count -
-      progress.failed_count -
+      progress.bounced_count -
+      progress.send_error_count -
       progress.skipped_count,
   );
-  const stats = [
+  const deliveryStats = [
     { value: progress.sent_count, label: "sent", style: "is-blue" },
+    { value: progress.bounced_count, label: "undelivered", style: "is-orange" },
+    { value: progress.send_error_count, label: "send errors", style: "is-red" },
     { value: progress.skipped_count, label: "skipped", style: "is-muted" },
-    { value: progress.failed_count, label: "failed", style: "is-red" },
     { value: remaining, label: "remaining", style: "" },
+  ];
+  const responseStats = [
+    { value: progress.replied_count, label: "human replies", style: "is-blue" },
+    { value: progress.automated_response_count, label: "automated replies", style: "is-amber" },
   ];
   return (
     <>
@@ -279,14 +295,30 @@ export default function CampaignOverview({
         </div>
       )}
       <div className="campaign-overview-grid">
-        <dl className="campaign-stats">
-          {stats.map((stat) => (
-            <div key={stat.label}>
-              <dd className={stat.style}>{stat.value}</dd>
-              <dt>{stat.label}</dt>
-            </div>
-          ))}
-        </dl>
+        <div className="campaign-outcome-board">
+          <section>
+            <h2>Delivery</h2>
+            <dl className="campaign-stats is-delivery">
+              {deliveryStats.map((stat) => (
+                <div key={stat.label}>
+                  <dd className={stat.style}>{stat.value}</dd>
+                  <dt>{stat.label}</dt>
+                </div>
+              ))}
+            </dl>
+          </section>
+          <section>
+            <h2>Responses</h2>
+            <dl className="campaign-stats is-responses">
+              {responseStats.map((stat) => (
+                <div key={stat.label}>
+                  <dd className={stat.style}>{stat.value}</dd>
+                  <dt>{stat.label}</dt>
+                </div>
+              ))}
+            </dl>
+          </section>
+        </div>
         <section className="campaign-panel campaign-progress-card">
           <div className="campaign-progress-heading">
             <h2>Sending progress</h2>
@@ -374,22 +406,34 @@ export default function CampaignOverview({
         </div>
         {logs?.items.map((log) => (
           <div key={log.id} className="campaign-activity-row">
-            {log.status === "failed" ? (
+            {log.response_status === "replied" ? (
+              <MessageSquareReply className="is-blue" />
+            ) : log.response_status === "automated_response" ? (
+              <Bot />
+            ) : log.status === "bounced" ? (
+              <MailX className="is-orange" />
+            ) : log.status === "failed" ? (
               <AlertCircle className="is-red" />
             ) : (
               <Mail className="is-blue" />
             )}
             <span>
-              {log.status === "failed"
-                ? "Delivery failed for"
+              {log.response_status === "replied"
+                ? "Reply received from"
+                : log.response_status === "automated_response"
+                  ? "Automated reply from"
+                  : log.status === "bounced"
+                    ? "Email was undelivered to"
+                    : log.status === "failed"
+                      ? "Send error for"
                 : log.status === "test_sent"
                   ? "Test recorded for"
                   : "Email sent to"}{" "}
               {log.recipient_email}
             </span>
-            <time dateTime={log.sent_at || log.created_at || undefined}>
-              {log.sent_at || log.created_at
-                ? new Date(log.sent_at || log.created_at!).toLocaleTimeString(
+            <time dateTime={log.responded_at || log.bounced_at || log.sent_at || log.created_at || undefined}>
+              {log.responded_at || log.bounced_at || log.sent_at || log.created_at
+                ? new Date(log.responded_at || log.bounced_at || log.sent_at || log.created_at!).toLocaleTimeString(
                     undefined,
                     { hour: "numeric", minute: "2-digit" },
                   )

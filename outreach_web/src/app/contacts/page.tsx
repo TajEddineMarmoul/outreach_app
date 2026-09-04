@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import useSWR from "swr";
-import { useApiClient } from "@/lib/api";
+import { checkResponse, errorMessage, useApiClient } from "@/lib/api";
 import {
   ActionMenu,
   AppDialog,
@@ -14,9 +14,7 @@ import {
   Pager,
   SearchField,
   StatusBadge,
-  checkResponse,
   downloadCsv,
-  errorMessage,
   formatDate,
 } from "@/components/app-ui";
 
@@ -118,7 +116,13 @@ export default function ContactsPage() {
     try {
       const body = new FormData();
       body.append("file", file);
-      const result = await checkResponse(
+      const result = await checkResponse<{
+        imported?: number;
+        duplicates?: number;
+        skipped_missing_email?: number;
+        skipped_missing_required?: number;
+        do_not_contact?: number;
+      }>(
         await authFetch(`${API_URL}/api/contacts/import`, {
           method: "POST",
           body,

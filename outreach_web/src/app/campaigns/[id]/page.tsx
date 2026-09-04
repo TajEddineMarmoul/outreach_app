@@ -59,7 +59,7 @@ import AttachmentDialog, {
 import LogsSection from "@/components/campaigns/LogsSection";
 import ProgressSection from "@/components/campaigns/ProgressSection";
 import RecipientsSection from "@/components/campaigns/RecipientsSection";
-import { useApiClient } from "@/lib/api";
+import { API_URL, responseProblem, useApiClient } from "@/lib/api";
 import {
   extractTemplateVariables,
   templateVariableName,
@@ -80,12 +80,10 @@ import CampaignReview, {
 import useScheduleDraft from "@/components/campaigns/workspace/useScheduleDraft";
 import {
   launchRequest,
-  responseProblem,
   scheduleProblem,
 } from "@/components/campaigns/workspace/scheduleDraft";
 import "@/components/campaigns/workspace/campaign-workspace.css";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 const EDIT_LOCKED_STATUSES = new Set([
   "sending",
   "scheduled",

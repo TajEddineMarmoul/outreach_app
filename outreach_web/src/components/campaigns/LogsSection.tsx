@@ -2,10 +2,9 @@
 
 import { useState } from "react";
 import useSWR from "swr";
-import { ChevronLeft, ChevronRight, Clock, Loader2, PauseCircle, RefreshCw, Send } from "lucide-react";
-import { useApiClient } from "@/lib/api";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+import { ChevronLeft, ChevronRight, Clock, Download, Loader2, PauseCircle, RefreshCw, Send } from "lucide-react";
+import { API_URL, checkResponse, errorMessage, useApiClient } from "@/lib/api";
+import { StatusBadge } from "@/components/app-ui";
 
 interface LogEntry {
   id: number;
@@ -13,10 +12,13 @@ interface LogEntry {
   sender_email: string;
   subject: string;
   status: string;
+  response_status: string | null;
   error_message: string | null;
   attempt_number: number;
   attempt_count: number;
   sent_at: string | null;
+  bounced_at: string | null;
+  responded_at: string | null;
   created_at: string | null;
 }
 
@@ -29,8 +31,25 @@ interface CampaignState {
   pause_reason: string | null;
 }
 
+function activityDetail(log: LogEntry) {
+  if (log.error_message) return log.error_message;
+  if (log.response_status === "replied") return "A person wrote back";
+  if (log.response_status === "automated_response") {
+    return "Out-of-office or automated response";
+  }
+  if (log.status === "bounced") {
+    return "The recipient mail server returned this email";
+  }
+  if (log.status === "sent" || log.status === "success") {
+    return "Accepted by Gmail";
+  }
+  return "—";
+}
+
 export default function LogsSection({ campaignId }: { campaignId: string }) {
   const [page, setPage] = useState(1);
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState("");
   const { data, isLoading, mutate } = useSWR<LogsResponse>(
     `${API_URL}/api/campaigns/${campaignId}/send-logs?page=${page}&page_size=10`
   );
@@ -41,7 +60,7 @@ export default function LogsSection({ campaignId }: { campaignId: string }) {
   const { authFetch } = useApiClient();
 
   const exportLogs = async () => {
-    const response = await authFetch(`${API_URL}/api/campaigns/${campaignId}/logs/export`);
+    const response = await authFetch(`${API_URL}/api/campaigns/${campaignId}/send-logs/export`);
     if (!response.ok) return;
     const url = URL.createObjectURL(await response.blob());
     const link = document.createElement("a");
@@ -61,7 +80,19 @@ export default function LogsSection({ campaignId }: { campaignId: string }) {
   }
 
   const logs = data?.items || [];
-  const refresh = () => Promise.all([mutate(), mutateState()]);
+  const refresh = async () => {
+    setSyncing(true);
+    setSyncError("");
+    try {
+      const response = await authFetch(`${API_URL}/api/campaigns/${campaignId}/sync-gmail-activity`, { method: "POST" });
+      if (!response.ok) await checkResponse(response);
+      await Promise.all([mutate(), mutateState()]);
+    } catch (error) {
+      setSyncError(errorMessage(error, "Could not check Gmail right now."));
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   if (logs.length === 0 && !state?.is_waiting && !state?.is_sending && state?.campaign_status !== "paused") {
     return (
@@ -95,20 +126,27 @@ export default function LogsSection({ campaignId }: { campaignId: string }) {
           </div>
         </div>
       )}
+      {syncError && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800" role="alert">
+          {syncError}
+        </div>
+      )}
       <div className="flex items-center justify-between mb-3">
         <span className="text-xs text-slate-400">{data?.total || 0} delivery entries</span>
         <div className="flex gap-2">
           <button
             onClick={() => void refresh()}
-            className="text-xs text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1"
+            disabled={syncing}
+            className="flex min-h-9 items-center gap-1.5 rounded-md px-3 text-xs font-semibold text-blue-700 transition-colors hover:bg-blue-50 hover:text-blue-900 disabled:opacity-50"
           >
-            <RefreshCw className="w-3 h-3" />
-            Refresh
+            <RefreshCw className={`w-3.5 h-3.5 ${syncing ? "animate-spin" : ""}`} aria-hidden="true" />
+            {syncing ? "Checking Gmail…" : "Check Gmail"}
           </button>
           <button
             onClick={() => void exportLogs()}
-            className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+            className="flex min-h-9 items-center gap-1.5 rounded-md px-3 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900"
           >
+            <Download className="h-3.5 w-3.5" aria-hidden="true" />
             Export CSV
           </button>
         </div>
@@ -121,7 +159,8 @@ export default function LogsSection({ campaignId }: { campaignId: string }) {
               <th className="px-4 py-2.5">Sender</th>
               <th className="px-4 py-2.5">Subject</th>
               <th className="px-4 py-2.5">Result</th>
-              <th className="px-4 py-2.5">Error</th>
+              <th className="px-4 py-2.5">Response</th>
+              <th className="px-4 py-2.5">Details</th>
               <th className="px-4 py-2.5">Time</th>
             </tr>
           </thead>
@@ -132,28 +171,26 @@ export default function LogsSection({ campaignId }: { campaignId: string }) {
                 <td className="px-4 py-2.5 text-slate-500">{log.sender_email || "-"}</td>
                 <td className="px-4 py-2.5 text-slate-600 max-w-[250px] truncate">{log.subject}</td>
                 <td className="px-4 py-2.5">
-                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                    log.status === "sent" ? "bg-green-50 text-green-700" :
-                    log.status === "test_sent" ? "bg-blue-50 text-blue-700" :
-                    log.status === "failed" ? "bg-red-50 text-red-700" :
-                    "bg-slate-100 text-slate-600"
-                  }`}>
-                    {log.status}
-                  </span>
+                  <StatusBadge status={log.status} title={log.error_message || undefined} />
                   {log.status === "failed" && log.attempt_count > 1 && (
                     <div className="mt-1 text-[10px] text-slate-400">
                       Attempt {log.attempt_number}/{log.attempt_count}
                     </div>
                   )}
                 </td>
-                <td className="px-4 py-2.5 text-red-600 max-w-[280px]">
-                  <span className="block truncate" title={log.error_message || undefined}>
-                    {log.error_message || "-"}
+                <td className="px-4 py-2.5">
+                  {log.response_status ? (
+                    <StatusBadge status={log.response_status} />
+                  ) : "-"}
+                </td>
+                <td className="px-4 py-2.5 text-slate-600 max-w-[280px]">
+                  <span className="block truncate" title={activityDetail(log)}>
+                    {activityDetail(log)}
                   </span>
                 </td>
                 <td className="px-4 py-2.5 text-slate-400">
-                  {log.sent_at || log.created_at
-                    ? new Date(log.sent_at || log.created_at || "").toLocaleString()
+                  {log.responded_at || log.bounced_at || log.sent_at || log.created_at
+                    ? new Date(log.responded_at || log.bounced_at || log.sent_at || log.created_at || "").toLocaleString()
                     : "-"}
                 </td>
               </tr>
@@ -163,11 +200,11 @@ export default function LogsSection({ campaignId }: { campaignId: string }) {
       </div>
       {(data?.pages || 1) > 1 && (
         <div className="flex items-center justify-end gap-2 mt-3">
-          <button aria-label="Previous log page" title="Previous page" disabled={page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))} className="p-1.5 border border-slate-200 rounded-md disabled:opacity-40 hover:bg-slate-50">
+          <button aria-label="Previous log page" title="Previous page" disabled={page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))} className="flex min-h-9 min-w-9 items-center justify-center rounded-md border border-slate-200 disabled:opacity-40 hover:bg-slate-50">
             <ChevronLeft className="w-4 h-4" />
           </button>
           <span className="text-xs text-slate-500">Page {page} of {data?.pages || 1}</span>
-          <button aria-label="Next log page" title="Next page" disabled={page >= (data?.pages || 1)} onClick={() => setPage((value) => value + 1)} className="p-1.5 border border-slate-200 rounded-md disabled:opacity-40 hover:bg-slate-50">
+          <button aria-label="Next log page" title="Next page" disabled={page >= (data?.pages || 1)} onClick={() => setPage((value) => value + 1)} className="flex min-h-9 min-w-9 items-center justify-center rounded-md border border-slate-200 disabled:opacity-40 hover:bg-slate-50">
             <ChevronRight className="w-4 h-4" />
           </button>
         </div>

@@ -10,12 +10,16 @@ export type SampledThread = {
 export const storyTriggerPercentages = {
   alex: 10,
   sam: 40,
-  lena: 70,
+  lena: 82,
   check: 95,
 } as const;
 
 export function clampThreadPercentage(value: number) {
   return Math.min(100, Math.max(0, value));
+}
+
+export function hasReachedThreadPercentage(progress: number, trigger: number) {
+  return clampThreadPercentage(progress) >= clampThreadPercentage(trigger);
 }
 
 export function threadPointAtPercentage(path: SVGPathElement, percentage: number) {

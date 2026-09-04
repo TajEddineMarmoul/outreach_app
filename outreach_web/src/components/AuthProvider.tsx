@@ -4,7 +4,7 @@ import { useAuth } from "@clerk/nextjs";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useMemo } from "react";
 import { SWRConfig } from "swr";
-import { toBackendProxyUrl } from "@/lib/api";
+import { API_URL, toBackendProxyUrl } from "@/lib/api";
 
 export default function AuthProvider({ children }: { children: React.ReactNode }) {
   const { isSignedIn } = useAuth();
@@ -17,7 +17,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
 
     const syncTimezone = async () => {
       try {
-        const response = await fetch(toBackendProxyUrl(`${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"}/api/settings/timezone`), {
+        const response = await fetch(toBackendProxyUrl(`${API_URL}/api/settings/timezone`), {
           method: "PATCH",
           headers: {
             "Content-Type": "application/json",

@@ -25,10 +25,47 @@
 .envelope-letter-text.is-template { font-size: 28px; letter-spacing: -.7px; }
 .story-envelope--lena .envelope-letter-text { font-size: 22.5px; letter-spacing: -.9px; }
 .envelope-fruit { font-family: "Apple Color Emoji", "Segoe UI Emoji", sans-serif; font-size: 25px; letter-spacing: 0; }
+.envelope-story[data-thread-animating="true"] .story-envelope[data-thread-visible="false"] .envelope-reveal {
+  opacity: 0;
+  transform: translateY(20px) scale(.86);
+}
+.envelope-story[data-thread-animating="true"] .story-envelope[data-thread-visible="false"] .envelope-letter {
+  transform: translateY(119px);
+}
+.envelope-story[data-thread-animating="true"] .story-envelope[data-thread-visible="true"] .envelope-reveal {
+  animation: story-recipient-pop 230ms ease-in-out both;
+}
+.envelope-story[data-thread-animating="true"] .story-envelope[data-thread-visible="true"] .envelope-letter {
+  animation: story-letter-rise 290ms ease-in-out both;
+}
+.envelope-story[data-thread-animating="true"] .story-envelope--alex[data-thread-visible="true"] .envelope-float {
+  --story-float-x: -2px;
+  --story-float-angle: -.65deg;
+  animation: story-recipient-float 4700ms 650ms ease-in-out infinite;
+}
+.envelope-story[data-thread-animating="true"] .story-envelope--sam[data-thread-visible="true"] .envelope-float {
+  --story-float-x: 2px;
+  --story-float-angle: .65deg;
+  animation: story-recipient-float 5230ms 650ms ease-in-out infinite;
+}
+.envelope-story[data-thread-animating="true"] .story-envelope--lena[data-thread-visible="true"] .envelope-float {
+  --story-float-x: -2px;
+  --story-float-angle: -.65deg;
+  animation: story-recipient-float 5760ms 650ms ease-in-out infinite;
+}
 .story-delivered { position: absolute; left: 75.62%; top: 81.51%; display: flex; align-items: center; gap: 1.9cqw; }
 .story-delivered-icon-shell { flex: 0 0 auto; display: block; width: 5cqw; height: 5cqw; transition: transform 180ms ease-in-out, filter 180ms ease-in-out; }
 .story-delivered-icon { display: block; width: 100%; height: 100%; overflow: visible; transform-box: fill-box; transform-origin: center; }
 .story-delivered-text { font-size: 1.9cqw; line-height: 1.4; white-space: nowrap; letter-spacing: -.5px; transition: color 180ms ease-in-out, transform 180ms ease-in-out; }
+.envelope-story[data-thread-animating="true"] .story-delivered[data-thread-visible="false"] :is(.story-delivered-icon, .story-delivered-text) {
+  opacity: 0;
+}
+.envelope-story[data-thread-animating="true"] .story-delivered[data-thread-visible="true"] .story-delivered-icon {
+  animation: story-check-pop 300ms ease-in-out both;
+}
+.envelope-story[data-thread-animating="true"] .story-delivered[data-thread-visible="true"] .story-delivered-text {
+  animation: story-check-text 300ms ease-in-out both;
+}
 @media (hover: hover) and (pointer: fine) {
   .story-delivered:hover .story-delivered-icon-shell { transform: translateY(-2px) scale(1.06); filter: drop-shadow(0 7px 8px #00b98542); }
   .story-delivered:hover .story-delivered-text { color: #0055ff; transform: translateX(2px); }
@@ -53,4 +90,33 @@
 @media (prefers-reduced-motion: reduce) {
   .story-delivered-icon-shell, .story-delivered-text { transition: none; }
   .story-delivered:hover .story-delivered-icon-shell, .story-delivered:hover .story-delivered-text { transform: none; filter: none; }
+}
+
+@keyframes story-recipient-pop {
+  0% { opacity: 0; transform: translateY(20px) scale(.86); }
+  18% { opacity: 1; transform: translateY(10px) scale(.93); }
+  76% { opacity: 1; transform: translateY(-3px) scale(1.025); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes story-letter-rise {
+  0% { transform: translateY(119px); }
+  80% { transform: translateY(-4px); }
+  100% { transform: translateY(0); }
+}
+
+@keyframes story-recipient-float {
+  0%, 100% { transform: translate(0, 0) rotate(0deg); }
+  50% { transform: translate(var(--story-float-x), -6px) rotate(var(--story-float-angle)); }
+}
+
+@keyframes story-check-pop {
+  0% { opacity: 0; transform: scale(.58); }
+  68% { opacity: 1; transform: scale(1.1); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes story-check-text {
+  0% { opacity: 0; transform: translateX(-5px); }
+  100% { opacity: 1; transform: translateX(0); }
 }

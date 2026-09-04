@@ -50,6 +50,9 @@ class Sender(Base, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("user_id", "email", name="uq_senders_user_email"),
         Index("ix_senders_user_group_status", "user_id", "group_id", "status"),
+        Index("ix_senders_email_status", "email", "status"),
+        Index("ix_senders_gmail_watch_due", "gmail_tracking_status", "gmail_watch_refresh_at"),
+        Index("ix_senders_gmail_push_due", "gmail_push_pending", "gmail_push_retry_at"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -67,6 +70,17 @@ class Sender(Base, TimestampMixin):
     removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(Text)
     recent_error_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    gmail_tracking_status: Mapped[str] = mapped_column(String(40), default="needs_reconnect", nullable=False)
+    gmail_history_id: Mapped[str | None] = mapped_column(String(255))
+    gmail_pending_history_id: Mapped[str | None] = mapped_column(String(255))
+    gmail_watch_expiration_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    gmail_watch_refresh_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    gmail_backfill_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    gmail_push_pending: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    gmail_push_locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    gmail_push_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    gmail_sync_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    gmail_sync_error: Mapped[str | None] = mapped_column(Text)
 
     user: Mapped[User] = relationship(back_populates="senders")
     group: Mapped[SenderGroup] = relationship(back_populates="senders")
@@ -197,6 +211,40 @@ class SendLog(Base, TimestampMixin):
     gmail_message_id: Mapped[str | None] = mapped_column(String(255))
     gmail_thread_id: Mapped[str | None] = mapped_column(String(255))
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    bounced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    response_status: Mapped[str | None] = mapped_column(String(40), index=True)
+    responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    response_gmail_message_id: Mapped[str | None] = mapped_column(String(255))
+
+
+class GmailActivityEvent(Base, TimestampMixin):
+    __tablename__ = "gmail_activity_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "sender_id",
+            "gmail_message_id",
+            "event_type",
+            "recipient_email",
+            name="uq_gmail_activity_sender_message_type_recipient",
+        ),
+        Index("ix_gmail_activity_user_occurred", "user_id", "occurred_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    sender_id: Mapped[int] = mapped_column(
+        ForeignKey("senders.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    send_log_id: Mapped[int | None] = mapped_column(
+        ForeignKey("send_log.id", ondelete="SET NULL"), index=True
+    )
+    gmail_message_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    recipient_email: Mapped[str] = mapped_column(String(320), nullable=False)
+    detail: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class UserSettings(Base, TimestampMixin):

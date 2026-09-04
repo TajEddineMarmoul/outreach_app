@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import useSWR from "swr";
-import { useApiClient } from "@/lib/api";
+import { Bot, CircleAlert, ListChecks, MailCheck, MailX, MessageSquareReply } from "lucide-react";
+import { checkResponse, errorMessage, useApiClient } from "@/lib/api";
 import {
   ActionMenu,
   MenuAction,
@@ -11,14 +12,16 @@ import {
   PageState,
   Pager,
   StatusBadge,
-  checkResponse,
-  errorMessage,
 } from "@/components/app-ui";
 
 interface Analytics {
   page: number;
   attempts: number;
   sent: number;
+  replied: number;
+  automated_responses: number;
+  undelivered: number;
+  send_errors: number;
   failed: number;
   series: { date: string; sent: number }[];
   items: {
@@ -26,6 +29,8 @@ interface Analytics {
     email: string;
     subject: string;
     status: string;
+    response_status?: string | null;
+    responded_at?: string | null;
     created_at: string;
     error_message?: string;
   }[];
@@ -102,20 +107,42 @@ export default function AnalyticsPage() {
       />
       {data && !error && (
         <>
-          <dl className="app-stats">
-            <div>
-              <dt>Attempts</dt>
-              <dd>{data.attempts.toLocaleString()}</dd>
-            </div>
-            <div>
-              <dt>Sent</dt>
-              <dd style={{ color: "#00724f" }}>{data.sent.toLocaleString()}</dd>
-            </div>
-            <div>
-              <dt>Failed</dt>
-              <dd>{data.failed.toLocaleString()}</dd>
-            </div>
-          </dl>
+          <div className="app-outcome-board">
+            <section>
+              <h2>Delivery</h2>
+              <dl className="app-stats is-delivery-grid">
+                <div>
+                  <dt className="app-metric-label"><ListChecks size={15} aria-hidden="true" />Attempts</dt>
+                  <dd>{data.attempts.toLocaleString()}</dd>
+                </div>
+                <div>
+                  <dt className="app-metric-label is-success"><MailCheck size={15} aria-hidden="true" />Sent</dt>
+                  <dd style={{ color: "#00724f" }}>{data.sent.toLocaleString()}</dd>
+                </div>
+                <div>
+                  <dt className="app-metric-label is-undelivered"><MailX size={15} aria-hidden="true" />Undelivered</dt>
+                  <dd style={{ color: "#9a4c0b" }}>{data.undelivered.toLocaleString()}</dd>
+                </div>
+                <div>
+                  <dt className="app-metric-label is-error"><CircleAlert size={15} aria-hidden="true" />Send errors</dt>
+                  <dd>{data.send_errors.toLocaleString()}</dd>
+                </div>
+              </dl>
+            </section>
+            <section>
+              <h2>Responses</h2>
+              <dl className="app-stats is-response-grid">
+                <div>
+                  <dt className="app-metric-label is-info"><MessageSquareReply size={15} aria-hidden="true" />Human replies</dt>
+                  <dd style={{ color: "#0751ce" }}>{data.replied.toLocaleString()}</dd>
+                </div>
+                <div>
+                  <dt className="app-metric-label is-warning"><Bot size={15} aria-hidden="true" />Automated replies</dt>
+                  <dd style={{ color: "#8a5a13" }}>{data.automated_responses.toLocaleString()}</dd>
+                </div>
+              </dl>
+            </section>
+          </div>
           <section
             className="app-panel app-chart"
             aria-labelledby="chart-title"
@@ -204,6 +231,7 @@ export default function AnalyticsPage() {
                           <th>Subject</th>
                           <th>Date / time (UTC)</th>
                           <th>Status</th>
+                          <th>Response</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -224,6 +252,13 @@ export default function AnalyticsPage() {
                             <td>
                               <StatusBadge status={item.status} />
                             </td>
+                            <td>
+                              {item.response_status ? (
+                                <StatusBadge status={item.response_status} />
+                              ) : (
+                                <span className="app-muted">—</span>
+                              )}
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -240,8 +275,10 @@ export default function AnalyticsPage() {
             </div>
           </details>
           <p className="app-footnote">
-            Sent means the email provider accepted the message. Test simulations
-            are excluded. Open and click tracking are not collected.
+            Sent means Gmail accepted the message and no rejection was found.
+            Undelivered means the recipient server returned it. Send errors happen
+            before Gmail accepts it. Replies exclude automated responses. Test
+            simulations are excluded; opens and clicks are not tracked.
           </p>
         </>
       )}

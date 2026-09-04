@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { Plus } from "lucide-react";
-import { useApiClient } from "@/lib/api";
+import { checkResponse, errorMessage, useApiClient } from "@/lib/api";
 import {
   ActionMenu,
   AppDialog,
@@ -16,8 +16,6 @@ import {
   PageState,
   SearchField,
   StatusBadge,
-  checkResponse,
-  errorMessage,
   formatDate,
 } from "@/components/app-ui";
 
@@ -76,7 +74,7 @@ function CampaignsContent() {
     setBusy(true);
     setActionError("");
     try {
-      const created = await checkResponse(
+      const created = await checkResponse<{ id: number }>(
         await authFetch(`${API_URL}/api/campaigns`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -97,7 +95,7 @@ function CampaignsContent() {
     setBusy(true);
     setActionError("");
     try {
-      const copy = await checkResponse(
+      const copy = await checkResponse<{ id: number }>(
         await authFetch(`${API_URL}/api/campaigns/${id}/duplicate`, {
           method: "POST",
         }),

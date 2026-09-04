@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import useSWR from "swr";
 import { useUser } from "@clerk/nextjs";
-import { useApiClient } from "@/lib/api";
+import { checkResponse, errorMessage, useApiClient } from "@/lib/api";
 import { isAdminUser } from "@/lib/auth";
 import { formatTimeZoneLabel, supportedTimeZones } from "@/lib/timezones";
 import {
@@ -13,8 +13,6 @@ import {
   PageHeading,
   PageState,
   StatusBadge,
-  checkResponse,
-  errorMessage,
 } from "@/components/app-ui";
 
 interface Settings {

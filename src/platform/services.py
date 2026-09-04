@@ -8,6 +8,7 @@ from typing import Iterable
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
+from src.gmail_sender import GMAIL_READONLY_SCOPE
 from src.platform.models import (
     Campaign,
     AutopilotDaySchedule,
@@ -215,7 +216,7 @@ def sender_sent_count_today(
             .select_from(SendLog)
             .where(
                 SendLog.sender_id == sender_id,
-                SendLog.status == "sent",
+                SendLog.status.in_(("sent", "bounced")),
                 SendLog.sent_at >= start,
                 SendLog.sent_at < end,
             )
@@ -240,7 +241,7 @@ def campaign_sent_today(
             .select_from(SendLog)
             .where(
                 SendLog.campaign_id == campaign_id,
-                SendLog.status.in_(("sent", "test_sent")),
+                SendLog.status.in_(("sent", "test_sent", "bounced")),
                 SendLog.sent_at >= start,
                 SendLog.sent_at < end,
             )
@@ -514,6 +515,8 @@ def eligible_senders(
 
 def serialize_sender(session: Session, sender: Sender) -> dict:
     sent_today = sender_sent_count_today(session, sender.id)
+    gmail_tracking_permission = GMAIL_READONLY_SCOPE in set(sender.scopes or [])
+    gmail_tracking_enabled = gmail_tracking_permission and sender.gmail_tracking_status == "active"
     return {
         "id": sender.id,
         "group_id": sender.group_id,
@@ -526,6 +529,12 @@ def serialize_sender(session: Session, sender: Sender) -> dict:
         "revoked_at": sender.revoked_at.isoformat() if sender.revoked_at else None,
         "removed_at": sender.removed_at.isoformat() if sender.removed_at else None,
         "last_error": sender.last_error,
+        "gmail_tracking_enabled": gmail_tracking_enabled,
+        "gmail_tracking_permission": gmail_tracking_permission,
+        "gmail_tracking_status": sender.gmail_tracking_status,
+        "gmail_watch_expiration_at": sender.gmail_watch_expiration_at.isoformat() if sender.gmail_watch_expiration_at else None,
+        "gmail_sync_checked_at": sender.gmail_sync_checked_at.isoformat() if sender.gmail_sync_checked_at else None,
+        "gmail_sync_error": sender.gmail_sync_error,
         "sent_today": sent_today,
         "daily_cap_remaining": max(sender.daily_cap - sent_today, 0),
     }
@@ -557,6 +566,8 @@ def upsert_connected_sender(
     scopes: Iterable[str],
 ) -> Sender:
     normalized = email.strip().lower()
+    granted_scopes = list(scopes)
+    tracking_status = "pending" if GMAIL_READONLY_SCOPE in set(granted_scopes) else "needs_reconnect"
     sender = session.scalar(select(Sender).where(Sender.user_id == user_id, Sender.email == normalized))
     now = utcnow()
     existing_default = session.scalar(
@@ -566,13 +577,24 @@ def upsert_connected_sender(
         sender.group_id = group_id
         sender.display_name = display_name or sender.display_name or ""
         sender.encrypted_oauth_credentials = encrypted_credentials
-        sender.scopes = list(scopes)
+        sender.scopes = granted_scopes
         sender.status = "connected"
         sender.connected_at = now
         sender.revoked_at = None
         sender.removed_at = None
         sender.last_error = None
         sender.recent_error_at = None
+        sender.gmail_tracking_status = tracking_status
+        sender.gmail_history_id = None
+        sender.gmail_pending_history_id = None
+        sender.gmail_watch_expiration_at = None
+        sender.gmail_watch_refresh_at = None
+        sender.gmail_backfill_completed_at = None
+        sender.gmail_push_pending = 0
+        sender.gmail_push_locked_at = None
+        sender.gmail_push_retry_at = None
+        sender.gmail_sync_checked_at = None
+        sender.gmail_sync_error = None
         if not existing_default:
             sender.is_default = 1
     else:
@@ -582,8 +604,9 @@ def upsert_connected_sender(
             email=normalized,
             display_name=display_name,
             encrypted_oauth_credentials=encrypted_credentials,
-            scopes=list(scopes),
+            scopes=granted_scopes,
             status="connected",
+            gmail_tracking_status=tracking_status,
             daily_cap=10,
             connected_at=now,
             is_default=1 if existing_default is None else 0,
@@ -599,6 +622,17 @@ def mark_sender_removed(sender: Sender) -> None:
     sender.encrypted_oauth_credentials = None
     sender.revoked_at = now
     sender.removed_at = now
+    sender.gmail_tracking_status = "disabled"
+    sender.gmail_history_id = None
+    sender.gmail_pending_history_id = None
+    sender.gmail_watch_expiration_at = None
+    sender.gmail_watch_refresh_at = None
+    sender.gmail_backfill_completed_at = None
+    sender.gmail_push_pending = 0
+    sender.gmail_push_locked_at = None
+    sender.gmail_push_retry_at = None
+    sender.gmail_sync_checked_at = None
+    sender.gmail_sync_error = None
 
 
 def mark_oauth_state_used(state: OAuthState) -> None:

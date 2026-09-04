@@ -5,11 +5,10 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { ChevronLeft, ChevronRight, Loader2, Paperclip, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useApiClient } from "@/lib/api";
+import { API_URL, useApiClient } from "@/lib/api";
 import type { CampaignAttachmentSummary } from "@/components/campaigns/dialogs/AttachmentDialog";
 import { emailPreviewDocument } from "@/components/campaigns/workspace/emailPreviewDocument";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 interface PreviewEntry {
   id: number;

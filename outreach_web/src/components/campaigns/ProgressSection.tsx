@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from "react";
 import useSWR from "swr";
-import { AlertTriangle, CheckCircle2, Clock, Loader2, PauseCircle, Send, Timer, XCircle } from "lucide-react";
+import { AlertTriangle, Bot, CheckCircle2, Clock, Loader2, MailX, MessageSquareReply, PauseCircle, Send, Timer, XCircle } from "lucide-react";
+import { API_URL } from "@/lib/api";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 const POLL_INTERVAL = 3000;
 
 interface ProgressData {
@@ -12,6 +12,10 @@ interface ProgressData {
   timezone: string;
   total_recipients: number;
   sent_count: number;
+  replied_count: number;
+  automated_response_count: number;
+  bounced_count: number;
+  send_error_count: number;
   failed_count: number;
   skipped_count: number;
   queued_count: number;
@@ -27,6 +31,13 @@ interface ProgressData {
   campaign_sent_today: number | null;
   autopilot_schedule: { day: string; cap: number; start: string; end: string }[] | null;
   dry_run: boolean;
+  gmail_tracking: {
+    enabled: boolean;
+    reconnect_required: boolean;
+    setup_required: boolean;
+    last_checked_at: string | null;
+    error: string | null;
+  };
   recipient_validation: {
     checked_recipient_count: number;
     ready_recipient_count: number;
@@ -63,7 +74,7 @@ export default function ProgressSection({ campaignId }: { campaignId: string }) 
   const [now, setNow] = useState(() => Date.now());
   const { data, isLoading } = useSWR<ProgressData>(
     `${API_URL}/api/campaigns/${campaignId}/send-progress`,
-    { refreshInterval: (latest) => latest?.is_active ? POLL_INTERVAL : 0 }
+    { refreshInterval: (latest) => latest?.is_active ? POLL_INTERVAL : 30000 }
   );
 
   useEffect(() => {
@@ -85,10 +96,11 @@ export default function ProgressSection({ campaignId }: { campaignId: string }) 
   }
 
   const total = data.total_recipients;
-  const done = data.sent_count + data.failed_count + data.skipped_count;
+  const done = data.sent_count + data.bounced_count + data.send_error_count + data.skipped_count;
   const pct = Math.round((done / Math.max(total, 1)) * 100);
   const sentWidth = done > 0 ? (data.sent_count / done) * 100 : 0;
-  const failedWidth = done > 0 ? (data.failed_count / done) * 100 : 0;
+  const bouncedWidth = done > 0 ? (data.bounced_count / done) * 100 : 0;
+  const sendErrorWidth = done > 0 ? (data.send_error_count / done) * 100 : 0;
   const skippedWidth = done > 0 ? (data.skipped_count / done) * 100 : 0;
   const countdown = formatCountdown(data.next_batch_at, now);
   const isComplete = data.campaign_status === "ended" || (total > 0 && done >= total);
@@ -129,17 +141,54 @@ export default function ProgressSection({ campaignId }: { campaignId: string }) 
             style={{ width: `${Math.min(pct, 100)}%` }}
           >
             <div className="h-full bg-green-500" style={{ width: `${sentWidth}%` }} />
-            <div className="h-full bg-red-500" style={{ width: `${failedWidth}%` }} />
+            <div className="h-full bg-orange-500" style={{ width: `${bouncedWidth}%` }} />
+            <div className="h-full bg-red-500" style={{ width: `${sendErrorWidth}%` }} />
             <div className="h-full bg-amber-400" style={{ width: `${skippedWidth}%` }} />
           </div>
         </div>
-        <div className="flex gap-4 mt-1.5 text-xs text-slate-400">
-          <span className="flex items-center gap-1"><CheckCircle2 className="w-3 h-3 text-green-500" />{data.sent_count} sent</span>
-          <span className="flex items-center gap-1"><XCircle className="w-3 h-3 text-red-500" />{data.failed_count} failed</span>
-          <span className="flex items-center gap-1"><AlertTriangle className="w-3 h-3 text-amber-500" />{data.skipped_count} skipped</span>
-          <span className="flex items-center gap-1"><Clock className="w-3 h-3 text-amber-500" />{data.queued_count} queued</span>
+        <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold">
+          <span className="flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-emerald-800"><CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />{data.sent_count} sent</span>
+          <span className="flex items-center gap-1.5 rounded-md border border-orange-200 bg-orange-50 px-2.5 py-1 text-orange-800"><MailX className="h-3.5 w-3.5" aria-hidden="true" />{data.bounced_count} undelivered</span>
+          <span className="flex items-center gap-1.5 rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1 text-rose-800"><XCircle className="h-3.5 w-3.5" aria-hidden="true" />{data.send_error_count} send errors</span>
+          <span className="flex items-center gap-1.5 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1 text-amber-800"><AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />{data.skipped_count} skipped</span>
+          <span className="flex items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 text-slate-700"><Clock className="h-3.5 w-3.5" aria-hidden="true" />{data.queued_count} queued</span>
         </div>
       </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="flex items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3">
+          <MessageSquareReply className="h-5 w-5 text-blue-600" aria-hidden="true" />
+          <div><div className="text-xl font-semibold text-blue-900">{data.replied_count}</div><div className="text-xs font-semibold text-blue-800">Human replies</div><div className="text-xs text-blue-700">A person wrote back</div></div>
+        </div>
+        <div className="flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+          <Bot className="h-5 w-5 text-amber-600" aria-hidden="true" />
+          <div><div className="text-xl font-semibold text-amber-900">{data.automated_response_count}</div><div className="text-xs font-semibold text-amber-800">Automated replies</div><div className="text-xs text-amber-700">Out-of-office or system response</div></div>
+        </div>
+      </div>
+
+      {data.gmail_tracking.reconnect_required && (
+        <div className="flex items-start gap-3 border border-amber-200 bg-amber-50 px-4 py-3 rounded-lg" role="status">
+          <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
+          <div className="text-sm text-amber-900">
+            Reconnect the campaign&apos;s Gmail account to count replies, automated responses, and undelivered addresses.
+          </div>
+        </div>
+      )}
+
+      {!data.gmail_tracking.reconnect_required && data.gmail_tracking.setup_required && !data.gmail_tracking.error && (
+        <div className="flex items-start gap-3 border border-blue-200 bg-blue-50 px-4 py-3 rounded-lg" role="status">
+          <Clock className="w-5 h-5 text-blue-600 mt-0.5 shrink-0" />
+          <div className="text-sm text-blue-900">
+            Live Gmail event tracking is being set up. New replies and undelivered emails will update automatically.
+          </div>
+        </div>
+      )}
+
+      {data.gmail_tracking.error && (
+        <div className="border border-red-200 bg-red-50 px-4 py-3 rounded-lg text-sm text-red-800" role="alert">
+          {data.gmail_tracking.error}
+        </div>
+      )}
 
       {data.recipient_validation && data.recipient_validation.skipped_recipient_count > 0 && (
         <div className="flex items-start gap-3 border border-amber-200 bg-amber-50 px-4 py-3 rounded-lg">
@@ -284,7 +333,7 @@ export default function ProgressSection({ campaignId }: { campaignId: string }) 
 
       {isComplete && (
         <div className="text-center py-4 text-sm text-green-600 font-semibold">
-          Sending finished. {data.sent_count} sent, {data.skipped_count} skipped, {data.failed_count} failed.
+          Sending finished. {data.sent_count} sent, {data.bounced_count} undelivered, {data.send_error_count} send errors, and {data.skipped_count} skipped.
         </div>
       )}
     </div>

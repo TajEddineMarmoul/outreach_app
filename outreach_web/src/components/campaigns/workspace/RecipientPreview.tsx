@@ -5,8 +5,8 @@ import useSWR from "swr";
 import { ArrowLeft, ArrowRight, Users, Loader2 } from "lucide-react";
 import { TEMPLATE_VARIABLE_PATTERN } from "@/lib/templateVariables";
 import { emailPreviewDocument } from "./emailPreviewDocument";
+import { API_URL } from "@/lib/api";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 type Recipient = {
   contact_id: number;
   email: string;
