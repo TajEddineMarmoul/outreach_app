@@ -1,0 +1,100 @@
+.control {
+  position: relative;
+  width: 100%;
+}
+
+.input {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 10px 44px 10px 12px;
+  border: 1px solid var(--campaign-line, #cdd6e5);
+  border-radius: 4px;
+  background: #fff;
+  color: var(--campaign-ink, #101a34);
+  font: inherit;
+  text-overflow: ellipsis;
+}
+
+.input:focus-visible {
+  outline: 2px solid var(--campaign-blue, #0751f8);
+  outline-offset: 2px;
+}
+
+.input:disabled {
+  background: #f6f8fc;
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.trigger {
+  position: absolute;
+  inset: 0 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  color: var(--campaign-muted, #506184);
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.trigger:focus-visible {
+  outline: 2px solid var(--campaign-blue, #0751f8);
+  outline-offset: -3px;
+}
+
+.trigger:disabled { cursor: not-allowed; }
+.trigger:hover:not(:disabled) { color: var(--campaign-blue, #0751f8); }
+
+.hint {
+  margin: 0;
+  color: var(--campaign-muted, #506184);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.positioner { z-index: 80; }
+
+.popup {
+  width: var(--anchor-width);
+  max-width: var(--available-width);
+  max-height: var(--available-height);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #dce2ec;
+  border-radius: 8px;
+  background: #fff;
+  color: #101a34;
+  box-shadow: 0 8px 28px rgb(16 26 52 / 14%);
+}
+
+.list {
+  max-height: 300px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px;
+  scroll-padding-block: 4px;
+}
+
+.option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 52px;
+  padding: 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  scroll-margin-block: 4px;
+}
+
+.option[data-highlighted] { background: #edf3ff; }
+.indicator { display: grid; width: 16px; flex-shrink: 0; color: #0751f8; }
+.name { display: grid; gap: 2px; min-width: 0; flex: 1; }
+.city { font-size: 14px; font-weight: 500; }
+.zone { font-size: 12px; color: #506184; overflow-wrap: anywhere; }
+.offset { font-size: 12px; color: #344563; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.empty { padding: 16px; font-size: 14px; color: #506184; }
+.empty:empty { display: none; }
+.footer { margin: 0; border-top: 1px solid #dce2ec; padding: 8px 12px; font-size: 12px; color: #506184; }

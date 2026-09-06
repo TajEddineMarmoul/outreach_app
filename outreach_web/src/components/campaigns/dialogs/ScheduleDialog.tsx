@@ -3,6 +3,7 @@ import useSWR from "swr";
 import { AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { TimeZonePicker } from "@/components/ui/timezone-picker";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -12,10 +13,8 @@ import {
   useApiClient,
 } from "@/lib/api";
 import {
-  formatTimeZoneLabel,
   formatViewerConversion,
   naiveDateTimePayload,
-  supportedTimeZones,
   toZonedDateTimeInput,
 } from "@/lib/timezones";
 
@@ -75,14 +74,13 @@ export default function ScheduleDialog({
     sunday: { active: false, cap: "10", start: "09:00", end: "17:00" },
   });
   const [autoDelay, setAutoDelay] = useState(5);
-  const [autoPacing, setAutoPacing] = useState<"fixed_delay" | "spread_evenly">("fixed_delay");
+  const [autoPacing, setAutoPacing] = useState<"fixed_delay" | "spread_evenly">("spread_evenly");
   const [autoStartAt, setAutoStartAt] = useState("");
   const [timezone, setTimezone] = useState("UTC");
   const viewerTimezone = useMemo(
     () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
     []
   );
-  const timezoneOptions = useMemo(() => supportedTimeZones(), []);
 
   const [sendingAction, setSendingAction] = useState(false);
   const [settingsReady, setSettingsReady] = useState(false);
@@ -114,7 +112,7 @@ export default function ScheduleDialog({
       const savedDelay = Number(settings.delay_minutes ?? 5);
       setBulkDelay(savedDelay);
       setAutoDelay(savedDelay);
-      setAutoPacing(settings.pacing_mode === "spread_evenly" ? "spread_evenly" : "fixed_delay");
+      setAutoPacing(settings.pacing_mode === "fixed_delay" ? "fixed_delay" : "spread_evenly");
       setDryRun(Boolean(settings.dry_run ?? false));
       if (settings.draft_scheduled_at) {
         const localValue = toZonedDateTimeInput(settings.draft_scheduled_at, campaignTimezone);
@@ -301,17 +299,12 @@ export default function ScheduleDialog({
   const timezoneField = (id: string) => (
     <div className="space-y-1.5 rounded-lg border border-blue-100 bg-blue-50/50 p-3">
       <label htmlFor={id} className="text-xs font-semibold text-slate-800">Campaign timezone</label>
-      <select
+      <TimeZonePicker
         id={id}
         value={timezone}
-        onChange={(event) => setTimezone(event.target.value)}
+        onChange={setTimezone}
         disabled={readOnly}
-        className="h-9 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-sm text-slate-900 outline-none transition-colors focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:opacity-70"
-      >
-        {timezoneOptions.map((option) => (
-          <option key={option} value={option}>{formatTimeZoneLabel(option)}</option>
-        ))}
-      </select>
+      />
       <p className="text-[11px] leading-4 text-slate-600">
         Times stay attached to this campaign. Your timezone is {viewerTimezone}.
       </p>

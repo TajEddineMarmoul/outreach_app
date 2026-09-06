@@ -80,9 +80,9 @@ export function hydrateSchedule(summary: SavedSchedule): ScheduleDraft {
     startOnDate: Boolean(settings.draft_scheduled_at),
     delay: String(settings.delay_minutes ?? 5),
     pacing:
-      settings.pacing_mode === "spread_evenly"
-        ? "spread_evenly"
-        : "fixed_delay",
+      settings.pacing_mode === "fixed_delay"
+        ? "fixed_delay"
+        : "spread_evenly",
     dryRun: Boolean(settings.dry_run),
   };
 }

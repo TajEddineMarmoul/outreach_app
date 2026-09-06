@@ -38,3 +38,31 @@ test('after-launch mode never inherits a hidden start date', () => {
   assert.equal(request.endpoint, 'send-now');
   assert.equal(request.body.scheduled_at, undefined);
 });
+
+test('new autopilot schedules save and launch with evenly spread delivery', () => {
+  const value = schedule.hydrateSchedule({ timezone: 'Europe/Warsaw' });
+  assert.equal(value.pacing, 'spread_evenly');
+  assert.equal(schedule.schedulePayload(value).pacing_mode, 'spread_evenly');
+  assert.equal(schedule.launchRequest(value).body.pacing_mode, 'spread_evenly');
+});
+
+test('an explicitly saved fixed delay remains intact when reopening a campaign', () => {
+  const value = schedule.hydrateSchedule({
+    timezone: 'UTC',
+    send_settings: { mode: 'autopilot', pacing_mode: 'fixed_delay', delay_minutes: 12 },
+  });
+  assert.equal(value.pacing, 'fixed_delay');
+  assert.equal(schedule.launchRequest(value).body.pacing_mode, 'fixed_delay');
+  assert.equal(schedule.launchRequest(value).body.delay_minutes, 12);
+});
+
+test('timezone options lead with cities and calculate seasonal and fractional UTC offsets', () => {
+  const { timeZoneOption } = loadTs('lib/timezones.ts');
+  const summer = new Date('2026-07-01T12:00:00Z');
+  const winter = new Date('2026-01-01T12:00:00Z');
+  assert.equal(timeZoneOption('Europe/Warsaw', summer).label, 'Warsaw (Europe) · UTC+02:00');
+  assert.equal(timeZoneOption('Europe/Warsaw', winter).offset, 'UTC+01:00');
+  assert.equal(timeZoneOption('Asia/Kathmandu', summer).offset, 'UTC+05:45');
+  assert.equal(timeZoneOption('America/New_York', winter).offset, 'UTC-05:00');
+  assert.equal(timeZoneOption('UTC', summer).offset, 'UTC+00:00');
+});

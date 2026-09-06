@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
+import { TimeZonePicker } from "@/components/ui/timezone-picker";
 import {
   CalendarDays,
   Clock3,
@@ -12,7 +13,6 @@ import {
 import {
   campaignWallTimeInstant,
   formatViewerConversion,
-  supportedTimeZones,
   toZonedDateTimeInput,
 } from "@/lib/timezones";
 import {
@@ -47,10 +47,6 @@ export default function CampaignSchedule({
   });
   const [perDay, setPerDay] = useState(customized);
   const dateChosen = draft.startOnDate;
-  const zones = useMemo(
-    () => Array.from(new Set([draft.timezone, ...supportedTimeZones()])).sort(),
-    [draft.timezone],
-  );
   const viewerZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   const today = toZonedDateTimeInput(
     new Date().toISOString(),
@@ -115,15 +111,11 @@ export default function CampaignSchedule({
           {draft.mode !== "send_now" && (
           <div className="campaign-field campaign-timezone-field">
             <label htmlFor="campaign-timezone">Campaign timezone</label>
-            <select
+            <TimeZonePicker
               id="campaign-timezone"
               value={draft.timezone}
-              onChange={(event) => patch({ timezone: event.target.value })}
-            >
-              {zones.map((zone) => (
-                <option key={zone}>{zone}</option>
-              ))}
-            </select>
+              onChange={(timezone) => patch({ timezone })}
+            />
             {conversionWallTime && conversion && viewerZone !== draft.timezone && (
               <p className="campaign-time-conversion">
                 {clockLabel(conversionWallTime.slice(11))} in {zoneCity} is{" "}
@@ -340,10 +332,10 @@ export default function CampaignSchedule({
                         })
                       }
                     >
-                      <option value="fixed_delay">Wait between batches</option>
                       <option value="spread_evenly">
                         Spread evenly through the window
                       </option>
+                      <option value="fixed_delay">Wait between batches</option>
                     </select>
                   </div>
                 </>

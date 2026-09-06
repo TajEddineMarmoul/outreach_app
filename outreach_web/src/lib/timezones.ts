@@ -9,6 +9,7 @@ const FALLBACK_TIMEZONES = [
   "America/Toronto",
   "Europe/London",
   "Europe/Paris",
+  "Europe/Warsaw",
   "Asia/Dubai",
 ];
 
@@ -122,6 +123,28 @@ export function formatTimeZoneLabel(timeZone: string): string {
   } catch {
     return timeZone;
   }
+}
+
+export function timeZoneOption(timeZone: string, date = new Date()) {
+  const parts = timeZone.replaceAll("_", " ").split("/");
+  const city = parts.pop() || timeZone;
+  const region = parts.join(" / ");
+  let offset = "";
+  try {
+    offset = new Intl.DateTimeFormat("en", {
+      timeZone,
+      timeZoneName: "longOffset",
+    }).formatToParts(date).find((part) => part.type === "timeZoneName")?.value || "";
+    offset = offset === "GMT" ? "UTC+00:00" : offset.replace("GMT", "UTC");
+  } catch {
+    // Keep a saved timezone visible even if this browser doesn't recognize it.
+  }
+  return {
+    value: timeZone,
+    city,
+    offset,
+    label: `${city}${region ? ` (${region})` : ""}${offset ? ` · ${offset}` : ""}`,
+  };
 }
 
 /** Display a campaign day's window in the viewer's timezone, including date changes. */
