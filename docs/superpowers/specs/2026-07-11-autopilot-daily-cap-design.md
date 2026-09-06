@@ -1,5 +1,9 @@
 # Autopilot Campaign-Level Daily Cap
 
+> Historical proposal. It records the original design discussion and may differ
+> from the current implementation. Use [the campaign guide](../../campaigns.md)
+> and code as the source of truth for current behavior.
+
 ## Overview
 
 Add a campaign-level daily sending limit to the autopilot mode. Tracks total emails sent per day across all senders in the campaign, and stops sending for the day when the cap is reached (or when all senders hit their individual caps, whichever comes first).

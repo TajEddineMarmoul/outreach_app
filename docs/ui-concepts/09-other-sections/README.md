@@ -10,12 +10,12 @@ The campaign workspace changes discussed earlier are separate, implemented code 
 
 | Page | Image | Design focus |
 | --- | --- | --- |
-| Campaigns | [Open campaigns image](C:/Users/tajdi/Documents/GitHub/outreach_app/docs/ui-concepts/09-other-sections/01-campaigns.png) | Campaign list, status, progress, search, and New campaign. |
-| Contacts | [Open contacts image](C:/Users/tajdi/Documents/GitHub/outreach_app/docs/ui-concepts/09-other-sections/02-contacts.png) | Contact list with group filter and Add contacts; bulk tools stay in menus. |
-| Senders | [Open senders image](C:/Users/tajdi/Documents/GitHub/outreach_app/docs/ui-concepts/09-other-sections/03-senders.png) | Connected accounts and daily limits, with account and group actions in menus. |
-| Templates | [Open templates image](C:/Users/tajdi/Documents/GitHub/outreach_app/docs/ui-concepts/09-other-sections/04-templates.png) | A short template list; full messages and previews stay closed. |
-| Analytics | [Open analytics image](C:/Users/tajdi/Documents/GitHub/outreach_app/docs/ui-concepts/09-other-sections/05-analytics.png) | Delivery counts and one chart; export and delivery history stay closed. |
-| Settings | [Open settings image](C:/Users/tajdi/Documents/GitHub/outreach_app/docs/ui-concepts/09-other-sections/06-settings.png) | Default timezone, with connected services and advanced settings collapsed. |
+| Campaigns | [Open campaigns image](01-campaigns.png) | Campaign list, status, progress, search, and New campaign. |
+| Contacts | [Open contacts image](02-contacts.png) | Contact list with group filter and Add contacts; bulk tools stay in menus. |
+| Senders | [Open senders image](03-senders.png) | Connected accounts and daily limits, with account and group actions in menus. |
+| Templates | [Open templates image](04-templates.png) | A short template list; full messages and previews stay closed. |
+| Analytics | [Open analytics image](05-analytics.png) | Delivery counts and one chart; export and delivery history stay closed. |
+| Settings | [Open settings image](06-settings.png) | Default timezone, with connected services and advanced settings collapsed. |
 
 ## Shared direction
 
@@ -28,5 +28,4 @@ The campaign workspace changes discussed earlier are separate, implemented code 
 
 The analytics chart illustrates a possible presentation of delivery counts; it is not a claim that this chart has already been implemented.
 
-[Generation prompts](C:/Users/tajdi/Documents/GitHub/outreach_app/docs/ui-concepts/09-other-sections/PROMPTS.md)
-
+[Generation prompts](PROMPTS.md)

@@ -1,119 +1,70 @@
 # Outreach App
 
-FastAPI and Next.js outreach application with PostgreSQL-backed sender groups,
-campaigns, contacts, OAuth credentials, delivery jobs, and immutable send logs.
+Create personalized Gmail campaigns, choose sender accounts, and control when
+messages go out. Review the audience and message before launch, then follow
+delivery progress and Gmail responses from the campaign page.
 
-## Runtime architecture
+The app uses **Next.js and React**, **FastAPI**, and **PostgreSQL**. Clerk handles
+browser sign-in. A delivery worker processes saved jobs independently of the browser.
 
-The application runs as three independent processes:
+## Start here
 
-- **API:** validates requests and persists campaign commands and queued jobs.
-- **Delivery worker:** schedules batches, claims jobs, sends Gmail messages, and
-  recovers interrupted jobs.
-- **Frontend:** manages campaigns through the API and has no ownership of
-  background delivery.
+| I want to… | Read |
+| --- | --- |
+| Run the app locally | [Development setup](docs/development.md) |
+| Create or schedule a campaign | [Campaign guide](docs/campaigns.md) |
+| Work on the frontend | [Frontend README](outreach_web/README.md) |
+| Configure hosting or upgrade the database | [Deployment guide](docs/deployment.md) |
+| Find release notes and design references | [Documentation index](docs/README.md) |
 
-Closing or refreshing the browser does not stop sending. The API does not launch
-delivery threads. PostgreSQL is the durable handoff between the API and worker.
+## Local development
 
-## Configuration
+Use Python 3.12+, Node.js 20.9+, and an initialized development PostgreSQL
+database. [Setup](docs/development.md) covers dependency installation, Clerk,
+both environment files, and the existing fresh-database migration limitation.
 
-Copy `.env.example` to `.env` and configure at least:
+Once configured, start the API and frontend from the repository root:
 
-```dotenv
-DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/DATABASE
-APP_ENCRYPTION_KEY=YOUR_FERNET_KEY
-BACKEND_URL=http://127.0.0.1:8000
-FRONTEND_URL=http://localhost:3000
+```powershell
+# Windows PowerShell
+.\run_servers.bat
 ```
-
-OAuth credentials for each sender are encrypted and stored in PostgreSQL. Token
-JSON files are not used.
-
-## Local startup
-
-On Windows, launch all required processes with:
-
-```bat
-run_servers.bat
-```
-
-On Linux or macOS:
 
 ```bash
-./run_servers.sh
+# macOS / Linux
+bash run_servers.sh
 ```
 
-The launchers start the API and frontend. They leave the delivery worker off
-for safe local work, especially when the database is shared with production.
-Set `OUTREACH_SAFE_LOCAL_MODE=true`, `OUTREACH_ALLOW_DELIVERY=false`, and
-`RUN_DATABASE_MIGRATIONS=false` in the local environment.
+Open the [app](http://localhost:3000), [API health check](http://127.0.0.1:8000/health),
+or [interactive API reference](http://127.0.0.1:8000/docs).
+The launchers leave the delivery worker off. Keep the local delivery lock enabled
+and automatic migrations disabled as shown in [.env.example](.env.example).
 
-```text
-API:      python -m uvicorn api.main:app --port 8000 --reload
-Frontend: npm run dev
-```
+## How delivery works
 
-Do not run multiple development launchers against the same local environment.
+1. The frontend sends authenticated requests through its server-side API proxy.
+2. The API saves campaign settings and delivery jobs in PostgreSQL.
+3. The worker claims due jobs, checks sending limits, and records each result.
 
-Database upgrades are an explicit release step: run
-`python -m alembic upgrade head` against the intended database before publishing
-code that uses a new column. Never use a shared database for destructive tests.
+Closing the browser does not pause a launched campaign. Use **Pause sending**
+to stop future work. The hosted setup invokes the worker through a scheduled
+HTTP endpoint; a separate worker process is also available.
 
-See [the minimal UI release notes](docs/releases/minimal-ui.md) for the current
-design, verification, and rollout requirements.
+New Autopilot schedules default to **Spread evenly through the window**. Campaign
+timezones are searchable by city and show current UTC offsets. See the
+[campaign guide](docs/campaigns.md) for pacing, limits, and timezone behavior.
 
-## Free production deployment
+## Repository map
 
-Production uses services with free tiers and does not depend on GCP billing:
+| Path | Purpose |
+| --- | --- |
+| [outreach_web/](outreach_web/) | Next.js pages, campaign workspace, and authenticated API proxy |
+| [api/](api/) | FastAPI routes, request validation, and authentication |
+| [src/platform/](src/platform/) | Database models, OAuth, delivery jobs, scheduler, and Gmail activity |
+| [src/db/](src/db/) | PostgreSQL compatibility layer used by existing routes |
+| [alembic/](alembic/) | Database migrations |
+| [tests/](tests/) | Python tests and schedule regression tests |
+| [docs/](docs/) | Guides, release history, and design references |
 
-- **Frontend:** Vercel project `outreach-web`.
-- **API:** Vercel Python function exposed by `server.py` in project
-  `outreach-api`.
-- **Database and scheduler:** Supabase Postgres. A `pg_cron` job calls
-  `/internal/worker/tick` once per minute through `pg_net`; the endpoint claims
-  a bounded number of durable delivery jobs on each invocation.
-
-Both Vercel projects are connected to `main`, so pushing a verified commit is
-the production deployment mechanism. The legacy GCP workflow is manual-only.
-
-The hosted frontend uses the application's original Clerk sign-in. Because
-Clerk production instances require an owned domain, the free `*.vercel.app`
-deployment uses the existing Clerk development instance. It supports up to 100
-users and is suitable for this private deployment.
-
-Keep the API bridge token server-side in Vercel and never prefix it with
-`NEXT_PUBLIC_`:
-
-```dotenv
-# API project
-APP_ACCESS_TOKEN=long-random-api-token
-APP_USER_ID=the-existing-database-user-id
-
-# Frontend project
-APP_ACCESS_TOKEN=the-same-long-random-api-token
-BACKEND_URL=https://outreach-api-virid.vercel.app
-NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=the-existing-clerk-development-key
-CLERK_SECRET_KEY=the-existing-clerk-development-secret
-```
-
-Clerk manages the browser session. The Next.js backend proxy verifies that
-session and adds `APP_ACCESS_TOKEN` to API calls server-side.
-
-## Delivery behavior
-
-A campaign selects a sender group. Each batch assigns one eligible recipient to
-each eligible connected sender. After the complete batch finishes, the worker
-waits the configured delay before creating the next batch.
-
-Senders at their daily cap or in a temporary error cooldown are skipped. If all
-senders reach their cap, Send now pauses while Autopilot remains active and
-schedules the next eligible day.
-
-## Tests
-
-Run the delivery-focused suite with:
-
-```bash
-python -m pytest tests/test_application_rewrite.py tests/test_gmail_sender.py tests/test_scheduler.py -q
-```
+The older `app.py` interface and supporting modules remain in the repository.
+The launchers above run the FastAPI and Next.js application.

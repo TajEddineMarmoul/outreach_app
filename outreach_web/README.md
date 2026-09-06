@@ -1,36 +1,60 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Outreach frontend
 
-## Getting Started
+The Next.js application for campaigns, contacts, senders, templates, analytics,
+and account settings. Start with the [project README](../README.md) or the
+[development guide](../docs/development.md) for backend and database setup.
 
-First, run the development server:
+## Run
+
+Requires Node.js 20.9+ and npm. Run these commands from `outreach_web/`:
+
+```bash
+npm ci
+```
+
+Copy [.env.example](.env.example) to `.env.local`, then fill in the Clerk keys
+and the same `LOCAL_DEV_USER_ID` configured on the API. Keep `APP_ACCESS_TOKEN`
+empty when using this local authentication mode. Next.js reads its own
+environment file; the repository-root `.env` is for the backend.
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [localhost:3000](http://localhost:3000). The API must also be running for
+authenticated application pages to load data.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Commands
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Command | Purpose |
+| --- | --- |
+| `npm run dev` | Start the development server |
+| `npm run build` | Compile and type-check the production app |
+| `npm start` | Serve an existing production build |
+| `npm run lint` | Run ESLint |
+| `npx tsc --noEmit` | Check TypeScript without building |
+| `node --test ../tests/schedule_draft.test.cjs` | Check schedule validation, pacing payloads, and timezone offsets |
 
-## Learn More
+## Where to make changes
 
-To learn more about Next.js, take a look at the following resources:
+| Area | Files |
+| --- | --- |
+| Routes and shared layout | [src/app/](src/app/) |
+| Campaign setup and running view | [Campaign workspace](src/components/campaigns/workspace/) |
+| Schedule dialog | [ScheduleDialog.tsx](src/components/campaigns/dialogs/ScheduleDialog.tsx) |
+| Shared timezone picker | [timezone-picker.tsx](src/components/ui/timezone-picker.tsx) |
+| Date and timezone conversion | [timezones.ts](src/lib/timezones.ts) |
+| Authenticated API requests | [api.ts](src/lib/api.ts) and [backend proxy](src/app/api/backend/%5B...path%5D/route.ts) |
+| Page authentication | [proxy.ts](src/proxy.ts) |
+| Global and campaign styles | [globals.css](src/app/globals.css) and [campaign-workspace.css](src/components/campaigns/workspace/campaign-workspace.css) |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Use `useApiClient()` for API mutations so requests pass through the authenticated
+proxy. `BACKEND_URL`, `APP_ACCESS_TOKEN`, and `CLERK_SECRET_KEY` stay server-side;
+only variables beginning with `NEXT_PUBLIC_` are intended for browser code.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+For UI changes, check keyboard operation, loading and error states, and narrow
+screens alongside the build. Read [AGENTS.md](AGENTS.md) and the installed Next.js
+guides under `node_modules/next/dist/docs/` before changing framework behavior.
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Hosting and release configuration are covered in the
+[deployment guide](../docs/deployment.md).

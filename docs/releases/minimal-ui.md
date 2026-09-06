@@ -1,5 +1,8 @@
 # Minimal Outreach UI
 
+> Historical release note. The implemented product has continued to change; use
+> the [current guides](../README.md) for setup and behavior.
+
 The approved campaign workspace and six surrounding pages are implemented in
 the application. The generated images in `docs/ui-concepts` remain design
 references; they are not the runtime UI.

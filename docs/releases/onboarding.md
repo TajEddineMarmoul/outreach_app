@@ -1,5 +1,8 @@
 # Onboarding and contact imports
 
+> Historical release note. The implemented product has continued to change; use
+> the [current guides](../README.md) for setup and behavior.
+
 This release adds a getting-started page explaining campaigns, a fictional
 sample, and optional tips on Audience, Message, and Review. Each tip can be
 dismissed independently. Help lives in Menu, where users can show tips again
