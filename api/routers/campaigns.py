@@ -46,7 +46,8 @@ from src.platform.models import Campaign as PlatformCampaign, CampaignAttachment
 
 router = APIRouter()
 
-EDIT_LOCKED_STATUSES = {"sending", "scheduled", "autopilot", "paused"}
+EDIT_LOCKED_STATUSES = {"sending", "scheduled", "autopilot"}
+DELETE_LOCKED_STATUSES = {*EDIT_LOCKED_STATUSES, "paused"}
 MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 MAX_CAMPAIGN_ATTACHMENT_BYTES = 20 * 1024 * 1024
 ALLOWED_ATTACHMENT_SUFFIXES = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".txt", ".doc", ".docx"}
@@ -89,6 +90,18 @@ def require_editable_campaign(conn, campaign_id: int, user_id: str):
     return campaign
 
 
+def require_deletable_campaign(conn, campaign_id: int, user_id: str):
+    campaign = db.get_campaign(conn, campaign_id, user_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    if str(campaign["status"]) in DELETE_LOCKED_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail="End the campaign before deleting it",
+        )
+    return campaign
+
+
 # ----------------------------------------------------
 # 1. Campaigns Endpoints
 # ----------------------------------------------------
@@ -100,11 +113,23 @@ def list_campaigns(conn=Depends(get_db), user_id: str = Depends(get_current_user
     for row in campaigns:
         d = dict(row)
         counts = conn.execute(
-            "SELECT COUNT(*) AS count, SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) AS sent FROM campaign_recipients WHERE campaign_id = ?",
+            """
+            SELECT
+                COUNT(*) AS count,
+                SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) AS sent,
+                SUM(CASE WHEN status = 'bounced' THEN 1 ELSE 0 END) AS bounced,
+                SUM(CASE WHEN status IN ('failed', 'error') THEN 1 ELSE 0 END) AS send_errors,
+                SUM(CASE WHEN status IN ('rejected', 'skipped') THEN 1 ELSE 0 END) AS skipped
+            FROM campaign_recipients
+            WHERE campaign_id = ?
+            """,
             (d["id"],)
         ).fetchone()
         d["recipient_count"] = counts["count"]
         d["sent_count"] = counts["sent"] or 0
+        d["bounced_count"] = counts["bounced"] or 0
+        d["send_error_count"] = counts["send_errors"] or 0
+        d["skipped_count"] = counts["skipped"] or 0
         result.append(d)
     return result
 
@@ -164,7 +189,7 @@ def update_campaign(campaign_id: int, req: CampaignUpdate, conn=Depends(get_db),
 
 @router.delete("/api/campaigns/{campaign_id}")
 def delete_campaign(campaign_id: int, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
-    campaign = require_editable_campaign(conn, campaign_id, user_id)
+    campaign = require_deletable_campaign(conn, campaign_id, user_id)
     from sqlalchemy import delete as sa_delete, select
     from src.platform.db import SessionLocal
     from src.platform.models import (

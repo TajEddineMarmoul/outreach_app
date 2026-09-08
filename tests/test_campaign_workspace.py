@@ -6,7 +6,12 @@ from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.orm import Session
 
 from api.routers.campaign_workspace import duplicate_campaign
-from api.routers.campaign_delivery import clear_campaign_recipients, get_campaign_recipients
+from api.routers.campaign_delivery import (
+    clear_campaign_recipients,
+    get_campaign_recipients,
+    require_campaign_editable,
+    require_campaign_ready_to_start,
+)
 from src.platform.models import Base, Campaign, CampaignAttachment, CampaignRecipient, Contact, SendJob, SendLog, Sender, SenderGroup, AutopilotDaySchedule
 from src.platform.services import ensure_user
 from src.platform.time import utcnow
@@ -133,13 +138,28 @@ def test_clear_audience_removes_all_pages_but_keeps_contacts_history_and_configu
     assert clear_campaign_recipients(campaign.id, session, "workspace-user")["removed"] == 0
 
 
-@pytest.mark.parametrize("status", ["sending", "scheduled", "autopilot", "paused"])
+@pytest.mark.parametrize("status", ["sending", "scheduled", "autopilot"])
 def test_clear_audience_blocks_active_campaigns(session, status):
     campaign, _ = _audience_with_delivery(session, status=status)
     with pytest.raises(HTTPException) as error:
         clear_campaign_recipients(campaign.id, session, "workspace-user")
     assert error.value.status_code == 409
     assert session.scalar(select(func.count()).select_from(CampaignRecipient)) == 13
+
+
+def test_paused_campaign_can_be_edited_without_resuming(session):
+    campaign, _ = _audience_with_delivery(session, status="paused")
+
+    assert require_campaign_editable(session, campaign.id, "workspace-user") == campaign
+    with pytest.raises(HTTPException) as error:
+        require_campaign_ready_to_start(session, campaign.id, "workspace-user")
+    assert error.value.status_code == 409
+    assert clear_campaign_recipients(campaign.id, session, "workspace-user")["removed"] == 12
+    assert session.scalar(
+        select(func.count()).select_from(CampaignRecipient).where(
+            CampaignRecipient.campaign_id == campaign.id,
+        ),
+    ) == 0
 
 
 def test_clear_audience_waits_for_inflight_email_even_after_campaign_ends(session):

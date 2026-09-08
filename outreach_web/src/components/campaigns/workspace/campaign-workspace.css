@@ -1258,18 +1258,13 @@
   color: var(--campaign-muted);
   font-size: 14px;
 }
-.campaign-progress-track {
-  height: 7px;
-  background: #e3edff;
-  border-radius: 8px;
-  margin: 8px 0 14px;
-  overflow: hidden;
+.campaign-delivery-outcomes {
+  margin: 10px 0 14px;
 }
-.campaign-progress-track > span {
-  display: block;
-  height: 100%;
-  background: var(--campaign-blue);
-  border-radius: 8px;
+.campaign-delivery-summary {
+  margin: -3px 0 14px;
+  color: var(--campaign-muted);
+  font-size: 13px;
 }
 .campaign-upcoming-table {
   overflow-x: auto;

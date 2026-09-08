@@ -112,7 +112,7 @@ class SendSettingsUpdate(DeliveryRequest):
         return self
 
 
-EDIT_LOCKED_STATUSES = {"sending", "scheduled", "autopilot", "paused"}
+EDIT_LOCKED_STATUSES = {"sending", "scheduled", "autopilot"}
 
 
 def apply_campaign_timezone(
@@ -141,6 +141,20 @@ def require_campaign_editable(session: Session, campaign_id: int, user_id: str) 
         raise HTTPException(
             status_code=409,
             detail="Stop the campaign before editing its composer, send options, or recipients",
+        )
+    return campaign
+
+
+def require_campaign_ready_to_start(
+    session: Session,
+    campaign_id: int,
+    user_id: str,
+) -> Campaign:
+    campaign = require_campaign_editable(session, campaign_id, user_id)
+    if campaign.status == "paused":
+        raise HTTPException(
+            status_code=409,
+            detail="This campaign is paused. Save your changes, then use Resume sending.",
         )
     return campaign
 
@@ -481,7 +495,7 @@ def post_send_now(
     require_delivery_enabled()
     logger = logging.getLogger("outreach.send")
     logger.info("send-now start campaign=%s user=%s", campaign_id, user_id)
-    campaign = require_campaign_editable(session, campaign_id, user_id)
+    campaign = require_campaign_ready_to_start(session, campaign_id, user_id)
     apply_campaign_timezone(session, campaign, req.timezone)
     require_connected_delivery_group(session, campaign, user_id)
     previous_status = campaign.status
@@ -570,7 +584,7 @@ def post_schedule(
     user_id: str = Depends(get_current_user_id),
 ):
     require_delivery_enabled()
-    campaign = require_campaign_editable(session, campaign_id, user_id)
+    campaign = require_campaign_ready_to_start(session, campaign_id, user_id)
     apply_campaign_timezone(session, campaign, req.timezone)
     require_connected_delivery_group(session, campaign, user_id)
     retried_failed = reopen_failed_recipients(session, campaign_id, user_id)
@@ -622,7 +636,7 @@ def post_autopilot_start(
     user_id: str = Depends(get_current_user_id),
 ):
     require_delivery_enabled()
-    campaign = require_campaign_editable(session, campaign_id, user_id)
+    campaign = require_campaign_ready_to_start(session, campaign_id, user_id)
     apply_campaign_timezone(session, campaign, req.timezone)
     require_connected_delivery_group(session, campaign, user_id)
     retried_failed = reopen_failed_recipients(session, campaign_id, user_id)

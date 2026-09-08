@@ -18,6 +18,11 @@ import {
   StatusBadge,
   formatDate,
 } from "@/components/app-ui";
+import DeliveryOutcomeBar, {
+  deliveryOutcomeSummary,
+  deliveryProgressLabel,
+  getDeliveryProgress,
+} from "@/components/campaigns/DeliveryOutcomeBar";
 
 interface Campaign {
   id: number;
@@ -25,6 +30,9 @@ interface Campaign {
   status: string;
   recipient_count: number;
   sent_count: number;
+  bounced_count?: number;
+  send_error_count?: number;
+  skipped_count?: number;
   updated_at?: string;
 }
 const PAGE_SIZE = 6;
@@ -177,7 +185,7 @@ function CampaignsContent() {
               <tr>
                 <th scope="col">Campaign</th>
                 <th scope="col">Status</th>
-                <th scope="col">Progress</th>
+                <th scope="col">Delivery</th>
                 <th scope="col">Updated</th>
                 <th scope="col">
                   <span className="sr-only">Actions</span>
@@ -187,57 +195,62 @@ function CampaignsContent() {
             <tbody>
               {filtered
                 .slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
-                .map((item) => (
-                  <tr key={item.id}>
-                    <td>
-                      <Link
-                        href={`/campaigns/${item.id}`}
-                        className="app-name app-name-button"
-                      >
-                        {item.name}
-                      </Link>
-                    </td>
-                    <td>
-                      <StatusBadge status={item.status || "draft"} />
-                    </td>
-                    <td>
-                      {item.recipient_count ? (
-                        <>
-                          <span>
-                            {item.sent_count ?? 0} of {item.recipient_count}{" "}
-                            sent
-                          </span>
-                          <span className="app-progress" aria-hidden="true">
-                            <span
-                              style={{
-                                width: `${Math.min(100, ((item.sent_count || 0) / item.recipient_count) * 100)}%`,
-                              }}
-                            />
-                          </span>
-                        </>
-                      ) : (
-                        <span className="app-muted">No recipients yet</span>
-                      )}
-                    </td>
-                    <td className="app-muted">{formatDate(item.updated_at)}</td>
-                    <td>
-                      <ActionMenu
-                        iconOnly
-                        label={`Actions for ${item.name}`}
-                        disabled={busy}
-                      >
-                        <MenuAction
-                          onClick={() => router.push(`/campaigns/${item.id}`)}
+                .map((item) => {
+                  const delivery = getDeliveryProgress({
+                    totalRecipients: item.recipient_count,
+                    sentCount: item.sent_count,
+                    undeliveredCount: item.bounced_count,
+                    sendErrorCount: item.send_error_count,
+                    skippedCount: item.skipped_count,
+                  });
+                  return (
+                    <tr key={item.id}>
+                      <td>
+                        <Link
+                          href={`/campaigns/${item.id}`}
+                          className="app-name app-name-button"
                         >
-                          Open campaign
-                        </MenuAction>
-                        <MenuAction onClick={() => void duplicate(item.id)}>
-                          Duplicate campaign
-                        </MenuAction>
-                      </ActionMenu>
-                    </td>
-                  </tr>
-                ))}
+                          {item.name}
+                        </Link>
+                      </td>
+                      <td>
+                        <StatusBadge status={item.status || "draft"} />
+                      </td>
+                      <td>
+                        {item.recipient_count ? (
+                          <div className="app-delivery-progress">
+                            <span className="app-delivery-progress-label">
+                              {deliveryProgressLabel(delivery)}
+                            </span>
+                            <DeliveryOutcomeBar progress={delivery} showLegend={false} />
+                            <span className="app-delivery-progress-summary">
+                              {deliveryOutcomeSummary(delivery)}
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="app-muted">No recipients yet</span>
+                        )}
+                      </td>
+                      <td className="app-muted">{formatDate(item.updated_at)}</td>
+                      <td>
+                        <ActionMenu
+                          iconOnly
+                          label={`Actions for ${item.name}`}
+                          disabled={busy}
+                        >
+                          <MenuAction
+                            onClick={() => router.push(`/campaigns/${item.id}`)}
+                          >
+                            Open campaign
+                          </MenuAction>
+                          <MenuAction onClick={() => void duplicate(item.id)}>
+                            Duplicate campaign
+                          </MenuAction>
+                        </ActionMenu>
+                      </td>
+                    </tr>
+                  );
+                })}
             </tbody>
           </table>
         )}

@@ -17,6 +17,11 @@ import {
 } from "lucide-react";
 import { formatViewerWindow } from "@/lib/timezones";
 import { API_URL } from "@/lib/api";
+import DeliveryOutcomeBar, {
+  deliveryOutcomeSummary,
+  deliveryProgressLabel,
+  getDeliveryProgress,
+} from "@/components/campaigns/DeliveryOutcomeBar";
 
 export interface CampaignProgress {
   campaign_status: string;
@@ -89,13 +94,23 @@ export function CurrentSchedule({
       ? formatViewerWindow(schedule[0].start, schedule[0].end, zone, viewerZone)
       : null;
   const paused = progress?.campaign_status === "paused";
-  const stopped = ["stopped", "ended", "completed"].includes(
-    progress?.campaign_status || "",
-  );
+  const stopped = ["stopped", "ended", "completed"].includes(progress?.campaign_status || "");
+  const delivery = progress
+    ? getDeliveryProgress({
+        totalRecipients: progress.total_recipients,
+        sentCount: progress.sent_count,
+        undeliveredCount: progress.bounced_count,
+        sendErrorCount: progress.send_error_count,
+        skippedCount: progress.skipped_count,
+      })
+    : null;
+  const deliveryFinished = Boolean(delivery?.isComplete);
   const stateTitle = paused
     ? "Sending is paused"
-    : stopped
-      ? "Sending has ended"
+    : deliveryFinished
+      ? "Delivery finished"
+      : stopped
+        ? "Sending stopped"
       : progress?.dry_run
         ? "Test mode is active"
         : progress?.is_active
@@ -183,7 +198,7 @@ export function CurrentSchedule({
       </div>
       {progress && (
         <div
-          className={`campaign-schedule-state ${paused || stopped ? "is-paused" : ""}`}
+          className={`campaign-schedule-state ${paused || (stopped && !deliveryFinished) ? "is-paused" : ""}`}
         >
           {paused ? (
             <Pause size={25} />
@@ -197,8 +212,10 @@ export function CurrentSchedule({
             <p>
               {paused
                 ? "Resume when you're ready. No new emails will start."
-                : stopped
-                  ? "Your delivery history is preserved."
+                : deliveryFinished
+                  ? `All ${delivery!.totalRecipients} recipient${delivery!.totalRecipients === 1 ? " has" : "s have"} a final delivery result.`
+                  : stopped
+                    ? `${delivery?.remainingCount || 0} recipient${delivery?.remainingCount === 1 ? " remains" : "s remain"} without a final delivery result.`
                   : progress.is_sending
                     ? "Sending the current batch"
                     : reason ||
@@ -268,20 +285,19 @@ export default function CampaignOverview({
         Could not load campaign progress. Refresh the page to try again.
       </div>
     );
-  const remaining = Math.max(
-    0,
-    progress.total_recipients -
-      progress.sent_count -
-      progress.bounced_count -
-      progress.send_error_count -
-      progress.skipped_count,
-  );
+  const delivery = getDeliveryProgress({
+    totalRecipients: progress.total_recipients,
+    sentCount: progress.sent_count,
+    undeliveredCount: progress.bounced_count,
+    sendErrorCount: progress.send_error_count,
+    skippedCount: progress.skipped_count,
+  });
   const deliveryStats = [
     { value: progress.sent_count, label: "sent", style: "is-blue" },
     { value: progress.bounced_count, label: "undelivered", style: "is-orange" },
     { value: progress.send_error_count, label: "send errors", style: "is-red" },
     { value: progress.skipped_count, label: "skipped", style: "is-muted" },
-    { value: remaining, label: "remaining", style: "" },
+    { value: delivery.remainingCount, label: "remaining", style: "" },
   ];
   const responseStats = [
     { value: progress.replied_count, label: "human replies", style: "is-blue" },
@@ -321,25 +337,17 @@ export default function CampaignOverview({
         </div>
         <section className="campaign-panel campaign-progress-card">
           <div className="campaign-progress-heading">
-            <h2>Sending progress</h2>
+            <h2>{delivery.isComplete ? "Delivery finished" : "Sending progress"}</h2>
             <p className="campaign-progress-label">
-              {progress.sent_count} of {progress.total_recipients} sent
+              {deliveryProgressLabel(delivery)}
             </p>
           </div>
-          <div
-            className="campaign-progress-track"
-            role="progressbar"
-            aria-label="Emails sent"
-            aria-valuenow={progress.sent_count}
-            aria-valuemin={0}
-            aria-valuemax={Math.max(progress.total_recipients, 1)}
-          >
-            <span
-              style={{
-                width: `${Math.min(100, (progress.sent_count / Math.max(1, progress.total_recipients)) * 100)}%`,
-              }}
-            />
-          </div>
+          <DeliveryOutcomeBar progress={delivery} className="campaign-delivery-outcomes" />
+          {delivery.isComplete && (
+            <p className="campaign-delivery-summary">
+              {deliveryOutcomeSummary(delivery)}. No recipients remain to send.
+            </p>
+          )}
           <div className="campaign-upcoming-table">
             <table>
               <thead>

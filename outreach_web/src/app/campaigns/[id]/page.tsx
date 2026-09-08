@@ -88,6 +88,9 @@ const EDIT_LOCKED_STATUSES = new Set([
   "sending",
   "scheduled",
   "autopilot",
+]);
+const REFRESHING_CAMPAIGN_STATUSES = new Set([
+  ...EDIT_LOCKED_STATUSES,
   "paused",
 ]);
 
@@ -137,7 +140,7 @@ function CampaignEditor() {
     isLoading: campLoading,
   } = useSWR(campaignId ? `${API_URL}/api/campaigns/${campaignId}` : null, {
     refreshInterval: (latest) =>
-      EDIT_LOCKED_STATUSES.has(latest?.status) ? 3000 : 0,
+      REFRESHING_CAMPAIGN_STATUSES.has(latest?.status) ? 3000 : 0,
   });
 
   const {
@@ -186,6 +189,8 @@ function CampaignEditor() {
   const editingLocked = Boolean(
     campaign && EDIT_LOCKED_STATUSES.has(campaign.status),
   );
+  const isPaused = campaign?.status === "paused";
+  const hasActiveDeliveryControls = editingLocked || isPaused;
   const schedule = useScheduleDraft(campaignId, summary, editingLocked);
   const launchingRef = useRef(false);
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -924,10 +929,16 @@ function CampaignEditor() {
     );
   }
 
-  const saveLabel = isOperational
-    ? campaign.status === "paused"
-      ? "Sending paused"
-      : campaign.status === "scheduled"
+  const saveLabel = isPaused
+    ? draftSaveStatus === "error" || schedule.status === "error"
+      ? "Changes not saved"
+      : draftSaveStatus === "unsaved" || schedule.status === "unsaved"
+        ? "Unsaved changes"
+        : draftSaveStatus === "saving" || schedule.status === "saving" || isSaving
+          ? "Saving changes…"
+          : "Changes saved"
+    : isOperational
+      ? campaign.status === "scheduled"
         ? "Scheduled"
         : ["ended", "stopped"].includes(campaign.status)
           ? "History preserved"
@@ -1057,7 +1068,7 @@ function CampaignEditor() {
           <Download size={19} />
           Export report
         </button>
-        {editingLocked && (
+        {hasActiveDeliveryControls && (
           <>
             <hr />
             <button className="is-red" onClick={() => setEndDialogOpen(true)}>
@@ -1066,7 +1077,7 @@ function CampaignEditor() {
             </button>
           </>
         )}
-        {!editingLocked && (
+        {!hasActiveDeliveryControls && (
           <>
             <hr />
             <button className="is-red" onClick={handleDeleteCampaign}>
@@ -1147,23 +1158,37 @@ function CampaignEditor() {
                 </h1>
                 <p>
                   {tab === "overview"
-                    ? campaign.status === "paused"
-                      ? "Sending is paused. Resume when you’re ready."
-                      : ["ended", "stopped"].includes(campaign.status)
-                        ? "Sending has ended. Your results and activity are saved."
+                    ? isPaused
+                      ? "Sending is paused. You can edit the message, audience, and schedule before resuming."
+                      : campaign.status === "ended"
+                        ? "Delivery is finished. Every recipient has a final result."
+                        : campaign.status === "stopped"
+                          ? "Sending is stopped. Your results and activity are saved."
                         : "New emails send according to your campaign schedule."
+                    : isPaused
+                      ? "Sending is paused. Changes save now and apply when you resume."
                     : editingLocked
                       ? "End the campaign before changing its message, audience, or schedule."
                       : "Review and manage this campaign."}
                 </p>
               </div>
               <div className="campaign-overview-actions">
-                {editingLocked && (
+                {hasActiveDeliveryControls && (
                   <>
                     <p>
-                      Pausing prevents future sends.
-                      <br />
-                      Emails already sending may finish.
+                      {isPaused ? (
+                        <>
+                          Sending is paused. Changes are safe to make now.
+                          <br />
+                          Resume when you&apos;re ready to continue.
+                        </>
+                      ) : (
+                        <>
+                          Pausing prevents future sends.
+                          <br />
+                          Emails already sending may finish.
+                        </>
+                      )}
                     </p>
                     <button
                       className="campaign-button is-outline"
@@ -1408,7 +1433,7 @@ function CampaignEditor() {
         defaultTab={sendTab}
         configurationOnly={configurationOnly}
         summary={summary}
-        readOnly={isOperational || editingLocked}
+        readOnly={editingLocked || (isOperational && !isPaused)}
         mutateAll={() => {
           mutate(`${API_URL}/api/campaigns/${campaignId}`);
           mutateSummary();
