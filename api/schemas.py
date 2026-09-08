@@ -56,6 +56,15 @@ class RecipientsGoogleSheetBatch(BaseModel):
     sheets: List[RecipientsGoogleSheet] = Field(min_length=1, max_length=20)
 
 
+class RecipientBlobCsv(BaseModel):
+    url: str = Field(min_length=1, max_length=2048)
+    filename: str = Field(min_length=1, max_length=255)
+
+
+class RecipientsBlobCsvBatch(BaseModel):
+    files: List[RecipientBlobCsv] = Field(min_length=1, max_length=20)
+
+
 class RecipientsSelectExisting(BaseModel):
     contact_ids: List[int]
 

@@ -1,12 +1,16 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { upload } from "@vercel/blob/client";
 import { ArrowLeft, ArrowRight, CheckCircle, Link as LinkIcon, Loader2, Plus, Upload, X } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useApiClient } from "@/lib/api";
 
 type Method = "paste" | "csv" | "sheet";
+const MAX_CSV_FILE_BYTES = 100 * 1024 * 1024;
+const MAX_CSV_BATCH_BYTES = 200 * 1024 * 1024;
+
 interface ImportPreview {
   columns: string[];
   rows: Record<string, string>[];
@@ -18,6 +22,10 @@ interface SheetSource {
   id: string;
   url: string;
   tabName: string;
+}
+interface UploadedCsv {
+  url: string;
+  filename: string;
 }
 interface Props {
   isOpen: boolean;
@@ -35,6 +43,8 @@ function ImportForm({ onClose, campaignId, onImported }: Props) {
   const [method, setMethod] = useState<Method>("paste");
   const [raw, setRaw] = useState("");
   const [files, setFiles] = useState<File[]>([]);
+  const [uploadedCsvs, setUploadedCsvs] = useState<UploadedCsv[] | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [sheetSources, setSheetSources] = useState<SheetSource[]>([{ id: "sheet-1", url: "", tabName: "" }]);
   const nextSheetId = useRef(2);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
@@ -45,20 +55,73 @@ function ImportForm({ onClose, campaignId, onImported }: Props) {
   const activeSheets = sheetSources.filter((source) => source.url.trim());
   const ready = method === "paste" ? Boolean(raw.trim()) : method === "csv" ? files.length > 0 : activeSheets.length > 0;
 
+  const clearUploadedCsvs = (uploads = uploadedCsvs) => {
+    if (!uploads?.length) return;
+    setUploadedCsvs(null);
+    void fetch("/api/campaign-import-cleanup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ urls: uploads.map((item) => item.url) }),
+    });
+  };
+
+  const chooseFiles = (selected: File[]) => {
+    const oversized = selected.find((file) => file.size > MAX_CSV_FILE_BYTES);
+    const totalBytes = selected.reduce((total, file) => total + file.size, 0);
+    if (oversized) {
+      setFiles([]);
+      clearUploadedCsvs();
+      setError(`“${oversized.name}” is larger than the 100 MB per-file limit.`);
+      return;
+    }
+    if (totalBytes > MAX_CSV_BATCH_BYTES) {
+      setFiles([]);
+      clearUploadedCsvs();
+      setError("The selected CSV files exceed the 200 MB batch limit.");
+      return;
+    }
+    clearUploadedCsvs();
+    setFiles(selected);
+    setUploadProgress(null);
+    setError("");
+  };
+
+  const uploadCsvs = async (): Promise<UploadedCsv[]> => {
+    if (uploadedCsvs?.length === files.length) return uploadedCsvs;
+
+    const totalBytes = files.reduce((total, file) => total + file.size, 0);
+    const uploadedBytes = files.map(() => 0);
+    const uploads = await Promise.all(files.map(async (file, index) => {
+      const blob = await upload(`campaign-imports/${campaignId}/${safeCsvFilename(file.name, index)}`, file, {
+        access: "private",
+        contentType: "text/csv",
+        handleUploadUrl: "/api/campaign-import-upload",
+        multipart: true,
+        onUploadProgress: ({ loaded }) => {
+          uploadedBytes[index] = loaded;
+          const progress = totalBytes ? Math.round((uploadedBytes.reduce((total, value) => total + value, 0) / totalBytes) * 100) : 100;
+          setUploadProgress(Math.min(100, progress));
+        },
+      });
+      return { url: blob.url, filename: file.name };
+    }));
+    setUploadedCsvs(uploads);
+    setUploadProgress(null);
+    return uploads;
+  };
+
   const submit = async (isPreview: boolean) => {
     if (busy || !ready || (!isPreview && !preview)) return;
     setBusy(true);
     setError("");
     try {
-      const isBatch = (method === "csv" && files.length > 1) || (method === "sheet" && activeSheets.length > 1);
-      const suffix = method === "sheet" ? `google-sheet${isBatch ? "/batch" : ""}` : `${method}${isBatch ? "/batch" : ""}`;
+      const isBatch = method === "sheet" && activeSheets.length > 1;
+      const suffix = method === "csv" ? "csv/blob" : method === "sheet" ? `google-sheet${isBatch ? "/batch" : ""}` : method;
       const options: RequestInit = { method: "POST" };
       if (method === "csv") {
-        const form = new FormData();
-        if (isBatch) files.forEach((file) => form.append("files", file));
-        else form.append("file", files[0]);
-        if (!isPreview) form.append("mapping_json", "{}");
-        options.body = form;
+        const uploads = await uploadCsvs();
+        options.headers = { "Content-Type": "application/json" };
+        options.body = JSON.stringify({ files: uploads });
       } else {
         options.headers = { "Content-Type": "application/json" };
         options.body = JSON.stringify(method === "paste"
@@ -74,6 +137,7 @@ function ImportForm({ onClose, campaignId, onImported }: Props) {
         setPreview(data as ImportPreview);
       } else {
         setComplete(Number(data.attached || 0));
+        setUploadedCsvs(null);
         try {
           await onImported();
         } catch {
@@ -88,7 +152,7 @@ function ImportForm({ onClose, campaignId, onImported }: Props) {
   };
 
   return (
-    <Dialog open onOpenChange={(open) => { if (!open && !busy) onClose(); }}>
+    <Dialog open onOpenChange={(open) => { if (!open && !busy) { clearUploadedCsvs(); onClose(); } }}>
       <DialogContent className="campaign-ui campaign-import-dialog">
         <DialogHeader>
           <DialogTitle>{complete !== null ? "Import complete" : preview ? "Review your contacts" : "Import contacts"}</DialogTitle>
@@ -126,7 +190,8 @@ function ImportForm({ onClose, campaignId, onImported }: Props) {
             <TabsContent value="csv" className="campaign-import-method">
               <p>Choose one or more CSV files exported from your spreadsheet.</p>
               <HeaderHint />
-              <label className="campaign-import-upload"><Upload size={28} /><strong>{files.length ? `${files.length} ${files.length === 1 ? "CSV file" : "CSV files"} selected` : "Choose CSV files"}</strong><span>{files.length ? files.map((file) => file.name).join(" · ") : "CSV files up to 20 MB each"}</span><input type="file" accept=".csv,text/csv" multiple aria-label="Choose CSV files" disabled={busy} onChange={(event) => { setFiles(Array.from(event.target.files || [])); setError(""); }} /></label>
+              <label className="campaign-import-upload"><Upload size={28} /><strong>{files.length ? `${files.length} ${files.length === 1 ? "CSV file" : "CSV files"} selected` : "Choose CSV files"}</strong><span>{files.length ? files.map((file) => file.name).join(" · ") : "CSV files up to 100 MB each"}</span><input type="file" accept=".csv,text/csv" multiple aria-label="Choose CSV files" disabled={busy} onChange={(event) => chooseFiles(Array.from(event.target.files || []))} /></label>
+              <p className="campaign-import-hint">Up to 100 MB per CSV and 200 MB per batch. Files upload securely before review.</p>
             </TabsContent>
             <TabsContent value="sheet" className="campaign-import-method">
               <p>Paste one or more public Google Sheets links.</p>
@@ -144,14 +209,20 @@ function ImportForm({ onClose, campaignId, onImported }: Props) {
           <p>{complete !== null ? "No email has been sent." : preview ? "No email will be sent." : "You will review the list before importing."}</p>
           <div>
             {complete !== null ? <button className="campaign-button is-primary" onClick={onClose} disabled={busy}>Done</button> : <>
-              <button className="campaign-button is-quiet" disabled={busy} onClick={() => { if (preview) { setPreview(null); setError(""); } else onClose(); }}>{preview ? <><ArrowLeft size={16} /> Back</> : "Cancel"}</button>
-              <button className="campaign-button is-primary" disabled={busy || !ready} onClick={() => void submit(!preview)}>{busy ? <><Loader2 size={17} className="animate-spin" /> {preview ? "Importing…" : "Reading…"}</> : preview ? "Import contacts" : <>Preview import <ArrowRight size={17} /></>}</button>
+              <button className="campaign-button is-quiet" disabled={busy} onClick={() => { if (preview) { setPreview(null); setError(""); } else { clearUploadedCsvs(); onClose(); } }}>{preview ? <><ArrowLeft size={16} /> Back</> : "Cancel"}</button>
+              <button className="campaign-button is-primary" disabled={busy || !ready} onClick={() => void submit(!preview)}>{busy ? <><Loader2 size={17} className="animate-spin" /> {uploadProgress !== null ? `Uploading ${uploadProgress}%…` : preview ? "Importing…" : "Reading…"}</> : preview ? "Import contacts" : <>Preview import <ArrowRight size={17} /></>}</button>
             </>}
           </div>
         </div>
       </DialogContent>
     </Dialog>
   );
+}
+
+function safeCsvFilename(filename: string, index: number) {
+  const normalized = filename.trim().replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "contacts.csv";
+  const withExtension = normalized.toLowerCase().endsWith(".csv") ? normalized : `${normalized}.csv`;
+  return `${index + 1}-${withExtension}`;
 }
 
 function SheetSourceField({ source, index, busy, API_URL, authFetch, canRemove, onChange, onRemove }: {

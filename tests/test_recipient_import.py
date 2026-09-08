@@ -71,6 +71,57 @@ def test_batch_import_validates_every_source_before_writing(monkeypatch):
     assert calls == []
 
 
+def test_private_blob_csv_batch_import_uses_original_filenames_and_removes_files(monkeypatch):
+    captured = {}
+    sources = [
+        campaigns.RecipientBlobCsv(
+            url="https://store.private.blob.vercel-storage.com/campaign-imports/21/design.csv",
+            filename="design.csv",
+        ),
+        campaigns.RecipientBlobCsv(
+            url="https://store.private.blob.vercel-storage.com/campaign-imports/21/engineering.csv",
+            filename="engineering.csv",
+        ),
+    ]
+
+    monkeypatch.setattr(campaigns, "require_editable_campaign", lambda *_args: None)
+    monkeypatch.setattr(
+        campaigns,
+        "read_recipient_blob_csvs",
+        lambda received_sources, campaign_id: [
+            pd.DataFrame([{"email": "alex@example.com"}]),
+            pd.DataFrame([{"email": "sam@example.com"}]),
+        ],
+    )
+    monkeypatch.setattr(campaigns, "import_and_attach_frames", lambda *_args: {"attached": 2})
+    monkeypatch.setattr(campaigns, "delete_recipient_blob_csvs", lambda received_sources: captured.setdefault("deleted", received_sources))
+
+    result = campaigns.post_recipients_blob_csv_batch(
+        21,
+        campaigns.RecipientsBlobCsvBatch(files=sources),
+        object(),
+        "user-1",
+    )
+
+    assert result == {"attached": 2}
+    assert [source.filename for source in captured["deleted"]] == ["design.csv", "engineering.csv"]
+
+
+def test_private_blob_csv_batch_enforces_total_size(monkeypatch):
+    source = campaigns.RecipientBlobCsv(
+        url="https://store.private.blob.vercel-storage.com/campaign-imports/21/contacts.csv",
+        filename="contacts.csv",
+    )
+    monkeypatch.setattr(
+        campaigns,
+        "read_recipient_blob_csv",
+        lambda *_args: (pd.DataFrame([{"email": "alex@example.com"}]), campaigns.MAX_RECIPIENT_IMPORT_BATCH_BYTES + 1),
+    )
+
+    with pytest.raises(HTTPException, match="200 MB"):
+        campaigns.read_recipient_blob_csvs([source], campaign_id=21)
+
+
 def test_imported_contacts_are_approved_and_keep_every_csv_field(monkeypatch):
     frame = pd.DataFrame(
         [
@@ -247,7 +298,7 @@ def test_google_sheet_timeout_returns_a_controlled_http_error(monkeypatch):
     )
 
     assert response.status_code == 504
-    assert response.json()["detail"] == "Google Sheets did not respond within 20 seconds"
+    assert response.json()["detail"] == "Google Sheets did not respond within 120 seconds"
     assert response.headers["access-control-allow-origin"] == origin
 
 

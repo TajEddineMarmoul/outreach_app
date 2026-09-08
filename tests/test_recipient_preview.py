@@ -74,6 +74,38 @@ def test_csv_batch_preview_combines_selected_files(preview_client):
     }
 
 
+def test_private_blob_csv_preview_reads_selected_files(preview_client, monkeypatch):
+    captured = []
+
+    def read_blob(source, campaign_id):
+        captured.append((source.filename, campaign_id))
+        return pd.DataFrame([{"email": "alex@example.com", "skill": "Design"}]), 42
+
+    monkeypatch.setattr(campaigns, "read_recipient_blob_csv", read_blob)
+    response = preview_client.post(
+        "/api/campaigns/42/recipients/preview/csv/blob",
+        json={
+            "files": [{
+                "url": "https://store.private.blob.vercel-storage.com/campaign-imports/42/design.csv",
+                "filename": "design.csv",
+            }],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["total_rows"] == 1
+    assert captured == [("design.csv", 42)]
+
+
+def test_private_blob_csv_preview_rejects_other_storage_urls(preview_client):
+    response = preview_client.post(
+        "/api/campaigns/42/recipients/preview/csv/blob",
+        json={"files": [{"url": "https://example.com/contacts.csv", "filename": "contacts.csv"}]},
+    )
+
+    assert response.status_code == 422
+
+
 @pytest.mark.parametrize("raw", ["skill,region\nDesign,London", "email,skill\n"])
 def test_preview_rejects_missing_email_header_or_empty_rows(preview_client, raw):
     response = preview_client.post("/api/campaigns/42/recipients/preview/paste", json={"raw": raw})

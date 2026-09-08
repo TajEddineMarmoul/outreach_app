@@ -8,8 +8,10 @@ import mimetypes
 import sys
 import json
 import sqlite3
+import logging
 from pathlib import Path
 from typing import Optional, List, Dict
+from urllib.parse import urlparse
 import pandas as pd
 import requests
 from io import StringIO
@@ -30,6 +32,8 @@ from api.schemas import (
     RecipientsPaste,
     RecipientsGoogleSheet,
     RecipientsGoogleSheetBatch,
+    RecipientBlobCsv,
+    RecipientsBlobCsvBatch,
     RecipientsSelectExisting,
     TestSendRequest,
     SenderUpdate,
@@ -46,11 +50,16 @@ from src.platform.db import get_session
 from src.platform.models import Campaign as PlatformCampaign, CampaignAttachment
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 EDIT_LOCKED_STATUSES = {"sending", "scheduled", "autopilot"}
 DELETE_LOCKED_STATUSES = {*EDIT_LOCKED_STATUSES, "paused"}
 MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 MAX_CAMPAIGN_ATTACHMENT_BYTES = 20 * 1024 * 1024
+MAX_RECIPIENT_IMPORT_BYTES = 100 * 1024 * 1024
+MAX_RECIPIENT_IMPORT_BATCH_BYTES = 200 * 1024 * 1024
+PRIVATE_IMPORT_BLOB_HOST_SUFFIX = ".private.blob.vercel-storage.com"
+PRIVATE_IMPORT_BLOB_PATH_PREFIX = "/campaign-imports/"
 ALLOWED_ATTACHMENT_SUFFIXES = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".txt", ".doc", ".docx"}
 
 
@@ -520,8 +529,8 @@ def import_and_attach_df(conn, campaign_id: int, df: pd.DataFrame, mapping: dict
 
 
 def read_recipient_text(raw: str, *, pasted: bool = False) -> pd.DataFrame:
-    if len(raw.encode("utf-8")) > 20 * 1024 * 1024:
-        raise HTTPException(status_code=422, detail="The import exceeds the 20 MB limit")
+    if len(raw.encode("utf-8")) > MAX_RECIPIENT_IMPORT_BYTES:
+        raise HTTPException(status_code=422, detail="The import exceeds the 100 MB per-file limit")
     text = raw.lstrip("\ufeff")
     first_row = text.splitlines()[0] if text.splitlines() else ""
     separator = "\t" if pasted and "\t" in first_row else ","
@@ -608,6 +617,80 @@ async def read_recipient_csv_upload(file: UploadFile) -> pd.DataFrame:
     return read_recipient_text(raw)
 
 
+def validate_recipient_blob_url(url: str, campaign_id: int) -> None:
+    parsed = urlparse(url)
+    hostname = (parsed.hostname or "").lower()
+    if (
+        parsed.scheme != "https"
+        or parsed.query
+        or parsed.fragment
+        or not hostname.endswith(PRIVATE_IMPORT_BLOB_HOST_SUFFIX)
+        or not parsed.path.startswith(f"{PRIVATE_IMPORT_BLOB_PATH_PREFIX}{campaign_id}/")
+    ):
+        raise HTTPException(status_code=422, detail="The uploaded CSV is not a valid private import file")
+
+
+def read_recipient_blob_csv(source: RecipientBlobCsv, campaign_id: int) -> tuple[pd.DataFrame, int]:
+    validate_recipient_blob_url(source.url, campaign_id)
+    token = os.getenv("BLOB_READ_WRITE_TOKEN", "")
+    if not token:
+        raise HTTPException(status_code=503, detail="Large CSV imports are not configured. Please try again shortly.")
+
+    try:
+        response = requests.get(
+            source.url,
+            headers={"Authorization": f"Bearer {token}"},
+            stream=True,
+            timeout=(5, 120),
+        )
+        response.raise_for_status()
+        content = bytearray()
+        for chunk in response.iter_content(chunk_size=1024 * 1024):
+            content.extend(chunk)
+            if len(content) > MAX_RECIPIENT_IMPORT_BYTES:
+                raise HTTPException(status_code=422, detail="One CSV exceeds the 100 MB per-file limit")
+    except HTTPException:
+        raise
+    except requests.Timeout as exc:
+        raise HTTPException(status_code=504, detail="The uploaded CSV took too long to read. Please try again.") from exc
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=422, detail="The uploaded CSV could not be read. Upload it again and retry.") from exc
+
+    try:
+        raw = bytes(content).decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=422, detail="Save your CSV with UTF-8 encoding, then try again.") from exc
+    return read_recipient_text(raw), len(content)
+
+
+def read_recipient_blob_csvs(sources: list[RecipientBlobCsv], campaign_id: int) -> list[pd.DataFrame]:
+    frames: list[pd.DataFrame] = []
+    total_bytes = 0
+    for source in sources:
+        frame, source_bytes = read_recipient_blob_csv(source, campaign_id)
+        total_bytes += source_bytes
+        if total_bytes > MAX_RECIPIENT_IMPORT_BATCH_BYTES:
+            raise HTTPException(status_code=422, detail="The CSV batch exceeds the 200 MB total limit")
+        frames.append(frame)
+    return frames
+
+
+def delete_recipient_blob_csvs(sources: list[RecipientBlobCsv]) -> None:
+    token = os.getenv("BLOB_READ_WRITE_TOKEN", "")
+    if not token or not sources:
+        return
+    try:
+        response = requests.post(
+            "https://vercel.com/api/blob/delete",
+            headers={"Authorization": f"Bearer {token}", "x-api-version": "12"},
+            json={"urls": [source.url for source in sources]},
+            timeout=(5, 20),
+        )
+        response.raise_for_status()
+    except requests.RequestException:
+        logger.warning("Could not remove completed private CSV imports", exc_info=True)
+
+
 @router.post("/api/campaigns/{campaign_id}/recipients/csv")
 async def post_recipients_csv(
     campaign_id: int,
@@ -657,6 +740,28 @@ async def post_recipients_csv_batch(
         [file.filename or "CSV import" for file in files],
         user_id,
     )
+
+
+@router.post("/api/campaigns/{campaign_id}/recipients/csv/blob")
+def post_recipients_blob_csv_batch(
+    campaign_id: int,
+    req: RecipientsBlobCsvBatch,
+    conn=Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    require_editable_campaign(conn, campaign_id, user_id)
+    frames = read_recipient_blob_csvs(req.files, campaign_id)
+    result = import_and_attach_frames(
+        conn,
+        campaign_id,
+        frames,
+        [{}] * len(frames),
+        "csv",
+        [source.filename for source in req.files],
+        user_id,
+    )
+    delete_recipient_blob_csvs(req.files)
+    return result
 
 class SingleRecipientRequest(BaseModel):
     email: str = Field(min_length=3, max_length=320, pattern=r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
@@ -711,7 +816,7 @@ def read_recipient_sheet(req: RecipientsGoogleSheet) -> pd.DataFrame:
                 sheet_name=tab_name.strip() or None,
             )
     except requests.Timeout as exc:
-        raise HTTPException(status_code=504, detail="Google Sheets did not respond within 20 seconds") from exc
+        raise HTTPException(status_code=504, detail="Google Sheets did not respond within 120 seconds") from exc
     except requests.HTTPError as exc:
         status = exc.response.status_code if exc.response is not None else "unknown"
         raise HTTPException(
@@ -725,6 +830,18 @@ def read_recipient_sheet(req: RecipientsGoogleSheet) -> pd.DataFrame:
     return df
 
 
+def read_recipient_sheets(sheets: list[RecipientsGoogleSheet]) -> list[pd.DataFrame]:
+    frames: list[pd.DataFrame] = []
+    total_bytes = 0
+    for sheet in sheets:
+        frame = read_recipient_sheet(sheet)
+        total_bytes += int(frame.attrs.get("source_bytes", 0))
+        if total_bytes > MAX_RECIPIENT_IMPORT_BATCH_BYTES:
+            raise HTTPException(status_code=422, detail="The Google Sheets batch exceeds the 200 MB total limit")
+        frames.append(frame)
+    return frames
+
+
 @router.post("/api/campaigns/{campaign_id}/recipients/google-sheet")
 def post_recipients_sheet(campaign_id: int, req: RecipientsGoogleSheet, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
     require_editable_campaign(conn, campaign_id, user_id)
@@ -735,7 +852,7 @@ def post_recipients_sheet(campaign_id: int, req: RecipientsGoogleSheet, conn=Dep
 @router.post("/api/campaigns/{campaign_id}/recipients/google-sheet/batch")
 def post_recipients_sheet_batch(campaign_id: int, req: RecipientsGoogleSheetBatch, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
     require_editable_campaign(conn, campaign_id, user_id)
-    frames = [read_recipient_sheet(sheet) for sheet in req.sheets]
+    frames = read_recipient_sheets(req.sheets)
     return import_and_attach_frames(
         conn,
         campaign_id,
@@ -766,6 +883,17 @@ async def preview_recipients_csv_batch(campaign_id: int, files: list[UploadFile]
     return preview_recipient_frames([(frame, None) for frame in frames])
 
 
+@router.post("/api/campaigns/{campaign_id}/recipients/preview/csv/blob")
+def preview_recipients_blob_csv_batch(
+    campaign_id: int,
+    req: RecipientsBlobCsvBatch,
+    conn=Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    require_editable_campaign(conn, campaign_id, user_id)
+    return preview_recipient_frames([(frame, None) for frame in read_recipient_blob_csvs(req.files, campaign_id)])
+
+
 @router.post("/api/campaigns/{campaign_id}/recipients/preview/google-sheet")
 def preview_recipients_sheet(campaign_id: int, req: RecipientsGoogleSheet, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
     require_editable_campaign(conn, campaign_id, user_id)
@@ -775,7 +903,7 @@ def preview_recipients_sheet(campaign_id: int, req: RecipientsGoogleSheet, conn=
 @router.post("/api/campaigns/{campaign_id}/recipients/preview/google-sheet/batch")
 def preview_recipients_sheet_batch(campaign_id: int, req: RecipientsGoogleSheetBatch, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
     require_editable_campaign(conn, campaign_id, user_id)
-    return preview_recipient_frames([(read_recipient_sheet(sheet), sheet.mapping) for sheet in req.sheets])
+    return preview_recipient_frames([(frame, sheet.mapping) for frame, sheet in zip(read_recipient_sheets(req.sheets), req.sheets)])
 
 @router.post("/api/campaigns/{campaign_id}/recipients/select-existing")
 def post_recipients_select_existing(campaign_id: int, req: RecipientsSelectExisting, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
