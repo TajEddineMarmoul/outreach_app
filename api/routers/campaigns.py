@@ -29,6 +29,7 @@ from api.schemas import (
     SenderSelect,
     RecipientsPaste,
     RecipientsGoogleSheet,
+    RecipientsGoogleSheetBatch,
     RecipientsSelectExisting,
     TestSendRequest,
     SenderUpdate,
@@ -543,6 +544,70 @@ def preview_recipient_frame(df: pd.DataFrame, mapping: dict | None = None) -> di
     }
 
 
+def preview_recipient_frames(frames: list[tuple[pd.DataFrame, dict | None]]) -> dict:
+    if not frames:
+        raise HTTPException(status_code=422, detail="Choose at least one file or sheet")
+
+    columns: list[str] = []
+    total_rows = 0
+    normalized_frames: list[pd.DataFrame] = []
+    for frame, mapping in frames:
+        if frame.empty:
+            raise HTTPException(status_code=422, detail="One of the imports contains no recipient rows")
+        resolve_import_mapping(frame, mapping)
+        total_rows += len(frame)
+        normalized = frame.copy()
+        normalized.columns = [str(column) for column in normalized.columns]
+        normalized_frames.append(normalized)
+        for column in normalized.columns:
+            if column not in columns:
+                columns.append(column)
+
+    combined = pd.concat(normalized_frames, ignore_index=True, sort=False).reindex(columns=columns)
+    rows = combined.head(5).fillna("").astype(str).to_dict(orient="records")
+    return {
+        "columns": columns,
+        "rows": rows,
+        "total_rows": total_rows,
+        "email_column": "email",
+    }
+
+
+def import_and_attach_frames(
+    conn,
+    campaign_id: int,
+    frames: list[pd.DataFrame],
+    mappings: list[dict | None],
+    source_type: str,
+    source_urls: list[str],
+    user_id: str,
+) -> dict:
+    if not frames or len(frames) != len(mappings) or len(frames) != len(source_urls):
+        raise HTTPException(status_code=422, detail="Choose at least one complete import source")
+
+    # Validate every source before writing any contacts, so a bad file or sheet
+    # cannot leave a partial batch behind.
+    for frame, mapping in zip(frames, mappings):
+        if frame.empty:
+            raise HTTPException(status_code=422, detail="One of the imports contains no recipient rows")
+        resolve_import_mapping(frame, mapping)
+
+    totals = {"imported": 0, "duplicates": 0, "skipped_missing_email": 0, "skipped_missing_required": 0, "do_not_contact": 0, "attached": 0}
+    for frame, mapping, source_url in zip(frames, mappings, source_urls):
+        result = import_and_attach_df(conn, campaign_id, frame, mapping, source_type, source_url, user_id)
+        for field in totals:
+            totals[field] += int(result.get(field, 0))
+    return totals
+
+
+async def read_recipient_csv_upload(file: UploadFile) -> pd.DataFrame:
+    try:
+        raw = (await file.read()).decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=422, detail="Save your CSV with UTF-8 encoding, then try again.") from exc
+    return read_recipient_text(raw)
+
+
 @router.post("/api/campaigns/{campaign_id}/recipients/csv")
 async def post_recipients_csv(
     campaign_id: int,
@@ -560,14 +625,38 @@ async def post_recipients_csv(
     if not isinstance(mapping, dict):
         raise HTTPException(status_code=422, detail="Column mapping must be an object")
 
-    content = await file.read()
-    try:
-        df = read_recipient_text(content.decode("utf-8-sig"))
-    except UnicodeDecodeError as exc:
-        raise HTTPException(status_code=422, detail="Save your CSV with UTF-8 encoding, then try again.") from exc
+    df = await read_recipient_csv_upload(file)
     
     res = import_and_attach_df(conn, campaign_id, df, mapping, "csv", file.filename or "", user_id)
     return res
+
+
+@router.post("/api/campaigns/{campaign_id}/recipients/csv/batch")
+async def post_recipients_csv_batch(
+    campaign_id: int,
+    files: list[UploadFile] = File(...),
+    mapping_json: str = Form("{}"),
+    conn=Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    require_editable_campaign(conn, campaign_id, user_id)
+    try:
+        mapping = json.loads(mapping_json)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=422, detail="Invalid column mapping") from exc
+    if not isinstance(mapping, dict):
+        raise HTTPException(status_code=422, detail="Column mapping must be an object")
+
+    frames = [await read_recipient_csv_upload(file) for file in files]
+    return import_and_attach_frames(
+        conn,
+        campaign_id,
+        frames,
+        [mapping] * len(frames),
+        "csv",
+        [file.filename or "CSV import" for file in files],
+        user_id,
+    )
 
 class SingleRecipientRequest(BaseModel):
     email: str = Field(min_length=3, max_length=320, pattern=r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
@@ -643,6 +732,21 @@ def post_recipients_sheet(campaign_id: int, req: RecipientsGoogleSheet, conn=Dep
     return import_and_attach_df(conn, campaign_id, df, req.mapping, "google_sheet", req.url, user_id)
 
 
+@router.post("/api/campaigns/{campaign_id}/recipients/google-sheet/batch")
+def post_recipients_sheet_batch(campaign_id: int, req: RecipientsGoogleSheetBatch, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    require_editable_campaign(conn, campaign_id, user_id)
+    frames = [read_recipient_sheet(sheet) for sheet in req.sheets]
+    return import_and_attach_frames(
+        conn,
+        campaign_id,
+        frames,
+        [sheet.mapping for sheet in req.sheets],
+        "google_sheet",
+        [sheet.url for sheet in req.sheets],
+        user_id,
+    )
+
+
 @router.post("/api/campaigns/{campaign_id}/recipients/preview/paste")
 def preview_recipients_paste(campaign_id: int, req: RecipientsPaste, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
     require_editable_campaign(conn, campaign_id, user_id)
@@ -652,17 +756,26 @@ def preview_recipients_paste(campaign_id: int, req: RecipientsPaste, conn=Depend
 @router.post("/api/campaigns/{campaign_id}/recipients/preview/csv")
 async def preview_recipients_csv(campaign_id: int, file: UploadFile = File(...), conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
     require_editable_campaign(conn, campaign_id, user_id)
-    try:
-        raw = (await file.read()).decode("utf-8-sig")
-    except UnicodeDecodeError as exc:
-        raise HTTPException(status_code=422, detail="Save your CSV with UTF-8 encoding, then try again.") from exc
-    return preview_recipient_frame(read_recipient_text(raw))
+    return preview_recipient_frame(await read_recipient_csv_upload(file))
+
+
+@router.post("/api/campaigns/{campaign_id}/recipients/preview/csv/batch")
+async def preview_recipients_csv_batch(campaign_id: int, files: list[UploadFile] = File(...), conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    require_editable_campaign(conn, campaign_id, user_id)
+    frames = [await read_recipient_csv_upload(file) for file in files]
+    return preview_recipient_frames([(frame, None) for frame in frames])
 
 
 @router.post("/api/campaigns/{campaign_id}/recipients/preview/google-sheet")
 def preview_recipients_sheet(campaign_id: int, req: RecipientsGoogleSheet, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
     require_editable_campaign(conn, campaign_id, user_id)
     return preview_recipient_frame(read_recipient_sheet(req), req.mapping)
+
+
+@router.post("/api/campaigns/{campaign_id}/recipients/preview/google-sheet/batch")
+def preview_recipients_sheet_batch(campaign_id: int, req: RecipientsGoogleSheetBatch, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    require_editable_campaign(conn, campaign_id, user_id)
+    return preview_recipient_frames([(read_recipient_sheet(sheet), sheet.mapping) for sheet in req.sheets])
 
 @router.post("/api/campaigns/{campaign_id}/recipients/select-existing")
 def post_recipients_select_existing(campaign_id: int, req: RecipientsSelectExisting, conn=Depends(get_db), user_id: str = Depends(get_current_user_id)):

@@ -53,6 +53,27 @@ def test_csv_preview_reads_quoted_fields_and_limits_sample(preview_client):
     assert response.json()["rows"][0]["custom note"] == "Hello, 0"
 
 
+def test_csv_batch_preview_combines_selected_files(preview_client):
+    response = preview_client.post(
+        "/api/campaigns/42/recipients/preview/csv/batch",
+        files=[
+            ("files", ("design.csv", b"email,skill\nalex@example.com,Design", "text/csv")),
+            ("files", ("engineering.csv", b"email,region\nsam@example.com,Paris", "text/csv")),
+        ],
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "columns": ["email", "skill", "region"],
+        "email_column": "email",
+        "total_rows": 2,
+        "rows": [
+            {"email": "alex@example.com", "skill": "Design", "region": ""},
+            {"email": "sam@example.com", "skill": "", "region": "Paris"},
+        ],
+    }
+
+
 @pytest.mark.parametrize("raw", ["skill,region\nDesign,London", "email,skill\n"])
 def test_preview_rejects_missing_email_header_or_empty_rows(preview_client, raw):
     response = preview_client.post("/api/campaigns/42/recipients/preview/paste", json={"raw": raw})
@@ -82,3 +103,25 @@ def test_sheet_preview_does_not_claim_private_sheet_support(preview_client):
         json={"url": "https://docs.google.com/spreadsheets/d/example-sheet/edit", "tab_name": "", "header_row": 1, "mapping": {}, "use_private": True},
     )
     assert response.status_code == 400
+
+
+def test_sheet_batch_preview_combines_sheet_links(preview_client, monkeypatch):
+    def read_sheet(sheet_id, **_kwargs):
+        if sheet_id == "design-sheet":
+            return pd.DataFrame([{"email": "alex@example.com", "skill": "Design"}])
+        return pd.DataFrame([{"email": "sam@example.com", "region": "Paris"}])
+
+    monkeypatch.setattr(campaigns, "get_public_sheet_csv", read_sheet)
+    response = preview_client.post(
+        "/api/campaigns/42/recipients/preview/google-sheet/batch",
+        json={
+            "sheets": [
+                {"url": "https://docs.google.com/spreadsheets/d/design-sheet/edit", "tab_name": "", "header_row": 1, "mapping": {}},
+                {"url": "https://docs.google.com/spreadsheets/d/engineering-sheet/edit", "tab_name": "", "header_row": 1, "mapping": {}},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["total_rows"] == 2
+    assert response.json()["columns"] == ["email", "skill", "region"]

@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { ArrowLeft, ArrowRight, CheckCircle, Link as LinkIcon, Loader2, Upload } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ArrowLeft, ArrowRight, CheckCircle, Link as LinkIcon, Loader2, Plus, Upload, X } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useApiClient } from "@/lib/api";
@@ -12,6 +12,12 @@ interface ImportPreview {
   rows: Record<string, string>[];
   total_rows: number;
   email_column: string;
+  source_count?: number;
+}
+interface SheetSource {
+  id: string;
+  url: string;
+  tabName: string;
 }
 interface Props {
   isOpen: boolean;
@@ -28,58 +34,38 @@ function ImportForm({ onClose, campaignId, onImported }: Props) {
   const { API_URL, authFetch } = useApiClient();
   const [method, setMethod] = useState<Method>("paste");
   const [raw, setRaw] = useState("");
-  const [file, setFile] = useState<File | null>(null);
-  const [url, setUrl] = useState("");
-  const [tabName, setTabName] = useState("");
-  const [sheetTabs, setSheetTabs] = useState<Array<{ title: string; gid?: string | null }>>([]);
-  const [tabsLoading, setTabsLoading] = useState(false);
-  const [tabsError, setTabsError] = useState("");
+  const [files, setFiles] = useState<File[]>([]);
+  const [sheetSources, setSheetSources] = useState<SheetSource[]>([{ id: "sheet-1", url: "", tabName: "" }]);
+  const nextSheetId = useRef(2);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [complete, setComplete] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    if (method !== "sheet" || !url.trim()) return;
-    const controller = new AbortController();
-    const timeout = window.setTimeout(async () => {
-      setTabsLoading(true);
-      setTabsError("");
-      try {
-        const response = await authFetch(`${API_URL}/api/google-sheets/public-tabs?url=${encodeURIComponent(url.trim())}`, { signal: controller.signal });
-        const data = await response.json();
-        if (!response.ok) throw new Error("Could not list the sheet tabs. Preview will try the tab in your link.");
-        if (controller.signal.aborted) return;
-        const tabs = Array.isArray(data.tabs) ? data.tabs : [];
-        setSheetTabs(tabs);
-        // Keep the URL's gid as the default rather than silently selecting a different tab.
-        setTabName("");
-      } catch (err) {
-        if (!controller.signal.aborted) setTabsError(err instanceof Error ? err.message : "Could not load sheet tabs.");
-      } finally {
-        if (!controller.signal.aborted) setTabsLoading(false);
-      }
-    }, 500);
-    return () => { window.clearTimeout(timeout); controller.abort(); };
-  }, [url, method, API_URL, authFetch]);
-
-  const ready = method === "paste" ? Boolean(raw.trim()) : method === "csv" ? Boolean(file) : Boolean(url.trim());
+  const activeSheets = sheetSources.filter((source) => source.url.trim());
+  const ready = method === "paste" ? Boolean(raw.trim()) : method === "csv" ? files.length > 0 : activeSheets.length > 0;
 
   const submit = async (isPreview: boolean) => {
     if (busy || !ready || (!isPreview && !preview)) return;
     setBusy(true);
     setError("");
     try {
-      const suffix = method === "sheet" ? "google-sheet" : method;
+      const isBatch = (method === "csv" && files.length > 1) || (method === "sheet" && activeSheets.length > 1);
+      const suffix = method === "sheet" ? `google-sheet${isBatch ? "/batch" : ""}` : `${method}${isBatch ? "/batch" : ""}`;
       const options: RequestInit = { method: "POST" };
       if (method === "csv") {
         const form = new FormData();
-        form.append("file", file!);
+        if (isBatch) files.forEach((file) => form.append("files", file));
+        else form.append("file", files[0]);
         if (!isPreview) form.append("mapping_json", "{}");
         options.body = form;
       } else {
         options.headers = { "Content-Type": "application/json" };
-        options.body = JSON.stringify(method === "paste" ? { raw } : { url: url.trim(), tab_name: tabName, header_row: 1, mapping: {} });
+        options.body = JSON.stringify(method === "paste"
+          ? { raw }
+          : isBatch
+            ? { sheets: activeSheets.map((source) => ({ url: source.url.trim(), tab_name: source.tabName, header_row: 1, mapping: {} })) }
+            : { url: activeSheets[0].url.trim(), tab_name: activeSheets[0].tabName, header_row: 1, mapping: {} });
       }
       const response = await authFetch(`${API_URL}/api/campaigns/${campaignId}/recipients/${isPreview ? "preview/" : ""}${suffix}`, options);
       const data = await response.json().catch(() => ({}));
@@ -138,18 +124,17 @@ function ImportForm({ onClose, campaignId, onImported }: Props) {
               <p className="campaign-import-hint">Extra columns become fields you can use in your message.</p>
             </TabsContent>
             <TabsContent value="csv" className="campaign-import-method">
-              <p>Choose a CSV exported from your spreadsheet.</p>
+              <p>Choose one or more CSV files exported from your spreadsheet.</p>
               <HeaderHint />
-              <label className="campaign-import-upload"><Upload size={28} /><strong>{file ? file.name : "Choose a CSV file"}</strong><span>CSV files up to 20 MB</span><input type="file" accept=".csv,text/csv" aria-label="Choose a CSV file" disabled={busy} onChange={(event) => { setFile(event.target.files?.[0] || null); setError(""); }} /></label>
+              <label className="campaign-import-upload"><Upload size={28} /><strong>{files.length ? `${files.length} ${files.length === 1 ? "CSV file" : "CSV files"} selected` : "Choose CSV files"}</strong><span>{files.length ? files.map((file) => file.name).join(" · ") : "CSV files up to 20 MB each"}</span><input type="file" accept=".csv,text/csv" multiple aria-label="Choose CSV files" disabled={busy} onChange={(event) => { setFiles(Array.from(event.target.files || [])); setError(""); }} /></label>
             </TabsContent>
             <TabsContent value="sheet" className="campaign-import-method">
-              <p>Paste a link to your Google Sheet.</p>
-              <label className="campaign-import-field" htmlFor="import-sheet-link">Google Sheets link</label>
-              <div className="campaign-import-link"><LinkIcon size={18} /><input id="import-sheet-link" type="url" value={url} placeholder="https://docs.google.com/spreadsheets/d/…" onChange={(event) => { setUrl(event.target.value); setSheetTabs([]); setTabName(""); setTabsError(""); setTabsLoading(false); }} disabled={busy} /></div>
+              <p>Paste one or more public Google Sheets links.</p>
               <HeaderHint />
-              {tabsLoading && <p className="campaign-import-hint" role="status">Reading sheet tabs…</p>}
-              {sheetTabs.length > 1 && <label className="campaign-import-field">Sheet tab<select value={tabName} onChange={(event) => setTabName(event.target.value)} disabled={busy}><option value="">Tab from your link</option>{sheetTabs.map((tab) => <option key={`${tab.title}-${tab.gid || ""}`} value={tab.title}>{tab.title}</option>)}</select></label>}
-              {tabsError && <p className="campaign-import-hint">{tabsError}</p>}
+              <div className="campaign-import-sheets">
+                {sheetSources.map((source, index) => <SheetSourceField key={source.id} source={source} index={index} busy={busy} API_URL={API_URL} authFetch={authFetch} canRemove={sheetSources.length > 1} onChange={(updated) => setSheetSources((sources) => sources.map((item) => item.id === updated.id ? updated : item))} onRemove={() => setSheetSources((sources) => sources.filter((item) => item.id !== source.id))} />)}
+              </div>
+              <button type="button" className="campaign-button is-quiet campaign-import-add-source" disabled={busy} onClick={() => setSheetSources((sources) => [...sources, { id: `sheet-${nextSheetId.current++}`, url: "", tabName: "" }])}><Plus size={16} /> Add another sheet</button>
               <p className="campaign-import-hint">If access is restricted, use Upload CSV or Paste rows.</p>
             </TabsContent>
           </Tabs>
@@ -167,6 +152,56 @@ function ImportForm({ onClose, campaignId, onImported }: Props) {
       </DialogContent>
     </Dialog>
   );
+}
+
+function SheetSourceField({ source, index, busy, API_URL, authFetch, canRemove, onChange, onRemove }: {
+  source: SheetSource;
+  index: number;
+  busy: boolean;
+  API_URL: string;
+  authFetch: (url: string, options?: RequestInit) => Promise<Response>;
+  canRemove: boolean;
+  onChange: (source: SheetSource) => void;
+  onRemove: () => void;
+}) {
+  const [sheetTabs, setSheetTabs] = useState<{ url: string; tabs: Array<{ title: string; gid?: string | null }> }>({ url: "", tabs: [] });
+  const [loadingUrl, setLoadingUrl] = useState("");
+  const [tabsError, setTabsError] = useState<{ url: string; message: string }>({ url: "", message: "" });
+
+  useEffect(() => {
+    const url = source.url.trim();
+    if (!url) return;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(async () => {
+      setLoadingUrl(url);
+      try {
+        const response = await authFetch(`${API_URL}/api/google-sheets/public-tabs?url=${encodeURIComponent(url)}`, { signal: controller.signal });
+        const data = await response.json();
+        if (!response.ok) throw new Error("Could not list the sheet tabs. Preview will try the tab in your link.");
+        if (!controller.signal.aborted) setSheetTabs({ url, tabs: Array.isArray(data.tabs) ? data.tabs : [] });
+      } catch (err) {
+        if (!controller.signal.aborted) setTabsError({ url, message: err instanceof Error ? err.message : "Could not load sheet tabs." });
+      } finally {
+        if (!controller.signal.aborted) setLoadingUrl("");
+      }
+    }, 500);
+    return () => { window.clearTimeout(timeout); controller.abort(); };
+  }, [source.url, API_URL, authFetch]);
+
+  const inputId = `import-sheet-link-${source.id}`;
+  const currentUrl = source.url.trim();
+  const availableTabs = sheetTabs.url === currentUrl ? sheetTabs.tabs : [];
+  const currentTabsError = tabsError.url === currentUrl ? tabsError.message : "";
+  return <div className="campaign-import-sheet-source">
+    <div className="campaign-import-sheet-heading">
+      <label className="campaign-import-field" htmlFor={inputId}>Google Sheets link {index + 1}</label>
+      {canRemove && <button type="button" className="campaign-import-remove-source" onClick={onRemove} disabled={busy} aria-label={`Remove Google Sheet ${index + 1}`}><X size={15} /> Remove</button>}
+    </div>
+    <div className="campaign-import-link"><LinkIcon size={18} /><input id={inputId} type="url" value={source.url} placeholder="https://docs.google.com/spreadsheets/d/…" onChange={(event) => onChange({ ...source, url: event.target.value, tabName: "" })} disabled={busy} /></div>
+    {loadingUrl === currentUrl && <p className="campaign-import-hint" role="status">Reading sheet tabs…</p>}
+    {availableTabs.length > 1 && <label className="campaign-import-field">Sheet tab<select value={source.tabName} onChange={(event) => onChange({ ...source, tabName: event.target.value })} disabled={busy}><option value="">Tab from your link</option>{availableTabs.map((tab) => <option key={`${tab.title}-${tab.gid || ""}`} value={tab.title}>{tab.title}</option>)}</select></label>}
+    {currentTabsError && <p className="campaign-import-hint">{currentTabsError}</p>}
+  </div>;
 }
 
 function HeaderHint() {

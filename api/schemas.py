@@ -52,6 +52,10 @@ class RecipientsGoogleSheet(BaseModel):
     mapping: Dict[str, str]
 
 
+class RecipientsGoogleSheetBatch(BaseModel):
+    sheets: List[RecipientsGoogleSheet] = Field(min_length=1, max_length=20)
+
+
 class RecipientsSelectExisting(BaseModel):
     contact_ids: List[int]
 

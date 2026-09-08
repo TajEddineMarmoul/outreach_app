@@ -2174,6 +2174,13 @@
 .campaign-import-upload span { font-size: 12px; }
 .campaign-import-upload input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
 .campaign-import-upload:focus-within { outline: 3px solid #94baff; outline-offset: 3px; }
+.campaign-import-sheets { display: grid; gap: 12px; }
+.campaign-import-sheet-source { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--campaign-line); border-radius: 5px; background: #fbfcff; }
+.campaign-import-sheet-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.campaign-import-sheet-heading .campaign-import-field { margin: 0; }
+.campaign-import-remove-source { display: inline-flex; align-items: center; gap: 4px; color: var(--campaign-muted); font-size: 12px; }
+.campaign-import-remove-source:hover:not(:disabled) { color: var(--campaign-ink); }
+.campaign-import-add-source { justify-self: start; }
 .campaign-import-field { display: block; font-size: 14px; font-weight: 500; }
 .campaign-import-link { display: flex; align-items: center; gap: 10px; min-height: 46px; padding: 0 12px; border: 1px solid #cbd4e3; border-radius: 4px; color: var(--campaign-muted); margin-top: -8px; }
 .campaign-import-link input { width: 100%; min-width: 0; height: 44px; color: var(--campaign-ink); font-size: 14px; }

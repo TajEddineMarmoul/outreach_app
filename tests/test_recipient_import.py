@@ -53,6 +53,24 @@ def test_import_and_attach_auto_detects_email_column(monkeypatch):
     assert result["attached"] == 1
 
 
+def test_batch_import_validates_every_source_before_writing(monkeypatch):
+    calls = []
+    monkeypatch.setattr(campaigns, "import_and_attach_df", lambda *_args, **_kwargs: calls.append(True))
+
+    with pytest.raises(HTTPException, match="email column"):
+        campaigns.import_and_attach_frames(
+            object(),
+            campaign_id=21,
+            frames=[pd.DataFrame([{"email": "alex@example.com"}]), pd.DataFrame([{"skill": "Design"}])],
+            mappings=[{}, {}],
+            source_type="csv",
+            source_urls=["first.csv", "second.csv"],
+            user_id="user-1",
+        )
+
+    assert calls == []
+
+
 def test_imported_contacts_are_approved_and_keep_every_csv_field(monkeypatch):
     frame = pd.DataFrame(
         [
