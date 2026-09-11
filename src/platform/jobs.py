@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from src.gmail_sender import EmailAttachment, fake_send_email, send_email
 from src.platform.db import SessionLocal
+from src.platform.email_tracking import prepare_tracked_email
 from src.platform.gmail import gmail_service_for_sender
 from src.platform.models import Campaign, CampaignAttachment, CampaignRecipient, Contact, Sender, SendJob, SendLog
 from src.platform.services import (
@@ -500,11 +501,15 @@ def perform_send_job(job_id: int, *, claimed: bool = False) -> dict:
         dry_run = (campaign.send_settings or {}).get("dry_run", False)
         send_fn = fake_send_email if dry_run else send_email
         email_attachments = _campaign_email_attachments(session, campaign)
+        delivery_body = body
+        if campaign.engagement_tracking_enabled and not dry_run:
+            delivery_body = prepare_tracked_email(session, log, body).body
+            session.commit()
         result = send_fn(
             sender=sender.email,
             recipient=contact.email_normalized,
             subject=subject,
-            body=body,
+            body=delivery_body,
             attachments=email_attachments,
             service=None if dry_run else gmail_service_for_sender(session, sender),
         )

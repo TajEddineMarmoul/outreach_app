@@ -103,6 +103,7 @@ class Campaign(Base, TimestampMixin):
     send_settings: Mapped[dict] = mapped_column(MutableDict.as_mutable(json_type()), default=dict, nullable=False)
     attachment_metadata: Mapped[dict] = mapped_column(MutableDict.as_mutable(json_type()), default=dict, nullable=False)
     scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    engagement_tracking_enabled: Mapped[bool] = mapped_column(default=True, nullable=False)
 
     user: Mapped[User] = relationship(back_populates="campaigns")
     selected_sender_group: Mapped[SenderGroup | None] = relationship(back_populates="campaigns")
@@ -215,6 +216,50 @@ class SendLog(Base, TimestampMixin):
     response_status: Mapped[str | None] = mapped_column(String(40), index=True)
     responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     response_gmail_message_id: Mapped[str | None] = mapped_column(String(255))
+    tracking_token: Mapped[str | None] = mapped_column(String(255), unique=True, index=True)
+    first_opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    open_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    first_clicked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_clicked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    click_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+
+class EmailTrackingLink(Base, TimestampMixin):
+    __tablename__ = "email_tracking_links"
+    __table_args__ = (
+        UniqueConstraint("token", name="uq_email_tracking_links_token"),
+        Index("ix_email_tracking_links_send_log", "send_log_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    send_log_id: Mapped[int] = mapped_column(
+        ForeignKey("send_log.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    token: Mapped[str] = mapped_column(String(255), nullable=False)
+    destination_url: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class EmailTrackingEvent(Base, TimestampMixin):
+    __tablename__ = "email_tracking_events"
+    __table_args__ = (
+        Index("ix_email_tracking_events_send_log_occurred", "send_log_id", "occurred_at"),
+        Index("ix_email_tracking_events_user_occurred", "user_id", "occurred_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    campaign_id: Mapped[int | None] = mapped_column(
+        ForeignKey("campaigns.id", ondelete="SET NULL"), index=True
+    )
+    send_log_id: Mapped[int] = mapped_column(
+        ForeignKey("send_log.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    event_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    link_url: Mapped[str | None] = mapped_column(Text)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class GmailActivityEvent(Base, TimestampMixin):

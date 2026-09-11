@@ -8,8 +8,10 @@ import {
   CircleCheck,
   Pause,
   Mail,
+  MailOpen,
   MailX,
   MessageSquareReply,
+  MousePointerClick,
   Bot,
   AlertCircle,
   ArrowRight,
@@ -30,6 +32,8 @@ export interface CampaignProgress {
   sent_count: number;
   replied_count: number;
   automated_response_count: number;
+  opened_count: number;
+  clicked_count: number;
   bounced_count: number;
   send_error_count: number;
   failed_count: number;
@@ -263,10 +267,14 @@ export default function CampaignOverview({
       id: number;
       status: string;
       response_status: string | null;
+      open_count: number;
+      click_count: number;
       recipient_email: string;
       sent_at: string | null;
       bounced_at: string | null;
       responded_at: string | null;
+      last_opened_at: string | null;
+      last_clicked_at: string | null;
       created_at: string | null;
     }[];
   }>(`${API_URL}/api/campaigns/${campaignId}/send-logs?page=1&page_size=3`, {
@@ -303,6 +311,10 @@ export default function CampaignOverview({
     { value: progress.replied_count, label: "human replies", style: "is-blue" },
     { value: progress.automated_response_count, label: "automated replies", style: "is-amber" },
   ];
+  const engagementStats = [
+    { value: progress.opened_count, label: "opened", style: "is-blue" },
+    { value: progress.clicked_count, label: "clicked", style: "is-green" },
+  ];
   return (
     <>
       {progress.dry_run && (
@@ -327,6 +339,17 @@ export default function CampaignOverview({
             <h2>Responses</h2>
             <dl className="campaign-stats is-responses">
               {responseStats.map((stat) => (
+                <div key={stat.label}>
+                  <dd className={stat.style}>{stat.value}</dd>
+                  <dt>{stat.label}</dt>
+                </div>
+              ))}
+            </dl>
+          </section>
+          <section>
+            <h2>Engagement</h2>
+            <dl className="campaign-stats is-responses">
+              {engagementStats.map((stat) => (
                 <div key={stat.label}>
                   <dd className={stat.style}>{stat.value}</dd>
                   <dt>{stat.label}</dt>
@@ -418,6 +441,10 @@ export default function CampaignOverview({
               <MessageSquareReply className="is-blue" />
             ) : log.response_status === "automated_response" ? (
               <Bot />
+            ) : log.click_count ? (
+              <MousePointerClick className="is-green" />
+            ) : log.open_count ? (
+              <MailOpen className="is-blue" />
             ) : log.status === "bounced" ? (
               <MailX className="is-orange" />
             ) : log.status === "failed" ? (
@@ -430,6 +457,10 @@ export default function CampaignOverview({
                 ? "Reply received from"
                 : log.response_status === "automated_response"
                   ? "Automated reply from"
+                  : log.click_count
+                    ? "Link clicked by"
+                    : log.open_count
+                      ? "Email opened by"
                   : log.status === "bounced"
                     ? "Email was undelivered to"
                     : log.status === "failed"
@@ -439,9 +470,9 @@ export default function CampaignOverview({
                   : "Email sent to"}{" "}
               {log.recipient_email}
             </span>
-            <time dateTime={log.responded_at || log.bounced_at || log.sent_at || log.created_at || undefined}>
-              {log.responded_at || log.bounced_at || log.sent_at || log.created_at
-                ? new Date(log.responded_at || log.bounced_at || log.sent_at || log.created_at!).toLocaleTimeString(
+            <time dateTime={log.responded_at || log.bounced_at || log.last_clicked_at || log.last_opened_at || log.sent_at || log.created_at || undefined}>
+              {log.responded_at || log.bounced_at || log.last_clicked_at || log.last_opened_at || log.sent_at || log.created_at
+                ? new Date(log.responded_at || log.bounced_at || log.last_clicked_at || log.last_opened_at || log.sent_at || log.created_at!).toLocaleTimeString(
                     undefined,
                     { hour: "numeric", minute: "2-digit" },
                   )

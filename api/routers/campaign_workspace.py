@@ -38,6 +38,7 @@ def duplicate_campaign(
         body_template=source.body_template,
         fallback_body_template=source.fallback_body_template,
         attachment_path=source.attachment_path,
+        engagement_tracking_enabled=source.engagement_tracking_enabled,
         selected_sender_group_id=source.selected_sender_group_id,
         timezone=source.timezone,
         send_settings=settings,

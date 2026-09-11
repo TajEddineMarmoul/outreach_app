@@ -16,7 +16,7 @@ from api.auth import get_current_user_id
 from api.routers import analytics as analytics_router, contacts, templates
 from api.schemas import TemplateCreate
 from src.platform.db import get_session
-from src.platform.models import Base, SendLog
+from src.platform.models import Base, Campaign, GmailActivityEvent, SendLog
 from src.platform.services import ensure_user
 from src.models import ImportResult
 from src.db.campaign_repo import create_campaign
@@ -129,6 +129,72 @@ def test_analytics_counts_all_pages_excludes_simulations_and_isolates_users(tmp_
         app.dependency_overrides.pop(get_session, None)
         app.dependency_overrides.pop(get_current_user_id, None)
         engine.dispose()
+
+
+def test_analytics_includes_daily_responses_and_send_breakdowns(tmp_path, monkeypatch):
+    engine = create_engine(f"sqlite:///{tmp_path / 'analytics-breakdowns.db'}")
+    Base.metadata.create_all(engine)
+    now = datetime(2026, 8, 30, 12, tzinfo=timezone.utc)
+    monkeypatch.setattr(analytics_router, "utcnow", lambda: now)
+    with Session(engine) as session:
+        ensure_user(session, "owner")
+        campaign = Campaign(user_id="owner", name="September launch")
+        session.add(campaign)
+        session.flush()
+        campaign_id = campaign.id
+        sent = SendLog(
+            user_id="owner",
+            campaign_id=campaign.id,
+            recipient_email="person@example.test",
+            sender_email="founder@example.test",
+            subject="Hello",
+            status="sent",
+            created_at=now - timedelta(days=1),
+        )
+        undelivered = SendLog(
+            user_id="owner",
+            campaign_id=campaign.id,
+            recipient_email="bad@example.test",
+            sender_email="founder@example.test",
+            subject="Hello",
+            status="bounced",
+            created_at=now - timedelta(days=1),
+        )
+        session.add_all((sent, undelivered))
+        session.flush()
+        session.add_all((
+            GmailActivityEvent(
+                user_id="owner", sender_id=1, send_log_id=sent.id,
+                gmail_message_id="human-reply", event_type="replied",
+                recipient_email="person@example.test", occurred_at=now,
+            ),
+            GmailActivityEvent(
+                user_id="owner", sender_id=1, send_log_id=sent.id,
+                gmail_message_id="auto-reply", event_type="automated_response",
+                recipient_email="person@example.test", occurred_at=now,
+            ),
+        ))
+        session.commit()
+
+        result = analytics_router.analytics(days=7, page=1, session=session, user_id="owner")
+
+    daily = {item["date"]: item for item in result["series"]}
+    assert daily["2026-08-29"] == {
+        "date": "2026-08-29", "sent": 1, "undelivered": 1,
+        "send_errors": 0, "human_replies": 0, "automated_replies": 0,
+    }
+    assert daily["2026-08-30"]["human_replies"] == 1
+    assert daily["2026-08-30"]["automated_replies"] == 1
+    assert result["campaigns"] == [{
+        "id": campaign_id, "name": "September launch", "sent": 1,
+        "series": [
+            {"date": day, "sent": 1 if day == "2026-08-29" else 0}
+            for day in daily
+        ],
+    }]
+    assert result["senders"][0]["name"] == "founder@example.test"
+    assert result["senders"][0]["sent"] == 1
+    engine.dispose()
 
 
 def test_ui_migrations_preserve_existing_data_and_leave_unknown_dates_unknown():

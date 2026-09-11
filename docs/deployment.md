@@ -30,6 +30,7 @@ Provider pricing, quotas, and account-specific domains are managed outside this 
 | `APP_ACCESS_TOKEN` | Private token added by the frontend proxy. |
 | `APP_USER_ID` | Database workspace owner returned for that token. |
 | `BACKEND_URL` | Public API origin, also used for the Gmail OAuth callback. |
+| `TRACKING_BASE_URL` | Optional public API origin used in open-pixel and click-redirect links. Defaults to `BACKEND_URL`; set it only when tracking should use a separate public domain. |
 | `FRONTEND_URL` | Frontend origin used after OAuth completes. |
 | `RUN_DATABASE_MIGRATIONS=false` | Keep API startup migrations off; upgrade explicitly. |
 | `OUTREACH_SAFE_LOCAL_MODE=false` | Allow the hosted delivery runtime to process jobs. |
@@ -81,7 +82,7 @@ python -m alembic heads
 python -m alembic upgrade head
 ```
 
-The latest checked-in revision is `0013_gmail_activity`. Query `heads` when preparing
+The latest checked-in revision is `0014_email_engagement`. Query `heads` when preparing
 a release instead of using an older release note's target. Restart or redeploy the
 application after upgrading, and verify its health and authenticated pages.
 

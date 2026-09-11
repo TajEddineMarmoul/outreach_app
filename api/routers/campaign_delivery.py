@@ -20,7 +20,7 @@ from api.delivery_safety import require_delivery_enabled
 from src.platform.gmail_activity import sync_selected_gmail_activity
 from src.platform.db import get_session
 from src.platform.jobs import create_send_jobs_for_next_batch
-from src.platform.models import AutopilotDaySchedule, Campaign, CampaignRecipient, Contact, GmailActivityEvent, SendJob, SendLog, Sender
+from src.platform.models import AutopilotDaySchedule, Campaign, CampaignRecipient, Contact, EmailTrackingEvent, GmailActivityEvent, SendJob, SendLog, Sender
 from src.platform.scheduler import WEEKDAY_NAMES, next_autopilot_run
 from src.platform.services import campaign_sent_today, campaign_zone, connected_senders, ensure_user, require_group, serialize_group, user_zone, validate_timezone_name
 from src.platform.time import utcnow
@@ -908,6 +908,20 @@ def get_campaign_send_progress(
             .group_by(GmailActivityEvent.event_type)
         ).all()
     )
+    engagement_counts = dict(
+        session.execute(
+            select(
+                EmailTrackingEvent.event_type,
+                func.count(func.distinct(EmailTrackingEvent.send_log_id)),
+            )
+            .where(
+                EmailTrackingEvent.user_id == user_id,
+                EmailTrackingEvent.campaign_id == campaign_id,
+                EmailTrackingEvent.event_type.in_(("opened", "clicked")),
+            )
+            .group_by(EmailTrackingEvent.event_type)
+        ).all()
+    )
     current_recipient = None
     if running_job:
         contact = session.get(Contact, running_job.recipient_id)
@@ -981,6 +995,8 @@ def get_campaign_send_progress(
         "sent_count": sent,
         "replied_count": response_counts.get("replied", 0),
         "automated_response_count": response_counts.get("automated_response", 0),
+        "opened_count": engagement_counts.get("opened", 0),
+        "clicked_count": engagement_counts.get("clicked", 0),
         "bounced_count": bounced,
         "send_error_count": failed,
         # Kept as a compatibility alias for older clients.
@@ -1103,6 +1119,12 @@ def get_campaign_send_logs(
                 "subject": log.subject,
                 "status": log.status,
                 "response_status": log.response_status,
+                "open_count": log.open_count,
+                "click_count": log.click_count,
+                "first_opened_at": log.first_opened_at.isoformat() if log.first_opened_at else None,
+                "last_opened_at": log.last_opened_at.isoformat() if log.last_opened_at else None,
+                "first_clicked_at": log.first_clicked_at.isoformat() if log.first_clicked_at else None,
+                "last_clicked_at": log.last_clicked_at.isoformat() if log.last_clicked_at else None,
                 "error_message": log.error_message,
                 "attempt_number": attempt_number,
                 "attempt_count": attempt_count,
@@ -1232,6 +1254,10 @@ def export_campaign_send_logs(
         "Subject",
         "Delivery status",
         "Response",
+        "Open count",
+        "Click count",
+        "First opened at (UTC)",
+        "First clicked at (UTC)",
         "Sent at (UTC)",
         "Responded at (UTC)",
         "Details",
@@ -1257,6 +1283,10 @@ def export_campaign_send_logs(
             row.subject,
             delivery_labels.get(row.status, row.status),
             response_labels.get(row.response_status or "", ""),
+            str(row.open_count),
+            str(row.click_count),
+            row.first_opened_at.isoformat() if row.first_opened_at else "",
+            row.first_clicked_at.isoformat() if row.first_clicked_at else "",
             row.sent_at.isoformat() if row.sent_at else "",
             row.responded_at.isoformat() if row.responded_at else "",
             row.error_message or "",

@@ -18,6 +18,7 @@ from api.routers import (
     campaign_workspace,
     campaigns,
     contacts,
+    email_tracking,
     gmail_push,
     oauth,
     sender_groups,
@@ -77,6 +78,7 @@ app.include_router(campaign_delivery.router)
 app.include_router(campaign_workspace.router)
 app.include_router(campaigns.router)
 app.include_router(contacts.router)
+app.include_router(email_tracking.router)
 app.include_router(gmail_push.router)
 app.include_router(templates.router)
 app.include_router(settings.router)

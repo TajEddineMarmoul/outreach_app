@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import useSWR from "swr";
-import { AlertTriangle, Bot, CheckCircle2, Clock, Loader2, MailX, MessageSquareReply, PauseCircle, Send, Timer, XCircle } from "lucide-react";
+import { AlertTriangle, Bot, CheckCircle2, Clock, Loader2, MailOpen, MailX, MessageSquareReply, MousePointerClick, PauseCircle, Send, Timer, XCircle } from "lucide-react";
 import { API_URL } from "@/lib/api";
 
 const POLL_INTERVAL = 3000;
@@ -14,6 +14,8 @@ interface ProgressData {
   sent_count: number;
   replied_count: number;
   automated_response_count: number;
+  opened_count: number;
+  clicked_count: number;
   bounced_count: number;
   send_error_count: number;
   failed_count: number;
@@ -163,6 +165,14 @@ export default function ProgressSection({ campaignId }: { campaignId: string }) 
         <div className="flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
           <Bot className="h-5 w-5 text-amber-600" aria-hidden="true" />
           <div><div className="text-xl font-semibold text-amber-900">{data.automated_response_count}</div><div className="text-xs font-semibold text-amber-800">Automated replies</div><div className="text-xs text-amber-700">Out-of-office or system response</div></div>
+        </div>
+        <div className="flex items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3">
+          <MailOpen className="h-5 w-5 text-blue-600" aria-hidden="true" />
+          <div><div className="text-xl font-semibold text-blue-900">{data.opened_count}</div><div className="text-xs font-semibold text-blue-800">Emails opened</div><div className="text-xs text-blue-700">Detected when images load</div></div>
+        </div>
+        <div className="flex items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3">
+          <MousePointerClick className="h-5 w-5 text-emerald-600" aria-hidden="true" />
+          <div><div className="text-xl font-semibold text-emerald-900">{data.clicked_count}</div><div className="text-xs font-semibold text-emerald-800">Links clicked</div><div className="text-xs text-emerald-700">Direct engagement signal</div></div>
         </div>
       </div>
 

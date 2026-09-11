@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import useSWR from "swr";
-import { ChevronLeft, ChevronRight, Clock, Download, Loader2, PauseCircle, RefreshCw, Send } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clock, Download, Loader2, MailOpen, MousePointerClick, PauseCircle, RefreshCw, Send } from "lucide-react";
 import { API_URL, checkResponse, errorMessage, useApiClient } from "@/lib/api";
 import { StatusBadge } from "@/components/app-ui";
 
@@ -13,6 +13,12 @@ interface LogEntry {
   subject: string;
   status: string;
   response_status: string | null;
+  open_count: number;
+  click_count: number;
+  first_opened_at: string | null;
+  last_opened_at: string | null;
+  first_clicked_at: string | null;
+  last_clicked_at: string | null;
   error_message: string | null;
   attempt_number: number;
   attempt_count: number;
@@ -159,6 +165,7 @@ export default function LogsSection({ campaignId }: { campaignId: string }) {
               <th className="px-4 py-2.5">Sender</th>
               <th className="px-4 py-2.5">Subject</th>
               <th className="px-4 py-2.5">Result</th>
+              <th className="px-4 py-2.5">Engagement</th>
               <th className="px-4 py-2.5">Response</th>
               <th className="px-4 py-2.5">Details</th>
               <th className="px-4 py-2.5">Time</th>
@@ -177,6 +184,14 @@ export default function LogsSection({ campaignId }: { campaignId: string }) {
                       Attempt {log.attempt_number}/{log.attempt_count}
                     </div>
                   )}
+                </td>
+                <td className="px-4 py-2.5 text-slate-600">
+                  {log.open_count || log.click_count ? (
+                    <div className="space-y-1">
+                      {log.open_count > 0 && <div className="flex items-center gap-1.5"><MailOpen className="h-3.5 w-3.5 text-blue-600" />{log.open_count} open{log.open_count === 1 ? "" : "s"}</div>}
+                      {log.click_count > 0 && <div className="flex items-center gap-1.5"><MousePointerClick className="h-3.5 w-3.5 text-emerald-600" />{log.click_count} click{log.click_count === 1 ? "" : "s"}</div>}
+                    </div>
+                  ) : "-"}
                 </td>
                 <td className="px-4 py-2.5">
                   {log.response_status ? (

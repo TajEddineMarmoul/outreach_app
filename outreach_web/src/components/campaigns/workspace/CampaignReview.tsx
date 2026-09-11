@@ -7,6 +7,8 @@ import {
   Info,
   Loader2,
   Mail,
+  MailOpen,
+  MousePointerClick,
   ShieldCheck,
   UserRound,
   Users,
@@ -37,6 +39,11 @@ export default function CampaignReview({
   onEdit,
   onTest,
   testLoading,
+  trackingEnabled,
+  trackingConfigured,
+  trackingLoading,
+  trackingBusy,
+  onTrackingChange,
 }: {
   recipients: number;
   subject: string;
@@ -53,6 +60,11 @@ export default function CampaignReview({
   onEdit: (step: CampaignStep) => void;
   onTest: () => void;
   testLoading: boolean;
+  trackingEnabled: boolean;
+  trackingConfigured: boolean;
+  trackingLoading: boolean;
+  trackingBusy: boolean;
+  onTrackingChange: (enabled: boolean) => void;
 }) {
   const skipped = validation?.skipped_recipient_count || 0;
   const rows = [
@@ -135,6 +147,31 @@ export default function CampaignReview({
           </div>
         ))}
       </section>
+      <section className="campaign-engagement-control" aria-label="Email engagement tracking">
+        <div className="campaign-engagement-copy">
+          <span className="campaign-summary-icon"><MailOpen /></span>
+          <div>
+            <strong>Track opens and link clicks</strong>
+            <p>
+              {trackingConfigured
+                ? "Add a private pixel and tracked links only when this campaign sends."
+                : "Tracking will start once this workspace has a public delivery address."}
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={trackingEnabled}
+          aria-label="Track opens and link clicks"
+          className={`campaign-toggle ${trackingEnabled ? "is-on" : ""}`}
+          disabled={trackingLoading || trackingBusy}
+          onClick={() => onTrackingChange(!trackingEnabled)}
+        >
+          <span aria-hidden="true" />
+          {trackingBusy ? "Saving…" : trackingEnabled ? "On" : "Off"}
+        </button>
+      </section>
       {issues.length > 0 && (
         <ul className="campaign-review-issues" aria-label="Items to check">
           {issues.map((check) => (
@@ -170,6 +207,7 @@ export default function CampaignReview({
         </button>
       </div>
       <p className="campaign-launch-note"><ShieldCheck size={17} /> {draft?.dryRun ? "Test mode is on. No real emails will be sent." : "Nothing sends until you launch this campaign."}</p>
+      {trackingEnabled && <p className="campaign-tracking-note"><MousePointerClick size={15} /> Opens can be affected by image blocking or privacy tools; clicks are the stronger engagement signal.</p>}
     </div>
   );
 }

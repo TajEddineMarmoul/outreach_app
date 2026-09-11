@@ -160,6 +160,15 @@ function CampaignEditor() {
   const { data: senderGroups, mutate: mutateSenderGroups } = useSWR(
     `${API_URL}/api/sender-groups`,
   );
+  const {
+    data: engagementTracking,
+    isLoading: engagementTrackingLoading,
+    mutate: mutateEngagementTracking,
+  } = useSWR<{ enabled: boolean; configured: boolean }>(
+    summary?.sender_group_id
+      ? `${API_URL}/api/campaigns/${campaignId}/engagement-tracking`
+      : null,
+  );
 
   const selectedSenderGroup = useMemo(() => {
     if (!senderGroups || !summary) return null;
@@ -425,6 +434,7 @@ function CampaignEditor() {
     number | null
   >(null);
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
+  const [trackingBusy, setTrackingBusy] = useState(false);
 
   // ----------------------------------------------------
   // TipTap Editor Ref for Variable Insertion
@@ -737,6 +747,39 @@ function CampaignEditor() {
   ];
   const changeStep = (step: CampaignStep) => {
     void navigateSafely(`/campaigns/${campaignId}?step=${step}`);
+  };
+  const handleTrackingChange = async (enabled: boolean) => {
+    setTrackingBusy(true);
+    setNotice("");
+    try {
+      const response = await authFetch(
+        `${API_URL}/api/campaigns/${campaignId}/engagement-tracking`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled }),
+        },
+      );
+      if (!response.ok) {
+        throw new Error(
+          responseProblem(
+            await response.json().catch(() => ({})),
+            "Could not update engagement tracking.",
+          ),
+        );
+      }
+      await mutateEngagementTracking(await response.json(), {
+        revalidate: false,
+      });
+    } catch (error) {
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : "Could not update engagement tracking.",
+      );
+    } finally {
+      setTrackingBusy(false);
+    }
   };
   const hideTips = () => {
     if (userId) hideCampaignTips(userId);
@@ -1357,6 +1400,11 @@ function CampaignEditor() {
                 onEdit={changeStep}
                 onTest={() => void handleOpenPreview()}
                 testLoading={isPreviewLoading}
+                trackingEnabled={engagementTracking?.enabled ?? true}
+                trackingConfigured={engagementTracking?.configured ?? false}
+                trackingLoading={engagementTrackingLoading}
+                trackingBusy={trackingBusy}
+                onTrackingChange={(enabled) => void handleTrackingChange(enabled)}
               />
             )}
           </>
