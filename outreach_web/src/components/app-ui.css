@@ -6,6 +6,14 @@
   --app-chart-error: #b42318;
   --app-chart-human-reply: #2855a6;
   --app-chart-automated-reply: #7a5b17;
+  --app-chart-series-1: #0751f8;
+  --app-chart-series-2: #08795a;
+  --app-chart-series-3: #9a4c0b;
+  --app-chart-series-4: #6952c7;
+  --app-chart-series-5: #ad3e78;
+  --app-chart-series-6: #087385;
+  --app-chart-series-7: #ad402c;
+  --app-chart-series-8: #526078;
   --app-line: #dce2ec;
   color: var(--app-ink);
   font-family: var(--font-geist-sans), Arial, sans-serif;
@@ -716,6 +724,38 @@
 .app-chart-stack-segment.is-automated-reply {
   background: var(--app-chart-automated-reply);
 }
+.app-chart-key.is-series-1,
+.app-chart-stack-segment.is-series-1 {
+  background: var(--app-chart-series-1);
+}
+.app-chart-key.is-series-2,
+.app-chart-stack-segment.is-series-2 {
+  background: var(--app-chart-series-2);
+}
+.app-chart-key.is-series-3,
+.app-chart-stack-segment.is-series-3 {
+  background: var(--app-chart-series-3);
+}
+.app-chart-key.is-series-4,
+.app-chart-stack-segment.is-series-4 {
+  background: var(--app-chart-series-4);
+}
+.app-chart-key.is-series-5,
+.app-chart-stack-segment.is-series-5 {
+  background: var(--app-chart-series-5);
+}
+.app-chart-key.is-series-6,
+.app-chart-stack-segment.is-series-6 {
+  background: var(--app-chart-series-6);
+}
+.app-chart-key.is-series-7,
+.app-chart-stack-segment.is-series-7 {
+  background: var(--app-chart-series-7);
+}
+.app-chart-key.is-series-8,
+.app-chart-stack-segment.is-series-8 {
+  background: var(--app-chart-series-8);
+}
 .app-bar-chart {
   display: flex;
   gap: 12px;
@@ -796,6 +836,7 @@
   width: 100%;
   min-height: 2px;
   background: var(--app-blue);
+  box-shadow: inset 0 1px rgb(255 255 255 / 42%);
 }
 .app-chart-label {
   position: absolute;

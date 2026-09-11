@@ -71,6 +71,16 @@ const ACTIVITY_SEGMENTS = [
 ] as const;
 
 type ActivityKey = (typeof ACTIVITY_SEGMENTS)[number]["key"];
+const BREAKDOWN_SERIES_CLASSES = [
+  "is-series-1",
+  "is-series-2",
+  "is-series-3",
+  "is-series-4",
+  "is-series-5",
+  "is-series-6",
+  "is-series-7",
+  "is-series-8",
+] as const;
 
 function chartMaximum(values: number[]) {
   return Math.max(4, Math.ceil(Math.max(0, ...values) / 4) * 4);
@@ -78,10 +88,6 @@ function chartMaximum(values: number[]) {
 
 function shouldShowDateLabel(index: number, length: number) {
   return length === 7 || index % 5 === 0 || index === length - 1;
-}
-
-function breakdownKey(item: SendBreakdown) {
-  return String(item.id ?? "unassigned");
 }
 
 function chartIdPart(value: string) {
@@ -111,96 +117,6 @@ function ChartTooltip({
         ))}
       </div>
     </div>
-  );
-}
-
-function DailySentChart({
-  series,
-  label,
-  tooltipPrefix,
-}: {
-  series: { date: string; sent: number }[];
-  label: string;
-  tooltipPrefix: string;
-}) {
-  const max = chartMaximum(series.map((item) => item.sent));
-  const total = series.reduce((sum, item) => sum + item.sent, 0);
-  const [activeDate, setActiveDate] = useState<string | null>(null);
-
-  return (
-    <>
-      <div
-        className="app-bar-chart"
-        role="group"
-        aria-label={`${label}. ${total.toLocaleString()} emails sent across ${series.length} days. Values are also available in the chart data table.`}
-      >
-        <div className="app-chart-axis" aria-hidden="true">
-          {[4, 3, 2, 1, 0].map((tick) => (
-            <span key={tick}>{(max * tick) / 4}</span>
-          ))}
-        </div>
-        <div
-          className="app-chart-bars"
-          style={{
-            gridTemplateColumns: `repeat(${series.length}, minmax(0, 1fr))`,
-          }}
-        >
-          {series.map((item, index) => {
-            const isActive = activeDate === item.date;
-            const tooltipId = `${chartIdPart(tooltipPrefix)}-tooltip-${item.date}`;
-            const position = index < 2 ? "start" : index >= series.length - 2 ? "end" : "middle";
-            return (
-              <div className={`app-chart-point ${isActive ? "is-active" : ""}`} key={item.date}>
-                <button
-                  type="button"
-                  className="app-chart-hit-area"
-                  aria-label={`${item.date}: ${item.sent.toLocaleString()} emails sent`}
-                  aria-describedby={isActive ? tooltipId : undefined}
-                  onMouseEnter={() => setActiveDate(item.date)}
-                  onMouseLeave={() => setActiveDate(null)}
-                  onFocus={() => setActiveDate(item.date)}
-                  onBlur={() => setActiveDate(null)}
-                  onClick={() => setActiveDate(item.date)}
-                >
-                  <span
-                    className="app-chart-bar"
-                    style={{ height: `${(item.sent / max) * 100}%` }}
-                  />
-                  {shouldShowDateLabel(index, series.length) && (
-                    <span className="app-chart-label">{item.date.slice(5)}</span>
-                  )}
-                </button>
-                {isActive && (
-                  <ChartTooltip
-                    id={tooltipId}
-                    date={item.date}
-                    entries={[{ label: "Sent", value: item.sent, className: "is-sent" }]}
-                    position={position}
-                  />
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-      <table className="sr-only">
-        <caption>{label}</caption>
-        <thead>
-          <tr>
-            <th>Date</th>
-            <th>Sent</th>
-          </tr>
-        </thead>
-        <tbody>
-          {series.map((item) => (
-            <tr key={item.date}>
-              <td>{item.date}</td>
-              <td>{item.sent}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </>
   );
 }
 
@@ -313,57 +229,126 @@ function DailyActivityChart({ series }: { series: DailyActivity[] }) {
   );
 }
 
-function BreakdownChart({
+function StackedBreakdownChart({
   title,
-  selectorLabel,
   breakdowns,
-  selectedKey,
-  onSelect,
 }: {
   title: string;
-  selectorLabel: string;
   breakdowns: SendBreakdown[];
-  selectedKey: string;
-  onSelect: (key: string) => void;
 }) {
-  const selected = breakdowns.find((item) => breakdownKey(item) === selectedKey) ?? breakdowns[0];
-  const chartTitleId = `${selectorLabel.toLowerCase().replace(/\s+/g, "-")}-chart-title`;
+  const series = breakdowns[0]?.series ?? [];
+  const dailyTotals = series.map((_, dayIndex) => (
+    breakdowns.reduce((sum, breakdown) => sum + (breakdown.series[dayIndex]?.sent ?? 0), 0)
+  ));
+  const max = chartMaximum(dailyTotals);
+  const total = breakdowns.reduce((sum, breakdown) => sum + breakdown.sent, 0);
+  const [activeDate, setActiveDate] = useState<string | null>(null);
+  const chartTitleId = `${chartIdPart(title)}-title`;
 
   return (
     <section className="app-panel app-chart app-breakdown-chart" aria-labelledby={chartTitleId}>
       <div className="app-chart-heading">
         <div>
           <h2 id={chartTitleId}>{title}</h2>
-          <p className="app-chart-note">Choose an item to see its daily sent volume.</p>
+          <p className="app-chart-note">Each bar stacks every item that sent that day.</p>
         </div>
-        {selected && (
-          <label className="app-chart-selector">
-            <span>{selectorLabel}</span>
-            <select
-              className="app-select"
-              value={breakdownKey(selected)}
-              onChange={(event) => onSelect(event.target.value)}
-            >
-              {breakdowns.map((item) => (
-                <option key={breakdownKey(item)} value={breakdownKey(item)}>{item.name}</option>
-              ))}
-            </select>
-          </label>
-        )}
       </div>
-      {!selected ? (
+      {!series.length ? (
         <div className="app-empty" style={{ minHeight: 225 }}>
           <h2>No sent emails in this period</h2>
           <p>Your daily breakdown will appear after a campaign sends.</p>
         </div>
       ) : (
         <>
-          <p className="app-chart-total"><strong>{selected.name}</strong> · {selected.sent.toLocaleString()} sent</p>
-          <DailySentChart
-            series={selected.series}
-            label={`Daily emails sent for ${selected.name} (UTC)`}
-            tooltipPrefix={selectorLabel}
-          />
+          <p className="app-chart-total">{total.toLocaleString()} sent across {breakdowns.length.toLocaleString()} items</p>
+          <div className="app-chart-legend" aria-label={`${title} legend`}>
+            {breakdowns.map((breakdown, breakdownIndex) => (
+              <span className="app-chart-legend-item" key={`${breakdown.id}-${breakdown.name}`}>
+                <i className={`app-chart-key ${BREAKDOWN_SERIES_CLASSES[breakdownIndex % BREAKDOWN_SERIES_CLASSES.length]}`} aria-hidden="true" />
+                {breakdown.name}
+              </span>
+            ))}
+          </div>
+          <div
+            className="app-bar-chart"
+            role="group"
+            aria-label={`${title}. ${total.toLocaleString()} emails sent across ${series.length} days. Values are also available in the chart data table.`}
+          >
+            <div className="app-chart-axis" aria-hidden="true">
+              {[4, 3, 2, 1, 0].map((tick) => (
+                <span key={tick}>{(max * tick) / 4}</span>
+              ))}
+            </div>
+            <div className="app-chart-bars" style={{ gridTemplateColumns: `repeat(${series.length}, minmax(0, 1fr))` }}>
+              {series.map((day, dayIndex) => {
+                const totalForDay = dailyTotals[dayIndex];
+                const isActive = activeDate === day.date;
+                const tooltipId = `${chartIdPart(title)}-tooltip-${day.date}`;
+                const position = dayIndex < 2 ? "start" : dayIndex >= series.length - 2 ? "end" : "middle";
+                const values = breakdowns.map((breakdown, breakdownIndex) => ({
+                  label: breakdown.name,
+                  value: breakdown.series[dayIndex]?.sent ?? 0,
+                  className: BREAKDOWN_SERIES_CLASSES[breakdownIndex % BREAKDOWN_SERIES_CLASSES.length],
+                }));
+                return (
+                  <div className={`app-chart-point ${isActive ? "is-active" : ""}`} key={day.date}>
+                    <button
+                      type="button"
+                      className="app-chart-hit-area"
+                      aria-label={`${day.date}: ${totalForDay.toLocaleString()} emails sent. ${values.map((value) => `${value.label} ${value.value.toLocaleString()}`).join(", ")}`}
+                      aria-describedby={isActive ? tooltipId : undefined}
+                      onMouseEnter={() => setActiveDate(day.date)}
+                      onMouseLeave={() => setActiveDate(null)}
+                      onFocus={() => setActiveDate(day.date)}
+                      onBlur={() => setActiveDate(null)}
+                      onClick={() => setActiveDate(day.date)}
+                    >
+                      <span className="app-chart-stack" style={{ height: `${(totalForDay / max) * 100}%` }}>
+                        {values.map((value, valueIndex) => value.value ? (
+                          <span
+                            className={`app-chart-stack-segment ${value.className}`}
+                            key={breakdowns[valueIndex].id ?? breakdowns[valueIndex].name}
+                            style={{ height: `${(value.value / totalForDay) * 100}%` }}
+                          />
+                        ) : null)}
+                      </span>
+                      {shouldShowDateLabel(dayIndex, series.length) && (
+                        <span className="app-chart-label">{day.date.slice(5)}</span>
+                      )}
+                    </button>
+                    {isActive && (
+                      <ChartTooltip
+                        id={tooltipId}
+                        date={day.date}
+                        entries={[
+                          { label: "Total sent", value: totalForDay, className: "is-sent" },
+                          ...values.filter((value) => value.value > 0),
+                        ]}
+                        position={position}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <table className="sr-only">
+            <caption>{title} (UTC)</caption>
+            <thead>
+              <tr>
+                <th>Date</th>
+                {breakdowns.map((breakdown) => <th key={`${breakdown.id}-${breakdown.name}`}>{breakdown.name}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {series.map((day, dayIndex) => (
+                <tr key={day.date}>
+                  <td>{day.date}</td>
+                  {breakdowns.map((breakdown) => <td key={`${breakdown.id}-${breakdown.name}`}>{breakdown.series[dayIndex]?.sent ?? 0}</td>)}
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </>
       )}
     </section>
@@ -374,8 +359,6 @@ export default function AnalyticsPage() {
   const { API_URL, authFetch } = useApiClient();
   const [days, setDays] = useState(7);
   const [page, setPage] = useState(1);
-  const [selectedCampaign, setSelectedCampaign] = useState("");
-  const [selectedSender, setSelectedSender] = useState("");
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState("");
   const { data, isLoading, isValidating, error, mutate } = useSWR<Analytics>(
@@ -510,19 +493,13 @@ export default function AnalyticsPage() {
             )}
           </section>
           <div className="app-chart-grid">
-            <BreakdownChart
+            <StackedBreakdownChart
               title="Daily emails sent by campaign"
-              selectorLabel="Campaign"
               breakdowns={data.campaigns}
-              selectedKey={selectedCampaign}
-              onSelect={setSelectedCampaign}
             />
-            <BreakdownChart
+            <StackedBreakdownChart
               title="Daily emails sent by sending email"
-              selectorLabel="Sending email"
               breakdowns={data.senders}
-              selectedKey={selectedSender}
-              onSelect={setSelectedSender}
             />
           </div>
           <details className="app-disclosure">
