@@ -1122,6 +1122,102 @@
   display: grid;
   place-items: center;
 }
+.campaign-attachment-uploads {
+  margin-top: 12px;
+  border: 1px solid var(--campaign-line);
+  border-radius: 6px;
+  overflow: hidden;
+  background: #fff;
+}
+.campaign-attachment-uploads-heading {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--campaign-line);
+  color: var(--campaign-text);
+  font-size: 13px;
+  font-weight: 650;
+}
+.campaign-attachment-uploads-clear,
+.campaign-attachment-upload-retry {
+  min-height: 44px;
+  color: #155db1;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.campaign-attachment-uploads-clear {
+  padding: 0 6px;
+}
+.campaign-attachment-upload {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+  padding: 12px;
+  border-bottom: 1px solid var(--campaign-line);
+  color: var(--campaign-muted);
+}
+.campaign-attachment-upload:last-child {
+  border-bottom: 0;
+}
+.campaign-attachment-upload[data-status="uploading"] > svg {
+  color: #155db1;
+}
+.campaign-attachment-upload[data-status="uploaded"] > svg {
+  color: #167a44;
+}
+.campaign-attachment-upload[data-status="error"] > svg {
+  color: #b42318;
+}
+.campaign-attachment-upload-details {
+  min-width: 0;
+}
+.campaign-attachment-upload-name {
+  overflow-wrap: anywhere;
+  color: var(--campaign-text);
+  font-size: 13px;
+  font-weight: 600;
+}
+.campaign-attachment-upload-state,
+.campaign-attachment-upload-error {
+  margin-top: 3px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.campaign-attachment-upload[data-status="uploaded"] .campaign-attachment-upload-state {
+  color: #167a44;
+}
+.campaign-attachment-upload[data-status="error"] .campaign-attachment-upload-state,
+.campaign-attachment-upload-error {
+  color: #b42318;
+}
+.campaign-attachment-upload progress {
+  display: block;
+  width: 100%;
+  height: 6px;
+  margin-top: 8px;
+  accent-color: #155db1;
+}
+.campaign-attachment-upload-retry {
+  padding: 0 6px;
+  white-space: nowrap;
+}
+@media (max-width: 540px) {
+  .campaign-attachment-upload {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .campaign-attachment-upload-retry {
+    grid-column: 2;
+    justify-self: start;
+    min-height: 44px;
+    padding: 0;
+  }
+}
 .campaign-footer {
   flex-shrink: 0;
   position: sticky;

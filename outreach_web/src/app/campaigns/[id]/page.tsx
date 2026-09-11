@@ -21,6 +21,7 @@ import {
   Trash2,
   Paperclip,
   CheckCircle,
+  CircleX,
   Play,
   Pause,
   Eye,
@@ -54,6 +55,8 @@ import RecipientsImportDialog from "@/components/campaigns/dialogs/RecipientsImp
 import CampaignGuide from "@/components/onboarding/CampaignGuide";
 import { useCampaignTips, dismissCampaignTip, hideCampaignTips, type GuideStep } from "@/lib/onboarding";
 import AttachmentDialog, {
+  attachmentUploadStatusText,
+  type AttachmentUpload,
   type CampaignAttachmentSummary,
 } from "@/components/campaigns/dialogs/AttachmentDialog";
 import LogsSection from "@/components/campaigns/LogsSection";
@@ -430,11 +433,22 @@ function CampaignEditor() {
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
   const [attachmentModalOpen, setAttachmentModalOpen] = useState(false);
+  const [attachmentUploads, setAttachmentUploads] = useState<
+    AttachmentUpload[]
+  >([]);
   const [deletingAttachmentId, setDeletingAttachmentId] = useState<
     number | null
   >(null);
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
   const [trackingBusy, setTrackingBusy] = useState(false);
+
+  const handleAttachmentUploadChange = useCallback(
+    (uploads: AttachmentUpload[]) => setAttachmentUploads(uploads),
+    [],
+  );
+  const attachmentUploadInProgress = attachmentUploads.some(
+    (upload) => upload.status === "queued" || upload.status === "uploading",
+  );
 
   // ----------------------------------------------------
   // TipTap Editor Ref for Variable Insertion
@@ -1043,6 +1057,75 @@ function CampaignEditor() {
           minimalToolbar
         />
       </div>
+      {attachmentUploads.length > 0 && (
+        <section
+          className="campaign-attachment-uploads"
+          aria-label="Attachment upload status"
+          aria-live="polite"
+        >
+          <div className="campaign-attachment-uploads-heading">
+            <span>
+              {attachmentUploadInProgress
+                ? "Uploading attachments"
+                : "Attachment upload results"}
+            </span>
+            {!attachmentUploadInProgress && (
+              <button
+                type="button"
+                className="campaign-attachment-uploads-clear"
+                onClick={() => setAttachmentUploads([])}
+              >
+                Clear status
+              </button>
+            )}
+          </div>
+          {attachmentUploads.map((upload) => (
+            <div
+              key={upload.id}
+              className="campaign-attachment-upload"
+              data-status={upload.status}
+            >
+              {upload.status === "uploaded" ? (
+                <CheckCircle size={18} aria-hidden="true" />
+              ) : upload.status === "error" ? (
+                <CircleX size={18} aria-hidden="true" />
+              ) : upload.status === "uploading" ? (
+                <Loader2 size={18} className="animate-spin" aria-hidden="true" />
+              ) : (
+                <Paperclip size={18} aria-hidden="true" />
+              )}
+              <div className="campaign-attachment-upload-details">
+                <div className="campaign-attachment-upload-name">{upload.filename}</div>
+                <div
+                  className="campaign-attachment-upload-state"
+                  role={upload.status === "error" ? "alert" : undefined}
+                >
+                  {attachmentUploadStatusText(upload)}
+                </div>
+                {upload.status === "uploading" && (
+                  <progress
+                    value={upload.progress}
+                    max="100"
+                    aria-label={`${upload.filename} upload progress`}
+                  />
+                )}
+                {upload.status === "error" && upload.error && (
+                  <p className="campaign-attachment-upload-error">{upload.error}</p>
+                )}
+              </div>
+              {upload.status === "error" && (
+                <button
+                  type="button"
+                  className="campaign-attachment-upload-retry"
+                  onClick={() => setAttachmentModalOpen(true)}
+                >
+                  Review & retry
+                </button>
+              )}
+            </div>
+          ))}
+        </section>
+      )}
       {campaignAttachments.length > 0 && (
         <div className="campaign-attachments" aria-label="Attached files">
           {campaignAttachments.map((attachment) => (
@@ -1533,6 +1616,7 @@ function CampaignEditor() {
         attachments={campaignAttachments}
         deletingAttachmentId={deletingAttachmentId}
         onRemoveAttachment={handleRemoveAttachment}
+        onUploadChange={handleAttachmentUploadChange}
       />
 
       {/* F. Template Modal */}
