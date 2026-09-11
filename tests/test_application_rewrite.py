@@ -3026,6 +3026,117 @@ def test_autopilot_rejects_empty_unknown_and_invalid_day_schedules(tmp_path):
         clear_session_override()
 
 
+def test_autopilot_daily_limits_update_live_and_report_capacity(tmp_path):
+    session_factory = make_session_factory(tmp_path)
+    install_session_override(session_factory)
+    try:
+        campaign_id, sender_ids, contact_ids = _seed_delivery_campaign(
+            session_factory,
+            recipient_count=2,
+        )
+        now = utcnow()
+        today = WEEKDAY_NAMES[now.weekday()]
+        session = session_factory()
+        campaign = session.get(Campaign, campaign_id)
+        campaign.status = "autopilot"
+        campaign.send_settings = {"mode": "autopilot", "delay_minutes": 10}
+        campaign.scheduled_at = now + timedelta(minutes=10)
+        session.add(
+            AutopilotDaySchedule(
+                campaign_id=campaign_id,
+                day_of_week=today,
+                daily_cap=4,
+                start_time="00:00",
+                end_time="23:59",
+            )
+        )
+        session.add(
+            SendLog(
+                user_id=USER_ID,
+                campaign_id=campaign_id,
+                contact_id=contact_ids[0],
+                recipient_id=contact_ids[0],
+                sender_id=sender_ids[0],
+                recipient_email="lead1@example.com",
+                sender_email="sender1@example.com",
+                subject="Subject",
+                status="sent",
+                sent_at=now,
+            )
+        )
+        session.add(
+            SendJob(
+                user_id=USER_ID,
+                campaign_id=campaign_id,
+                recipient_id=contact_ids[1],
+                sender_id=sender_ids[0],
+                status="queued",
+                scheduled_for=now,
+                batch_id="live-limit-test",
+                idempotency_key=f"live-limit:{campaign_id}:{contact_ids[1]}",
+            )
+        )
+        session.commit()
+        session.close()
+
+        client = TestClient(app)
+        response = client.patch(
+            f"/api/campaigns/{campaign_id}/autopilot/daily-limits",
+            json={"daily_limits": {today: 7}},
+            headers=HEADERS,
+        )
+        assert response.status_code == 200
+        assert response.json()["daily_limits"][today] == 7
+        assert response.json()["capacity"] == {
+            "cap": 7,
+            "sent": 1,
+            "reserved": 1,
+            "remaining": 5,
+        }
+
+        progress = client.get(
+            f"/api/campaigns/{campaign_id}/send-progress",
+            headers=HEADERS,
+        )
+        assert progress.status_code == 200
+        assert {
+            key: progress.json()[key]
+            for key in (
+                "campaign_daily_cap",
+                "campaign_sent_today",
+                "campaign_reserved_today",
+                "campaign_remaining_today",
+            )
+        } == {
+            "campaign_daily_cap": 7,
+            "campaign_sent_today": 1,
+            "campaign_reserved_today": 1,
+            "campaign_remaining_today": 5,
+        }
+
+        session = session_factory()
+        campaign = session.get(Campaign, campaign_id)
+        assert campaign.status == "autopilot"
+        assert campaign.scheduled_at.replace(tzinfo=timezone.utc) >= now
+        assert session.scalar(
+            select(AutopilotDaySchedule.daily_cap).where(
+                AutopilotDaySchedule.campaign_id == campaign_id,
+                AutopilotDaySchedule.day_of_week == today,
+            )
+        ) == 7
+        session.close()
+
+        # The dedicated endpoint does not relax the existing live-edit lock.
+        blocked = client.patch(
+            f"/api/campaigns/{campaign_id}/send-settings",
+            json={"delay_minutes": 1},
+            headers=HEADERS,
+        )
+        assert blocked.status_code == 409
+    finally:
+        clear_session_override()
+
+
 def test_autopilot_stops_at_today_cap_then_resumes_next_day(tmp_path, monkeypatch):
     session_factory = make_session_factory(tmp_path)
     install_session_override(session_factory)

@@ -31,6 +31,7 @@ import {
   Plus,
   FileText,
   ChevronDown,
+  SlidersHorizontal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -49,6 +50,7 @@ import {
 import RichTextEditor from "@/components/RichTextEditor";
 import type { Editor } from "@tiptap/react";
 import ScheduleDialog from "@/components/campaigns/dialogs/ScheduleDialog";
+import AutopilotDailyLimitsDialog from "@/components/campaigns/dialogs/AutopilotDailyLimitsDialog";
 import SenderSelectionDialog from "@/components/campaigns/dialogs/SenderSelectionDialog";
 import PreviewDialog from "@/components/campaigns/dialogs/PreviewDialog";
 import RecipientsImportDialog from "@/components/campaigns/dialogs/RecipientsImportDialog";
@@ -202,6 +204,7 @@ function CampaignEditor() {
     campaign && EDIT_LOCKED_STATUSES.has(campaign.status),
   );
   const isPaused = campaign?.status === "paused";
+  const isAutopilotRunning = campaign?.status === "autopilot";
   const hasActiveDeliveryControls = editingLocked || isPaused;
   const schedule = useScheduleDraft(campaignId, summary, editingLocked);
   const launchingRef = useRef(false);
@@ -433,6 +436,7 @@ function CampaignEditor() {
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
   const [attachmentModalOpen, setAttachmentModalOpen] = useState(false);
+  const [autopilotLimitsOpen, setAutopilotLimitsOpen] = useState(false);
   const [attachmentUploads, setAttachmentUploads] = useState<
     AttachmentUpload[]
   >([]);
@@ -1293,6 +1297,8 @@ function CampaignEditor() {
                         : "New emails send according to your campaign schedule."
                     : isPaused
                       ? "Sending is paused. Changes save now and apply when you resume."
+                    : isAutopilotRunning
+                      ? "Daily limits can be updated while Autopilot runs. Pause to change your message, audience, senders, or schedule."
                     : editingLocked
                       ? "End the campaign before changing its message, audience, or schedule."
                       : "Review and manage this campaign."}
@@ -1354,6 +1360,11 @@ function CampaignEditor() {
                 campaignId={campaignId}
                 summary={summary}
                 onActivity={() => changeTab("activity")}
+                onEditDailyLimits={
+                  isAutopilotRunning
+                    ? () => setAutopilotLimitsOpen(true)
+                    : undefined
+                }
               />
             )}
             {tab === "message" && messagePanel}
@@ -1368,6 +1379,14 @@ function CampaignEditor() {
             {tab === "schedule" && (
               <div className="campaign-step-panel">
                 <CurrentSchedule summary={summary} />
+                {isAutopilotRunning && (
+                  <button
+                    className="campaign-button is-primary"
+                    onClick={() => setAutopilotLimitsOpen(true)}
+                  >
+                    <SlidersHorizontal size={17} /> Edit daily limits
+                  </button>
+                )}
                 <button
                   className="campaign-button is-outline"
                   onClick={() => void openSchedule(true)}
@@ -1568,6 +1587,20 @@ function CampaignEditor() {
         mutateAll={() => {
           mutate(`${API_URL}/api/campaigns/${campaignId}`);
           mutateSummary();
+        }}
+      />
+
+      <AutopilotDailyLimitsDialog
+        isOpen={autopilotLimitsOpen}
+        onClose={() => setAutopilotLimitsOpen(false)}
+        campaignId={campaignId}
+        schedule={summary?.autopilot_schedule || []}
+        onSaved={async () => {
+          await Promise.all([
+            mutate(`${API_URL}/api/campaigns/${campaignId}`),
+            mutate(`${API_URL}/api/campaigns/${campaignId}/send-progress`),
+            mutateSummary(),
+          ]);
         }}
       />
 

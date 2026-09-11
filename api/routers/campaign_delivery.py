@@ -22,7 +22,7 @@ from src.platform.db import get_session
 from src.platform.jobs import create_send_jobs_for_next_batch
 from src.platform.models import AutopilotDaySchedule, Campaign, CampaignRecipient, Contact, EmailTrackingEvent, GmailActivityEvent, SendJob, SendLog, Sender
 from src.platform.scheduler import WEEKDAY_NAMES, next_autopilot_run
-from src.platform.services import campaign_sent_today, campaign_zone, connected_senders, ensure_user, require_group, serialize_group, user_zone, validate_timezone_name
+from src.platform.services import autopilot_reschedule_state, campaign_daily_capacity, campaign_zone, connected_senders, ensure_user, require_group, serialize_group, user_zone, validate_timezone_name
 from src.platform.time import utcnow
 from src.platform.worker import recover_stale_jobs, run_worker_cycle
 from src.template_engine import extract_template_variables, missing_template_variables
@@ -109,6 +109,23 @@ class SendSettingsUpdate(DeliveryRequest):
             unknown = sorted(set(self.schedule) - set(WEEKDAY_NAMES))
             if unknown:
                 raise ValueError(f"unknown autopilot days: {', '.join(unknown)}")
+        return self
+
+
+class AutopilotDailyLimitsUpdate(BaseModel):
+    """The one schedule control that is safe to change while Autopilot runs."""
+
+    model_config = ConfigDict(extra="forbid")
+    daily_limits: dict[str, int] = Field(..., min_length=1)
+
+    @model_validator(mode="after")
+    def validate_days(self):
+        unknown = sorted(set(self.daily_limits) - set(WEEKDAY_NAMES))
+        if unknown:
+            raise ValueError(f"unknown autopilot days: {', '.join(unknown)}")
+        invalid = sorted(day for day, cap in self.daily_limits.items() if cap < 1)
+        if invalid:
+            raise ValueError("Each daily limit must be at least 1")
         return self
 
 
@@ -457,6 +474,79 @@ def patch_send_settings(
             )
     session.commit()
     return {"status": "success", "send_settings": campaign.send_settings}
+
+
+@router.patch("/api/campaigns/{campaign_id}/autopilot/daily-limits")
+def patch_autopilot_daily_limits(
+    campaign_id: int,
+    req: AutopilotDailyLimitsUpdate,
+    session: Session = Depends(get_session),
+    user_id: str = Depends(get_current_user_id),
+):
+    """Update Autopilot day caps without interrupting an active campaign.
+
+    Message, audience, senders, timing and mode still go through the normal
+    editable-campaign guard. Day caps are checked again at queue and delivery
+    time, so lowering one immediately prevents extra sends beyond the new cap.
+    """
+    campaign = require_campaign(session, campaign_id, user_id)
+    settings = dict(campaign.send_settings or {})
+    if campaign.status != "autopilot" or settings.get("mode") != "autopilot":
+        raise HTTPException(
+            status_code=409,
+            detail="Autopilot daily limits can only be changed while Autopilot is running.",
+        )
+
+    schedules = {
+        schedule.day_of_week: schedule
+        for schedule in session.scalars(
+            select(AutopilotDaySchedule).where(
+                AutopilotDaySchedule.campaign_id == campaign.id
+            )
+        )
+    }
+    unavailable_days = sorted(set(req.daily_limits) - set(schedules))
+    if unavailable_days:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Autopilot is not enabled on "
+                f"{', '.join(unavailable_days)}. Enable that day before setting a limit."
+            ),
+        )
+
+    for day_name, daily_cap in req.daily_limits.items():
+        schedules[day_name].daily_cap = daily_cap
+
+    # Re-evaluate the active day only. This wakes an Autopilot campaign that
+    # had paused at its cap after its cap increases, and pauses it immediately
+    # when a newly lower cap has already been consumed. It deliberately leaves
+    # normal pacing alone when the campaign still has capacity.
+    now = utcnow()
+    session.flush()
+    reschedule = autopilot_reschedule_state(session, campaign, now=now)
+    capacity = reschedule.get("capacity")
+    was_at_campaign_cap = settings.get("pause_reason") == "campaign_daily_cap_reached"
+    if capacity is not None and capacity["remaining"] <= 0:
+        campaign.scheduled_at = reschedule["next_at"]
+        settings["pause_reason"] = "campaign_daily_cap_reached"
+    elif was_at_campaign_cap:
+        campaign.scheduled_at = reschedule["next_at"]
+        settings["pause_reason"] = reschedule["pause_reason"]
+    campaign.send_settings = settings
+    session.commit()
+
+    return {
+        "status": "success",
+        "daily_limits": {
+            day_name: schedules[day_name].daily_cap
+            for day_name in sorted(schedules)
+        },
+        "capacity": capacity,
+        "next_batch_at": campaign.scheduled_at.isoformat()
+        if campaign.scheduled_at
+        else None,
+    }
 
 
 @router.get("/api/campaigns/{campaign_id}/sender-group")
@@ -984,9 +1074,16 @@ def get_campaign_send_progress(
             select(AutopilotDaySchedule).where(AutopilotDaySchedule.campaign_id == campaign.id)
         )
     )
+    now = utcnow()
     today_schedule = next(
-        (s for s in day_schedules if s.day_of_week == WEEKDAY_NAMES[utcnow().astimezone(campaign_zone(session, campaign)).weekday()]),
+        (s for s in day_schedules if s.day_of_week == WEEKDAY_NAMES[now.astimezone(campaign_zone(session, campaign)).weekday()]),
         None,
+    )
+    daily_capacity = campaign_daily_capacity(
+        session,
+        campaign,
+        now=now,
+        schedule=today_schedule,
     )
     result = {
         "campaign_status": campaign.status,
@@ -1042,8 +1139,10 @@ def get_campaign_send_progress(
             {"day": s.day_of_week, "cap": s.daily_cap, "start": s.start_time, "end": s.end_time}
             for s in day_schedules
         ],
-        "campaign_sent_today": campaign_sent_today(session, campaign.id) if today_schedule else None,
-        "campaign_daily_cap": today_schedule.daily_cap if today_schedule else None,
+        "campaign_sent_today": daily_capacity["sent"] if daily_capacity else None,
+        "campaign_daily_cap": daily_capacity["cap"] if daily_capacity else None,
+        "campaign_reserved_today": daily_capacity["reserved"] if daily_capacity else None,
+        "campaign_remaining_today": max(daily_capacity["remaining"], 0) if daily_capacity else None,
         "dry_run": (campaign.send_settings or {}).get("dry_run", False),
         "recipient_validation": (campaign.send_settings or {}).get("recipient_validation"),
     }

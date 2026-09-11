@@ -16,6 +16,7 @@ import {
   AlertCircle,
   ArrowRight,
   Loader2,
+  SlidersHorizontal,
 } from "lucide-react";
 import { formatViewerWindow } from "@/lib/timezones";
 import { API_URL } from "@/lib/api";
@@ -47,6 +48,10 @@ export interface CampaignProgress {
   pause_reason: string | null;
   dry_run: boolean;
   send_mode?: string;
+  campaign_sent_today?: number | null;
+  campaign_daily_cap?: number | null;
+  campaign_reserved_today?: number | null;
+  campaign_remaining_today?: number | null;
   autopilot_schedule:
     { day: string; cap: number; start: string; end: string }[] | null;
 }
@@ -74,9 +79,11 @@ function displayTime(value: string) {
 export function CurrentSchedule({
   summary,
   progress,
+  onEditDailyLimits,
 }: {
   summary?: ScheduleSummary;
   progress?: CampaignProgress;
+  onEditDailyLimits?: () => void;
 }) {
   const zone = progress?.timezone || summary?.timezone || "UTC";
   const viewerZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
@@ -134,6 +141,8 @@ export function CurrentSchedule({
       : progress?.pause_reason === "daily_caps_reached"
         ? "All senders have reached today's limit."
         : null;
+  const hasDailyCapacity =
+    mode === "autopilot" && progress?.campaign_daily_cap != null;
   return (
     <section className="campaign-panel campaign-schedule-card">
       <h2>Current schedule</h2>
@@ -200,6 +209,42 @@ export function CurrentSchedule({
           </p>
         )}
       </div>
+      {hasDailyCapacity && (
+        <section className="campaign-daily-capacity" aria-label="Today’s sending capacity">
+          <div className="campaign-daily-capacity-heading">
+            <div>
+              <p>Today&apos;s sending capacity</p>
+              <strong>{progress!.campaign_daily_cap} emails per day</strong>
+            </div>
+            {onEditDailyLimits && (
+              <button
+                className="campaign-text-button"
+                type="button"
+                onClick={onEditDailyLimits}
+              >
+                <SlidersHorizontal size={16} /> Edit daily limits
+              </button>
+            )}
+          </div>
+          <dl className="campaign-daily-capacity-stats">
+            <div>
+              <dt>Sent today</dt>
+              <dd>{progress!.campaign_sent_today ?? 0}</dd>
+            </div>
+            <div>
+              <dt>Scheduled today</dt>
+              <dd>{progress!.campaign_reserved_today ?? 0}</dd>
+            </div>
+            <div>
+              <dt>Available today</dt>
+              <dd>{progress!.campaign_remaining_today ?? 0}</dd>
+            </div>
+          </dl>
+          <p className="campaign-daily-capacity-note">
+            Your sender limits also apply to every email.
+          </p>
+        </section>
+      )}
       {progress && (
         <div
           className={`campaign-schedule-state ${paused || (stopped && !deliveryFinished) ? "is-paused" : ""}`}
@@ -238,10 +283,12 @@ export default function CampaignOverview({
   campaignId,
   summary,
   onActivity,
+  onEditDailyLimits,
 }: {
   campaignId: string;
   summary?: ScheduleSummary;
   onActivity: () => void;
+  onEditDailyLimits?: () => void;
 }) {
   const {
     data: progress,
@@ -426,7 +473,16 @@ export default function CampaignOverview({
             </p>
           )}
         </section>
-        <CurrentSchedule summary={summary} progress={progress} />
+        <CurrentSchedule
+          summary={summary}
+          progress={progress}
+          onEditDailyLimits={
+            progress.campaign_status === "autopilot" &&
+            progress.send_mode === "autopilot"
+              ? onEditDailyLimits
+              : undefined
+          }
+        />
       </div>
       <section className="campaign-panel campaign-recent-activity">
         <div className="campaign-panel-heading">

@@ -1425,6 +1425,68 @@
 .campaign-schedule-lines span {
   overflow-wrap: anywhere;
 }
+.campaign-daily-capacity {
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid #cbdff2;
+  border-radius: 10px;
+  background: #f5faff;
+}
+.campaign-daily-capacity-heading {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+.campaign-daily-capacity-heading p {
+  margin: 0;
+  color: var(--campaign-muted);
+  font-size: 13px;
+}
+.campaign-daily-capacity-heading strong {
+  display: block;
+  margin-top: 2px;
+  color: var(--campaign-ink);
+  font-size: 16px;
+  font-weight: 620;
+}
+.campaign-daily-capacity-heading .campaign-text-button {
+  flex-shrink: 0;
+  font-size: 13px;
+}
+.campaign-daily-capacity-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+}
+.campaign-daily-capacity-stats div {
+  min-width: 0;
+  padding-left: 10px;
+  border-left: 1px solid #d7e5f2;
+}
+.campaign-daily-capacity-stats div:first-child {
+  padding-left: 0;
+  border-left: 0;
+}
+.campaign-daily-capacity-stats dt {
+  color: var(--campaign-muted);
+  font-size: 12px;
+}
+.campaign-daily-capacity-stats dd {
+  margin-top: 2px;
+  color: var(--campaign-ink);
+  font-size: 18px;
+  font-weight: 620;
+}
+.campaign-daily-capacity-stats div:last-child dd {
+  color: var(--campaign-blue);
+}
+.campaign-daily-capacity-note {
+  margin: 10px 0 0;
+  color: var(--campaign-muted);
+  font-size: 12px;
+}
 .campaign-local-time {
   font-size: 13px;
 }
