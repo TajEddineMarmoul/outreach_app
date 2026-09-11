@@ -36,7 +36,7 @@ export default function AuthLayout({
 
   if (!isSignedIn) {
     return (
-      <main className="flex-1 flex flex-col h-screen overflow-y-auto">
+      <main className="flex-1 flex flex-col min-h-screen">
         {children}
       </main>
     );
@@ -45,7 +45,7 @@ export default function AuthLayout({
   return (
     <>
       <main
-        className={`min-w-0 flex-1 flex flex-col h-dvh overflow-y-auto ${!isCampaignWorkspace ? "app-ui app-shell" : ""}`}
+        className={`min-w-0 flex-1 flex flex-col ${isCampaignWorkspace ? "h-dvh overflow-y-auto" : "min-h-dvh"} ${!isCampaignWorkspace ? "app-ui app-shell" : ""}`}
       >
         {!isCampaignWorkspace && <AppHeader />}
         {children}

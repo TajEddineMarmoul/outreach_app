@@ -30,7 +30,7 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased text-base`}
     >
-      <body className="min-h-full flex bg-slate-50/30 text-slate-900">
+      <body className="min-h-full flex overflow-x-hidden bg-slate-50/30 text-slate-900">
         <ClerkProvider>
           <AuthProvider>
             <AuthLayout>{children}</AuthLayout>
